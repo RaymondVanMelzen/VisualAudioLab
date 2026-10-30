@@ -1,12 +1,14 @@
 #pragma once
 
 #include <val/application/WorkspaceService.h>
-#include <juce_gui_basics/juce_gui_basics.h>
+#include "DockWorkspace.h"
+#include "ShellChrome.h"
+#include "ShellTheme.h"
 
 namespace val::presentation
 {
 /**
- * Message-thread shell and command adapter; named regions are nonfunctional placeholders.
+ * Message-thread desktop shell and command adapter with transient dockable placeholders.
  * The borrowed workspace service outlives this component. JUCE command routing is kept in
  * Presentation; reversible use cases and history remain framework-free in Application.
  */
@@ -20,8 +22,10 @@ public:
     void paint(juce::Graphics& graphics) override;
     void resized() override;
     void showStatus(const juce::String& text);
-    [[nodiscard]] bool inspectorVisible() const noexcept { return inspectorVisible_; }
+    /** Existing local preference now controls the Property Inspector placeholder. */
+    [[nodiscard]] bool inspectorVisible() const noexcept;
     void setInspectorVisible(bool visible);
+    [[nodiscard]] DockWorkspace& dockWorkspace() noexcept { return dockWorkspace_; }
 
     juce::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
     void getAllCommands(juce::Array<juce::CommandID>& commands) override;
@@ -33,15 +37,20 @@ public:
 
 private:
     /** Stable, presentation-only command identities, separate from persisted user content. */
-    enum CommandId { rename = 0x2100, undo, redo, toggleInspector, resetLayout };
+    enum CommandId
+    {
+        rename = 0x2100, undo, redo, toggleInspector, resetLayout,
+        showCanvas, showModules, showExplorer, showProperties, showAudioSettings, quit
+    };
     void refresh();
     void report(const application::Result& result);
     application::WorkspaceService& workspace_;
+    ShellTheme theme_;
     juce::ApplicationCommandManager commands_;
     juce::MenuBarComponent menu_{this};
-    juce::Label banner_, explorer_, toolbox_, canvas_, properties_, inspector_, status_;
-    juce::TextEditor workspaceName_;
-    juce::TextButton renameButton_{"Rename workspace"}, undoButton_{"Undo"}, redoButton_{"Redo"};
-    bool inspectorVisible_{true};
+    ShellToolbar toolbar_{commands_, rename, undo, redo, showAudioSettings, resetLayout};
+    juce::Label banner_;
+    ShellStatusBar status_;
+    DockWorkspace dockWorkspace_;
 };
 }

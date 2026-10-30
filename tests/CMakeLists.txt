@@ -14,3 +14,10 @@ target_link_libraries(VisualAudioLab.Presentation.Tests PRIVATE VisualAudioLab.P
 val_configure_target(VisualAudioLab.Presentation.Tests)
 add_test(NAME Presentation.Shell COMMAND VisualAudioLab.Presentation.Tests)
 set_tests_properties(Presentation.Shell PROPERTIES LABELS "gui" TIMEOUT 30)
+
+# The layout value deliberately compiles and runs without JUCE or a desktop session.
+add_executable(VisualAudioLab.DockLayout.Tests DockLayoutTests.cpp)
+target_include_directories(VisualAudioLab.DockLayout.Tests PRIVATE
+    "${PROJECT_SOURCE_DIR}/src/VisualAudioLab.Presentation/include")
+val_configure_target(VisualAudioLab.DockLayout.Tests)
+add_test(NAME Presentation.DockLayout COMMAND VisualAudioLab.DockLayout.Tests)

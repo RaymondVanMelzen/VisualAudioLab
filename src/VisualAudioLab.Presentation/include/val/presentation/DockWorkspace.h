@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DockLayout.h"
+#include "CanvasView.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <functional>
@@ -9,13 +10,14 @@
 namespace val::presentation
 {
 /**
- * Owned placeholder view with a draggable heading and keyboard-accessible docking selector.
- * Controls disclose unavailable capabilities and never instantiate an audio/device backend.
+ * Tool panel with a draggable heading and keyboard-accessible docking selector.
+ * Borrows an optional structural canvas; other bodies disclose their placeholder capabilities.
+ * Neither tool controls nor the canvas instantiate an audio/device backend.
  */
 class WorkspacePanel final : public juce::Component
 {
 public:
-    WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested);
+    WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested, CanvasView* canvas = nullptr);
     ~WorkspacePanel() override;
     void paint(juce::Graphics& graphics) override;
     void resized() override;
@@ -29,18 +31,19 @@ private:
     juce::ComboBox destination_;
     juce::Label deviceLabel_, rateLabel_;
     juce::ComboBox device_, sampleRate_;
+    CanvasView* canvas_{};
 };
 
 /**
  * Four fixed tab docks with draggable panel headings and bounded resizable dividers.
- * Owns every view independently of its current tab parent. Layout is transient UI state;
+ * Owns every view and the canvas independently of its current tab parent. Layout is transient UI state;
  * rebuilding tabs must not destroy panels or mutate application/service history.
  * All calls and callbacks run on the JUCE message thread.
  */
 class DockWorkspace final : public juce::Component, public juce::DragAndDropContainer
 {
 public:
-    DockWorkspace();
+    explicit DockWorkspace(application::WorkspaceService& workspace);
     ~DockWorkspace() override;
     void resized() override;
     void paint(juce::Graphics& graphics) override;
@@ -50,6 +53,7 @@ public:
     void resetLayout();
     [[nodiscard]] const DockLayout& layout() const noexcept { return layout_; }
     [[nodiscard]] WorkspacePanel& panel(PanelId id) noexcept;
+    [[nodiscard]] CanvasView& canvas() noexcept { return canvas_; }
     [[nodiscard]] bool accepts(const juce::DragAndDropTarget::SourceDetails& details) const;
     std::function<void()> onLayoutChanged;
 
@@ -89,6 +93,7 @@ private:
     [[nodiscard]] DockArea& area(DockPosition position) noexcept;
 
     DockLayout layout_;
+    CanvasView canvas_;
     std::array<std::unique_ptr<WorkspacePanel>, DockLayout::panelCount> panels_;
     DockArea left_, centre_, right_, bottom_;
     Divider leftDivider_, rightDivider_, bottomDivider_;

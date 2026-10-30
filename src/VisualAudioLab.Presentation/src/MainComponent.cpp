@@ -27,6 +27,13 @@ MainComponent::MainComponent(application::WorkspaceService& workspace) : workspa
         menuItemsChanged();
         showStatus("Layout changed (temporary). Use View to reopen hidden panels.");
     };
+    dockWorkspace_.canvas().onEdit = [this](const application::Result& result)
+    {
+        showStatus(result.succeeded ? "Structural graph edit accepted. No processing."
+                                    : juce::String::fromUTF8(result.error.c_str()));
+        commands_.commandStatusChanged();
+        menuItemsChanged();
+    };
     showStatus("Ready. Settings/logging are local frameworks; no audio backend exists.");
     refresh();
 }
@@ -36,6 +43,7 @@ MainComponent::~MainComponent()
     removeKeyListener(commands_.getKeyMappings());
     menu_.setModel(nullptr);
     dockWorkspace_.onLayoutChanged = nullptr;
+    dockWorkspace_.canvas().onEdit = nullptr;
     setLookAndFeel(nullptr);
 }
 
@@ -72,6 +80,7 @@ void MainComponent::setInspectorVisible(bool visible)
 void MainComponent::refresh()
 {
     toolbar_.setWorkspaceName(juce::String::fromUTF8(workspace_.workspace().name.c_str()));
+    dockWorkspace_.canvas().synchronise();
     commands_.commandStatusChanged();
 }
 
@@ -95,12 +104,14 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
     {
         case rename: info.setInfo("Rename workspace", "Change temporary workspace identity", "Workspace", 0); break;
         case undo:
-            info.setInfo("Undo", "Undo last workspace command", "Edit", 0);
+            info.setInfo("Undo", "Undo last workspace or graph edit", "Edit", 0);
             info.setActive(workspace_.canUndo());
+            info.addDefaultKeypress('z', juce::ModifierKeys::commandModifier);
             break;
         case redo:
-            info.setInfo("Redo", "Redo last workspace command", "Edit", 0);
+            info.setInfo("Redo", "Redo last workspace or graph edit", "Edit", 0);
             info.setActive(workspace_.canRedo());
+            info.addDefaultKeypress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
             break;
         case toggleInspector:
             info.setInfo("Show Property Inspector", "Show or hide the placeholder inspector", "View", 0);
@@ -118,7 +129,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
             break;
         default: break;
     }
-    // TextEditor retains its native undo/redo shortcuts; menu/buttons target workspace history.
+    // Focused TextEditor consumes native editing shortcuts before the shell's key mappings.
 }
 
 bool MainComponent::perform(const InvocationInfo& invocation)

@@ -8,7 +8,7 @@
 namespace val::presentation
 {
 /**
- * Message-thread desktop shell and command adapter with transient dockable placeholders.
+ * Message-thread desktop shell and command adapter with a structural canvas and docked tools.
  * The borrowed workspace service outlives this component. JUCE command routing is kept in
  * Presentation; reversible use cases and history remain framework-free in Application.
  */
@@ -51,6 +51,6 @@ private:
     ShellToolbar toolbar_{commands_, rename, undo, redo, showAudioSettings, resetLayout};
     juce::Label banner_;
     ShellStatusBar status_;
-    DockWorkspace dockWorkspace_;
+    DockWorkspace dockWorkspace_{workspace_};
 };
 }

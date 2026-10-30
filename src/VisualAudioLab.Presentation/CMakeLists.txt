@@ -1,5 +1,9 @@
 add_library(VisualAudioLab.Presentation STATIC
     src/MainComponent.cpp
+    src/NodeView.cpp
+    src/ConnectionView.cpp
+    src/CanvasScene.cpp
+    src/CanvasView.cpp
     src/DockWorkspace.cpp
     src/ShellChrome.cpp
     src/ShellTheme.cpp)

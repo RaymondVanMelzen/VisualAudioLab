@@ -15,8 +15,22 @@ ComponentType* findControl(juce::Component& parent)
     return nullptr;
 }
 
-int main()
+void runNodeEditorTests();
+void runLargeGraphBenchmark();
+
+int main(int argc, char** argv)
 {
+    if (argc == 2)
+        return runTests([&]
+        {
+            const juce::ScopedJuceInitialiser_GUI initialise;
+            if (std::string_view(argv[1]) == "--node-editor")
+                runNodeEditorTests();
+            else if (std::string_view(argv[1]) == "--benchmark")
+                runLargeGraphBenchmark();
+            else
+                throw std::runtime_error("Unknown presentation test selector.");
+        });
     return runTests([]
     {
         const juce::ScopedJuceInitialiser_GUI initialise;

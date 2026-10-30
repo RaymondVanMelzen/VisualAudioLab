@@ -1,6 +1,6 @@
 # Visual Audio Lab
 
-C++20 / JUCE / CMake application skeleton for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a native shell, a transient workspace identity, and tested framework boundaries. No audio devices, audio processing, DSP nodes, scripting, project files, plugin hosting or plugin export are implemented.
+C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a transient dockable workspace and workspace identity, and tested framework boundaries. No audio devices, audio processing, DSP nodes, scripting, project files, plugin hosting or plugin export are implemented.
 
 ## Structure and dependencies
 
@@ -9,7 +9,7 @@ C++20 / JUCE / CMake application skeleton for Windows and macOS. Product and des
 | `src/VisualAudioLab.Domain` | Standard C++20 workspace value; no framework dependency. Header-only until implementation is needed. |
 | `src/VisualAudioLab.Application` | Service contracts, workspace commands, bounded undo/redo and validated settings lifecycle; Domain only. |
 | `src/VisualAudioLab.Infrastructure` | Local rotating text diagnostics and versioned JSON settings adapters; Application plus private JUCE core. |
-| `src/VisualAudioLab.Presentation` | JUCE component shell, menu/command routing, placeholder regions; Application and JUCE GUI. |
+| `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, transient docking model and placeholder views; Application and JUCE GUI. |
 | `src/VisualAudioLab.Desktop` | Native app entry point and explicit ownership/composition. |
 | `modules` | Reserved first-party module integration point; deliberately no DSP or empty processing targets. |
 | `resources` | Embedded shell limitation notice. |
@@ -45,18 +45,22 @@ ctest --preset macos-debug
 
 For a different installed generator, use a separate build directory, for example `cmake -S . -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Debug -DVAL_FETCH_JUCE=ON`, then `cmake --build build/native` and `ctest --test-dir build/native --output-on-failure`. Windows Ninja requires a Visual Studio developer environment. macOS universal binaries can be evaluated explicitly with `CMAKE_OSX_ARCHITECTURES=arm64;x86_64`; no universal/OS support matrix is claimed yet.
 
-The executable/bundle is generated under `src/VisualAudioLab.Desktop/VisualAudioLab.Desktop_artefacts/<configuration>` in the build tree. `BUILD_TESTING=OFF` excludes tests. The GUI construction test requires a desktop session; the two framework/adapter tests do not create windows.
+The executable/bundle is generated under `src/VisualAudioLab.Desktop/VisualAudioLab.Desktop_artefacts/<configuration>` in the build tree. `BUILD_TESTING=OFF` excludes tests. The GUI construction/rendering test requires a desktop session; the application, adapter and layout-model tests do not create windows. The layout-model test has no JUCE dependency.
 
 ## Shell, settings and diagnostics
 
-The shell displays named, nonfunctional regions. Renaming its temporary workspace exercises the service/command/history boundary; Undo and Redo menu items/buttons operate on workspace history while focused text fields retain native editing history. No patch editor, docking framework or complete usability-study fixture is claimed.
+The component-scoped dark theme surrounds a menu bar, command-bound toolbar, capability banner, status bar and four fixed dock destinations (left, centre, right and bottom). Patch Canvas, Module Browser, Project Explorer, Property Inspector and Audio Settings are owned placeholder views. Panels in a shared dock are selectable tabs. Drag a panel's heading into a visible dock, or use its **Dock** selector to move it to any destination, including a collapsed dock. Peripheral docks collapse when empty; the empty centre remains a drop target. There are no floating windows, third-party docking packages or persisted layouts.
 
-The composition root stores **machine-local application preferences only**, not projects, in `VisualAudioLab/settings.json` below JUCE's user application-data directory (`%APPDATA%` on Windows and `~/Library` on macOS). Schema version 1 records window size and inspector visibility. Loads validate JSON types/ranges/version; failed loads preserve the current defaults and disable automatic writes, with a visible status message. Saves validate and use a sibling temporary replacement file. This is a single-process settings adapter, not concurrent editing or a power-loss durability guarantee. It differs from the earlier strictly in-memory prototype study by providing the settings framework explicitly requested for this skeleton; project saving remains unavailable.
+Drag the dividers to resize occupied docks within bounded proportions; focused dividers also accept arrow keys. Use the panel selector to hide a secondary panel and the **View** menu to reopen/focus any named area. Patch Canvas cannot be hidden. **Reset Layout** restores every panel and the default proportions. The toolbar and **Audio** menu also reach Audio Settings; its disabled controls explicitly disclose that devices and sample rates are unavailable. File and audio product operations are disabled, not simulated. This is the application-shell framework requested here, not the broader functional fixture described in the prototype study documents.
+
+Renaming the existing temporary workspace still exercises the service/command/history boundary; Undo and Redo menu items/buttons operate on workspace history while focused text fields retain native editing history. Panel moves, visibility and navigation never enter document history. There is no patch editor, project workflow or audio engine.
+
+The composition root stores **machine-local application preferences only**, not projects, in `VisualAudioLab/settings.json` below JUCE's user application-data directory (`%APPDATA%` on Windows and `~/Library` on macOS). Schema version 1 records window size and inspector visibility (now the Property Inspector); all other docking state resets on restart. Loads validate JSON types/ranges/version; failed loads preserve the current defaults and disable automatic writes, with a visible status message. Saves validate and use a sibling temporary replacement file. This is a single-process settings adapter, not concurrent editing or a power-loss durability guarantee. It differs from the earlier strictly in-memory prototype study by providing the settings framework explicitly requested for this skeleton; project saving remains unavailable.
 
 Local diagnostics are in the adjacent `Logs/shell.log`. Epoch-millisecond timestamps, severity and category are recorded; no project content, paths or names are logged by default. Current and previous files are capped at approximately 1 MiB each, with per-record truncation and control-character escaping. There is no telemetry or remote export. Write failures are surfaced separately, not recursively logged. Shutdown saves only window preferences; failures are visible and do not claim success.
 
 ## Validation and distribution limits
 
-CTest exercises history failure/branch/capacity semantics, settings validation/error preservation, local-file round trips, schema/type rejection, blocked destinations, log rotation/serialization and basic JUCE shell construction. Windows/macOS builds and manual accessibility checks must be qualified on their actual platforms; successful Windows checks do not certify macOS.
+CTest exercises history failure/branch/capacity semantics, settings validation/error preservation, local-file round trips, schema/type rejection, blocked destinations, log rotation/serialization, docking-model move/visibility/reset invariants, JUCE panel ownership/navigation, disabled audio controls, menu/command registration, supported-size layout bounds and shell rendering. Windows/macOS builds and manual accessibility checks must be qualified on their actual platforms; successful Windows checks do not certify macOS.
 
 JUCE's license, its bundled dependencies and any later SDKs must be reviewed before distribution. The project license remains a product decision; this skeleton does not choose one or assert that all dependencies are permissively licensed. No ASIO SDK/device or plugin modules are linked. The primary future standalone audio paths remain Windows/ASIO and macOS/CoreAudio, not enabled by this structure.

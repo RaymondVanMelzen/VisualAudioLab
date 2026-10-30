@@ -1,0 +1,1 @@
+Application skeleton only. Audio, DSP, scripting, project files and plugins are not implemented.

@@ -1,0 +1,3 @@
+add_library(VisualAudioLab.Domain INTERFACE)
+target_include_directories(VisualAudioLab.Domain INTERFACE include)
+target_compile_features(VisualAudioLab.Domain INTERFACE cxx_std_20)

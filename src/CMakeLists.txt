@@ -1,0 +1,5 @@
+add_subdirectory(VisualAudioLab.Domain)
+add_subdirectory(VisualAudioLab.Application)
+add_subdirectory(VisualAudioLab.Infrastructure)
+add_subdirectory(VisualAudioLab.Presentation)
+add_subdirectory(VisualAudioLab.Desktop)

@@ -3,8 +3,8 @@
 
 namespace val::presentation
 {
-WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested)
-    : panel_(panel)
+WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested, CanvasView* canvas)
+    : panel_(panel), canvas_(canvas)
 {
     setName(panelName(panel));
     setWantsKeyboardFocus(true);
@@ -38,7 +38,7 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
             description = "No project loaded\nProject files and persistence are not implemented.";
             break;
         case PanelId::propertyInspector:
-            description = "Nothing selected\nObject properties and parameter editing are not implemented.";
+            description = "Property Inspector placeholder\nObject properties and parameter editing are not implemented.";
             break;
         case PanelId::audioSettings:
             description = "Audio backend unavailable. No devices are queried or opened.";
@@ -48,6 +48,11 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
     description_.setJustificationType(juce::Justification::centred);
     for (auto* child : std::initializer_list<juce::Component*>{&heading_, &destination_, &description_})
         addAndMakeVisible(child);
+    if (canvas_)
+    {
+        addAndMakeVisible(canvas_);
+        description_.setVisible(false);
+    }
 
     if (panel == PanelId::audioSettings)
     {
@@ -90,6 +95,11 @@ void WorkspacePanel::resized()
     heading_.setBounds(bounds.removeFromTop(24));
     destination_.setBounds(bounds.removeFromTop(28));
     bounds.removeFromTop(12);
+    if (canvas_)
+    {
+        canvas_->setBounds(bounds);
+        return;
+    }
     if (panel_ == PanelId::audioSettings)
     {
         auto row = bounds.removeFromTop(28);
@@ -187,8 +197,8 @@ bool DockWorkspace::Divider::keyPressed(const juce::KeyPress& key)
     return true;
 }
 
-DockWorkspace::DockWorkspace()
-    : left_(*this, DockPosition::left), centre_(*this, DockPosition::centre),
+DockWorkspace::DockWorkspace(application::WorkspaceService& workspace)
+    : canvas_(workspace), left_(*this, DockPosition::left), centre_(*this, DockPosition::centre),
       right_(*this, DockPosition::right), bottom_(*this, DockPosition::bottom),
       leftDivider_(true, [this](int delta)
       {
@@ -222,7 +232,7 @@ DockWorkspace::DockWorkspace()
                 setPanelVisible(id, false);
             else if (destination >= 1 && destination <= 4)
                 movePanel(id, static_cast<DockPosition>(destination - 1));
-        });
+        }, id == PanelId::patchCanvas ? &canvas_ : nullptr);
     }
     for (auto* child : std::initializer_list<juce::Component*>{
              &left_, &centre_, &right_, &bottom_, &leftDivider_, &rightDivider_, &bottomDivider_})

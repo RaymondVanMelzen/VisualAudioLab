@@ -3,8 +3,8 @@
 
 namespace val::presentation
 {
-WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested, CanvasView* canvas)
-    : panel_(panel), canvas_(canvas)
+WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested, juce::Component* content)
+    : panel_(panel), content_(content)
 {
     setName(panelName(panel));
     setWantsKeyboardFocus(true);
@@ -48,9 +48,9 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
     description_.setJustificationType(juce::Justification::centred);
     for (auto* child : std::initializer_list<juce::Component*>{&heading_, &destination_, &description_})
         addAndMakeVisible(child);
-    if (canvas_)
+    if (content_)
     {
-        addAndMakeVisible(canvas_);
+        addAndMakeVisible(content_);
         description_.setVisible(false);
     }
 
@@ -95,9 +95,9 @@ void WorkspacePanel::resized()
     heading_.setBounds(bounds.removeFromTop(24));
     destination_.setBounds(bounds.removeFromTop(28));
     bounds.removeFromTop(12);
-    if (canvas_)
+    if (content_)
     {
-        canvas_->setBounds(bounds);
+        content_->setBounds(bounds);
         return;
     }
     if (panel_ == PanelId::audioSettings)
@@ -226,24 +226,53 @@ DockWorkspace::DockWorkspace(application::WorkspaceService& workspace)
     for (std::size_t index = 0; index < panels_.size(); ++index)
     {
         const auto id = static_cast<PanelId>(index);
+        juce::Component* content = id == PanelId::patchCanvas ? static_cast<juce::Component*>(&canvas_)
+            : id == PanelId::propertyInspector ? static_cast<juce::Component*>(&signalPreview_) : nullptr;
         panels_[index] = std::make_unique<WorkspacePanel>(id, [this, id](int destination)
         {
             if (destination == 5)
                 setPanelVisible(id, false);
             else if (destination >= 1 && destination <= 4)
                 movePanel(id, static_cast<DockPosition>(destination - 1));
-        }, id == PanelId::patchCanvas ? &canvas_ : nullptr);
+        }, content);
     }
     for (auto* child : std::initializer_list<juce::Component*>{
              &left_, &centre_, &right_, &bottom_, &leftDivider_, &rightDivider_, &bottomDivider_})
         addAndMakeVisible(child);
     rebuild();
+    signalPreview_.onOpenDetails = [this] { showSignalInspector(); };
+    canvas_.onObservationTarget = [this](domain::GraphId source) { signalPreview_.followSelection(source); };
+    visualizations_.bindCanvas(&canvas_);
 }
 
 DockWorkspace::~DockWorkspace()
 {
+    canvas_.onObservationTarget = {};
+    visualizations_.bindCanvas(nullptr);
+    signalWindow_.reset();
     for (auto* dock : {&left_, &centre_, &right_, &bottom_})
         dock->clearTabs();
+}
+DockWorkspace::SignalInspectorWindow::SignalInspectorWindow(VisualizationSession& session)
+    : juce::DocumentWindow("Signal Inspector", juce::Colour(0xff1a2532), juce::DocumentWindow::closeButton)
+{
+    setUsingNativeTitleBar(true);
+    setContentOwned(new VisualizationWidgets(session, VisualizationHost::monitor), false);
+    setResizable(true, true);
+    setResizeLimits(640, 450, 1600, 1200);
+    centreWithSize(960, 680);
+}
+void DockWorkspace::showSignalInspector()
+{
+    if (!signalWindow_)
+    {
+        signalWindow_ = std::make_unique<SignalInspectorWindow>(visualizations_);
+        signalWindow_->setLookAndFeel(&getLookAndFeel());
+        signalWindow_->view().setTarget(signalPreview_.target());
+    }
+    else signalWindow_->view().followSelection(signalPreview_.target());
+    signalWindow_->setVisible(true);
+    signalWindow_->toFront(true);
 }
 
 WorkspacePanel& DockWorkspace::panel(PanelId id) noexcept

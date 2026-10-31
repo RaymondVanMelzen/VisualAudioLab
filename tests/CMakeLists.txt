@@ -20,6 +20,12 @@ val_configure_target(VisualAudioLab.Dsp.Tests)
 add_test(NAME Audio.Dsp COMMAND VisualAudioLab.Dsp.Tests)
 set_tests_properties(Audio.Dsp PROPERTIES TIMEOUT 60)
 
+add_executable(VisualAudioLab.Visualization.Tests VisualizationTests.cpp AudioAllocationProbe.cpp)
+target_link_libraries(VisualAudioLab.Visualization.Tests PRIVATE VisualAudioLab.Audio)
+val_configure_target(VisualAudioLab.Visualization.Tests)
+add_test(NAME Audio.Visualization COMMAND VisualAudioLab.Visualization.Tests)
+set_tests_properties(Audio.Visualization PROPERTIES TIMEOUT 90)
+
 add_executable(VisualAudioLab.Project.Tests ProjectTests.cpp)
 target_link_libraries(VisualAudioLab.Project.Tests PRIVATE
     VisualAudioLab.Infrastructure juce::juce_core val_juce_options)
@@ -43,7 +49,7 @@ set_tests_properties(Audio.StreamLifecycle PROPERTIES TIMEOUT 45)
 add_test(NAME Audio.NativeDiscovery COMMAND VisualAudioLab.AudioBackend.Tests --native)
 set_tests_properties(Audio.NativeDiscovery PROPERTIES LABELS "native-audio" TIMEOUT 60)
 
-add_executable(VisualAudioLab.Presentation.Tests PresentationTests.cpp NodeEditorTests.cpp ProjectPresentationTests.cpp)
+add_executable(VisualAudioLab.Presentation.Tests PresentationTests.cpp NodeEditorTests.cpp ProjectPresentationTests.cpp VisualizationPresentationTests.cpp)
 target_link_libraries(VisualAudioLab.Presentation.Tests PRIVATE VisualAudioLab.Presentation VisualAudioLab.Infrastructure)
 val_configure_target(VisualAudioLab.Presentation.Tests)
 add_test(NAME Presentation.Shell COMMAND VisualAudioLab.Presentation.Tests)
@@ -52,6 +58,8 @@ add_test(NAME Presentation.NodeEditor COMMAND VisualAudioLab.Presentation.Tests 
 set_tests_properties(Presentation.NodeEditor PROPERTIES LABELS "gui" TIMEOUT 30)
 add_test(NAME Presentation.Projects COMMAND VisualAudioLab.Presentation.Tests --projects)
 set_tests_properties(Presentation.Projects PROPERTIES LABELS "gui" TIMEOUT 30)
+add_test(NAME Presentation.Visualization COMMAND VisualAudioLab.Presentation.Tests --visualization)
+set_tests_properties(Presentation.Visualization PROPERTIES LABELS "gui" TIMEOUT 60)
 
 # The layout value deliberately compiles and runs without JUCE or a desktop session.
 add_executable(VisualAudioLab.DockLayout.Tests DockLayoutTests.cpp)

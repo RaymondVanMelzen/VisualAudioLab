@@ -2,6 +2,7 @@
 
 #include <val/application/AudioStream.h>
 #include <val/application/Result.h>
+#include <val/audio/SignalCaptureBuffer.h>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -121,32 +122,22 @@ protected:
     bool usesInput() const noexcept final { return false; }
 };
 
-/** Approximate lock-free observation of the last completed 256-frame analysis window. */
-struct AnalyzerSnapshot
-{
-    std::array<float, 32> peak{}, rms{};
-    std::uint64_t windows{};
-};
-
 /**
- * Pass-through analysis base with independent 256-sample peak/RMS windows.
- * Derived analyzers may extend beginFrame/endFrame but must retain bounded, allocation-free work.
- * Snapshot fields are independent atomic observations, not a coherent multi-field transaction.
+ * Pass-through observation endpoint. Statistics belong to AnalyzerEngine, never the callback.
+ * Graph capture is opt-in and performed once after the complete block (including automation splits).
+ * snapshot returns independent worker-published legacy fields, or no windows until analysis runs.
  */
 class AnalyzerNode : public EffectNode
 {
 public:
     AnalyzerNode() = default;
     [[nodiscard]] AnalyzerSnapshot snapshot() const noexcept;
+    /** Control-only borrowed lifetime is retained by the prepared graph and this node. */
+    void bindCapture(std::shared_ptr<SignalCaptureBuffer> capture) { capture_ = std::move(capture); }
+    void process(const NodeProcessContext& context) noexcept override;
 protected:
-    void resetState() noexcept override;
-    float sample(int channel, float input) noexcept override;
-    void endFrame() noexcept override;
+    float sample(int, float input) noexcept override { return input; }
 private:
-    std::array<float, 32> peak_{};
-    std::array<double, 32> squares_{};
-    std::array<std::atomic<std::uint32_t>, 32> publishedPeak_{}, publishedRms_{};
-    std::atomic<std::uint64_t> windows_{};
-    int frames_{};
+    std::shared_ptr<SignalCaptureBuffer> capture_;
 };
 }

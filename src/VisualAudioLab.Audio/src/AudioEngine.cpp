@@ -300,6 +300,7 @@ void AudioEngine::process(const AudioBuffer& buffer) noexcept
             lastEventFrame_.store(frame, std::memory_order_relaxed);
         }
         if (active_ && buffer.frames > offset) active_->process(staged, offset, buffer.frames - offset);
+        if (active_ && buffer.frames > 0) active_->capture(buffer.frames, epoch_, beganFrame);
         position_.store(endFrame, std::memory_order_release);
     }
     const auto ended = clock_();

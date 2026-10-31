@@ -29,6 +29,12 @@ Stable node IDs and directed connections are preserved; display names and positi
 
 Live parameter changes affect runtime state only, not project data/history. A caller that wants persistence must separately make an undoable workspace parameter edit and submit the corresponding runtime change. Graph replacement resets processor state to its supplied prepared values; it does not promise click-free topology changes or DSP-state migration.
 
+Optional `AudioNodeDefinition::capture` taps copy complete prepared node outputs after all
+automation subspans, with epoch/revision/sample-position provenance. There is no implicit
+analyzer activation or pruned-branch processing. Ownership follows ordinary prepared-plan
+retirement; capture performs only bounded preallocated copies/publication. FFT, RMS, peaks
+and visualization run on the shared worker described in [SignalVisualization.md](SignalVisualization.md).
+
 ## Preparation, publication and reclamation
 
 All control calls, preparation, allocation and destruction belong to the engine's creating thread. Backend operations additionally require JUCE's message thread. The backend must outlive the engine through `stop()`. A backend may be shut down first (which quiesces its callbacks), but its object must remain alive until engine cleanup finishes.

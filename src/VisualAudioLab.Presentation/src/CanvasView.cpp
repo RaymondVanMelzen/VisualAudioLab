@@ -125,8 +125,12 @@ void CanvasView::paint(juce::Graphics& graphics)
     {
         const auto point = position(id);
         if (NodeView::bounds(point).expanded(12.0f / zoom_).intersects(visible))
+        {
             NodeView::paint(graphics, workspace_.graph().nodes.at(id), point,
                             selected_.contains(id), focusedNode_ == id && hasKeyboardFocus(true), zoom_ >= 0.35f);
+            if (paintObservation && zoom_ >= 0.75f)
+                paintObservation(graphics, id, NodeView::bounds(point).reduced(58, 0).withTrimmedTop(36).withHeight(36));
+        }
     }
     if (gesture_ == Gesture::connect && source_)
     {
@@ -152,8 +156,30 @@ void CanvasView::paint(juce::Graphics& graphics)
     }
 }
 
+bool CanvasView::observationVisible(domain::GraphId id) const
+{
+    if (const auto* peer = getPeer(); peer && peer->isMinimised()) return false;
+    const auto found = workspace_.graph().nodes.find(id);
+    return isShowing() && zoom_ >= 0.75f && found != workspace_.graph().nodes.end()
+        && NodeView::bounds(position(id)).intersects(visiblePatch());
+}
+
+void CanvasView::repaintObservation(domain::GraphId id)
+{
+    if (!observationVisible(id)) return;
+    const auto rectangle = NodeView::bounds(position(id));
+    repaint(juce::Rectangle<float>(toScreen(rectangle.getTopLeft()), toScreen(rectangle.getBottomRight())).getSmallestIntegerContainer().expanded(1));
+}
+
 void CanvasView::updateDetails()
 {
+    if (onObservationTarget)
+    {
+        const auto wire = workspace_.graph().connections.find(selectedWire_);
+        const auto target = wire != workspace_.graph().connections.end() ? wire->second.source.node
+            : selected_.size() == 1 ? *selected_.begin() : 0;
+        onObservationTarget(target);
+    }
     zoomLabel_.setText(juce::String(juce::roundToInt(zoom_ * 100)) + "%", juce::dontSendNotification);
     remove_.setEnabled(!selected_.empty() || selectedWire_ != 0);
     setDescription(juce::String(workspace_.graph().nodes.size()) + " structural nodes, "

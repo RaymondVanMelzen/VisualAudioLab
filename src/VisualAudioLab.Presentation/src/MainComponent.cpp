@@ -110,6 +110,7 @@ void MainComponent::refresh()
     if (displayedPatch_ != workspace_.project().activePatch)
     {
         displayedPatch_ = workspace_.project().activePatch;
+        dockWorkspace_.visualizations().reset();
         dockWorkspace_.canvas().resetForProject();
     }
     updateProjectChrome();
@@ -312,6 +313,7 @@ void MainComponent::captureProjectView()
 
 void MainComponent::restoreProjectView()
 {
+    dockWorkspace_.visualizations().reset();
     const auto& layout = workspace_.project().layout;
     dockWorkspace_.restoreLayout(layout);
     if (auto* window = dynamic_cast<juce::DocumentWindow*>(getTopLevelComponent()))

@@ -18,6 +18,7 @@ ComponentType* findControl(juce::Component& parent)
 void runNodeEditorTests();
 void runLargeGraphBenchmark();
 void runProjectPresentationTests();
+void runVisualizationPresentationTests();
 
 int main(int argc, char** argv)
 {
@@ -31,6 +32,8 @@ int main(int argc, char** argv)
                 runLargeGraphBenchmark();
             else if (std::string_view(argv[1]) == "--projects")
                 runProjectPresentationTests();
+            else if (std::string_view(argv[1]) == "--visualization")
+                runVisualizationPresentationTests();
             else
                 throw std::runtime_error("Unknown presentation test selector.");
         });

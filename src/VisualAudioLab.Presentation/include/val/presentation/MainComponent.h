@@ -23,7 +23,7 @@ public:
     void paint(juce::Graphics& graphics) override;
     void resized() override;
     void showStatus(const juce::String& text);
-    /** Existing local preference now controls the Property Inspector placeholder. */
+    /** Existing local preference controls the Property Inspector shared signal preview. */
     [[nodiscard]] bool inspectorVisible() const noexcept;
     void setInspectorVisible(bool visible);
     [[nodiscard]] DockWorkspace& dockWorkspace() noexcept { return dockWorkspace_; }

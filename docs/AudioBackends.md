@@ -4,7 +4,7 @@
 
 `IAudioBackend` is an application-owned, platform-neutral C++20 discovery boundary. Infrastructure provides `AsioBackend`, `WasapiExclusiveBackend`, `WasapiSharedBackend` and `CoreAudioBackend` through the pinned JUCE 8.0.12 device module. Production discovery is real; only tests inject a fake device source.
 
-The discovery abstraction is now extended with explicit native stream control for the [basic realtime engine](AudioEngine.md). It still provides no effects, device preference persistence or audio-settings UI integration. The desktop shell remains usable without audio and does not construct these adapters during startup. The existing disabled Audio Settings panel describes the shell, not the availability of this library API.
+The discovery abstraction includes native stream control for the [realtime engine](AudioEngine.md). The [desktop runtime UI](DesktopWorkflow.md) now exposes explicit discovery, capability inspection, configuration and transport. Backend/device choices remain session-local; tokens are not persisted as stable hardware identities. The desktop remains usable without audio and does not construct/probe these adapters until explicit Scan.
 
 The preferred factory returns ASIO on Windows and CoreAudio on macOS. It does not choose a device, start audio, or fall back to another API. WASAPI Shared and Exclusive are separately required implementations and are never substituted. An available API with an empty inventory does not imply usable hardware.
 

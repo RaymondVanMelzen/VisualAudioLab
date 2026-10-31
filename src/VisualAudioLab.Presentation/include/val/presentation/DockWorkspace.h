@@ -12,8 +12,8 @@ namespace val::presentation
 {
 /**
  * Tool panel with a draggable heading and keyboard-accessible docking selector.
- * Borrows optional canvas/visualization content; other bodies disclose their placeholder capabilities.
- * Neither tool controls nor the canvas instantiate an audio/device backend.
+ * Borrows host-supplied content without owning it; the host supplies module/editor/runtime controls.
+ * The panel container itself never constructs an audio/device backend.
  */
 class WorkspacePanel final : public juce::Component
 {
@@ -24,14 +24,14 @@ public:
     void resized() override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void setDockPosition(DockPosition position);
+    /** Replaces borrowed content without changing ownership or persisted panel identity. */
+    void setContent(juce::Component& content);
     [[nodiscard]] PanelId panelId() const noexcept { return panel_; }
 
 private:
     PanelId panel_;
     juce::Label heading_, description_;
     juce::ComboBox destination_;
-    juce::Label deviceLabel_, rateLabel_;
-    juce::ComboBox device_, sampleRate_;
     juce::Component* content_{};
 };
 
@@ -59,6 +59,7 @@ public:
     [[nodiscard]] VisualizationSession& visualizations() noexcept { return visualizations_; }
     [[nodiscard]] VisualizationWidgets& signalPreview() noexcept { return signalPreview_; }
     void showSignalInspector();
+    void setPanelContent(PanelId panel, juce::Component& content) { this->panel(panel).setContent(content); }
     [[nodiscard]] application::ProjectLayout projectLayout() const;
     void restoreLayout(const application::ProjectLayout& value);
     [[nodiscard]] bool accepts(const juce::DragAndDropTarget::SourceDetails& details) const;

@@ -3,19 +3,49 @@
 
 namespace val::presentation
 {
-MainComponent::MainComponent(application::WorkspaceService& workspace, application::ProjectSession* project)
+MainComponent::MainComponent(application::WorkspaceService& workspace, application::ProjectSession* project, RuntimePanel::BackendFactory backends)
     : workspace_(workspace), project_(project)
 {
     setLookAndFeel(&theme_);
     setName("Visual Audio Lab application shell");
     setWantsKeyboardFocus(true);
-    banner_.setText(juce::String::fromUTF8(val_resources::ShellNotice_txt, val_resources::ShellNotice_txtSize),
+    banner_.setText("Explicit Start routes audio. Offline preview uses no device. Invalid edits keep last accepted audio; Stop is always available.",
                    juce::dontSendNotification);
     banner_.setColour(juce::Label::textColourId, juce::Colours::lightgoldenrodyellow);
-    banner_.setTooltip("Project files and structural editing work. No audio devices or processing.");
+    banner_.setTooltip("Choose modules, connect a valid graph, select audio settings and start explicitly.");
 
+    runtime_ = std::make_unique<RuntimePanel>(workspace_, dockWorkspace_.visualizations(), std::move(backends));
+    runtime_->onStatus = [this](juce::String value) { showStatus(value); commands_.commandStatusChanged(); };
+    runtime_->onStarted = [this] { dockWorkspace_.canvas().synchronise(); };
+    audioView_.setViewedComponent(runtime_.get(), false);
+    dockWorkspace_.setPanelContent(PanelId::audioSettings, audioView_);
+    catalog_ = std::make_unique<ModuleCatalog>();
+    catalog_->onInsert = [this](std::string type) { insertModule(std::move(type)); };
+    dockWorkspace_.setPanelContent(PanelId::moduleBrowser, *catalog_);
+    editor_ = std::make_unique<ModuleEditor>(workspace_);
+    editor_->onChanged = [this] { refresh(); };
+    editor_->onRuntimeParameter = [this](auto node, auto index, auto value, auto action) { runtime_->parameter(node, index, value, action); };
+    editor_->onScheduleParameter = [this](auto node, auto index, auto value, auto seconds) { runtime_->schedule(node, index, value, seconds); };
+    inspectorTabs_.addTab("Properties / Script", ShellTheme::surface(), editor_.get(), false);
+    inspectorTabs_.addTab("Signal", ShellTheme::surface(), &dockWorkspace_.signalPreview(), false);
+    dockWorkspace_.setPanelContent(PanelId::propertyInspector, inspectorTabs_);
+    dockWorkspace_.canvas().onObservationTarget = [this](auto node)
+    {
+        editor_->setNode(node);
+        dockWorkspace_.signalPreview().followSelection(node);
+        const auto found = workspace_.graph().nodes.find(node);
+        if (found != workspace_.graph().nodes.end())
+            if (const auto kind = found->second.parameters.find("visualization.kind"); kind != found->second.parameters.end())
+                if (const auto* name = std::get_if<std::string>(&kind->second))
+                {
+                    const auto display = *name == "Spectrum Analyzer" ? VisualizationKind::spectrum
+                        : *name == "Peak Meter" ? VisualizationKind::peak : *name == "RMS Meter" ? VisualizationKind::rms : VisualizationKind::oscilloscope;
+                    dockWorkspace_.signalPreview().showKind(display);
+                    inspectorTabs_.setCurrentTabIndex(1);
+                }
+    };
     for (auto* component : std::initializer_list<juce::Component*>{
-             &menu_, &toolbar_, &banner_, &status_, &dockWorkspace_, &patches_, &addPatch_})
+             &menu_, &toolbar_, &banner_, &status_, &dockWorkspace_, &patches_, &addPatch_, &startAudio_, &stopAudio_})
         addAndMakeVisible(component);
     patches_.setName("Active patch");
     patches_.setTooltip("Switch patches without losing their graph or undo history.");
@@ -25,6 +55,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
         if (index < 0 || index >= static_cast<int>(workspace_.project().patches.size()))
             return;
         captureProjectView();
+        const auto stopped = runtime_->stop();
+        if (!stopped.succeeded) { showStatus(juce::String::fromUTF8(stopped.error.c_str())); return; }
         auto patch = workspace_.project().patches.begin();
         std::advance(patch, index);
         report(workspace_.selectPatch(patch->first));
@@ -37,6 +69,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
     commands_.registerAllCommandsForTarget(this);
     commands_.setFirstCommandTarget(this);
+    startAudio_.setCommandToTrigger(&commands_, startTransport, true);
+    stopAudio_.setCommandToTrigger(&commands_, stopTransport, true);
     addKeyListener(commands_.getKeyMappings());
     dockWorkspace_.onLayoutChanged = [this]
     {
@@ -46,7 +80,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     };
     dockWorkspace_.canvas().onEdit = [this](const application::Result& result)
     {
-        showStatus(result.succeeded ? "Structural graph edit accepted. No processing."
+        showStatus(result.succeeded ? "Graph edit accepted."
                                     : juce::String::fromUTF8(result.error.c_str()));
         commands_.commandStatusChanged();
         menuItemsChanged();
@@ -54,8 +88,9 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
             refresh();
         else
             updateProjectChrome();
+        runtime_->synchronize();
     };
-    showStatus("Ready. Settings/logging are local frameworks; no audio backend exists.");
+    showStatus("Ready. Choose modules and configure Audio Settings; transport is stopped.");
     refresh();
     if (project_ && !project_->warning().empty())
         showStatus(juce::String::fromUTF8(project_->warning().c_str()));
@@ -63,6 +98,9 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
 MainComponent::~MainComponent()
 {
+    audioView_.setViewedComponent(nullptr, false);
+    dockWorkspace_.canvas().onObservationTarget = nullptr;
+    inspectorTabs_.clearTabs();
     removeKeyListener(commands_.getKeyMappings());
     menu_.setModel(nullptr);
     dockWorkspace_.onLayoutChanged = nullptr;
@@ -74,6 +112,43 @@ void MainComponent::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(ShellTheme::background());
 }
+bool MainComponent::keyPressed(const juce::KeyPress& key)
+{
+    if (key.getKeyCode() != juce::KeyPress::F5Key) return false;
+    perform(InvocationInfo(key.getModifiers().isShiftDown() ? stopTransport : startTransport));
+    return true;
+}
+void MainComponent::insertModule(std::string type)
+{
+    const auto position = dockWorkspace_.canvas().toPatch(dockWorkspace_.canvas().viewport().getCentre().toFloat());
+    std::map<std::string, domain::Parameter> values;
+    std::string name = type;
+    if (type == "Oscilloscope" || type == "Spectrum Analyzer" || type == "Peak Meter" || type == "RMS Meter")
+    {
+        values["visualization.kind"] = type;
+        type = "Analyzer";
+    }
+    values["audio.type"] = type;
+    if (type == "Script")
+    {
+        const auto count = runtime_->channels();
+        std::string source = "NODE ScriptPass AT AUDIO;\n";
+        for (int i = 1; i <= count; ++i) source += "INPUT In" + std::to_string(i) + ": REAL;\n";
+        for (int i = 1; i <= count; ++i) source += "OUTPUT Out" + std::to_string(i) + ": REAL;\n";
+        source += "BEGIN\n";
+        for (int i = 1; i <= count; ++i) source += " Out" + std::to_string(i) + " := In" + std::to_string(i) + (i == count ? "\n" : ";\n");
+        source += "END.";
+        values["audio.script"] = std::move(source);
+    }
+    const auto result = workspace_.createNode({position.x, position.y}, name, std::move(values));
+    report(result);
+    if (result.succeeded)
+    {
+        editor_->setNode(workspace_.lastCreatedNode());
+        dockWorkspace_.showPanel(PanelId::propertyInspector);
+        inspectorTabs_.setCurrentTabIndex(0);
+    }
+}
 
 void MainComponent::resized()
 {
@@ -81,11 +156,14 @@ void MainComponent::resized()
     menu_.setBounds(bounds.removeFromTop(26));
     toolbar_.setBounds(bounds.removeFromTop(40));
     auto info = bounds.removeFromTop(38);
+    startAudio_.setBounds(info.removeFromLeft(90).reduced(2, 4));
+    stopAudio_.setBounds(info.removeFromLeft(60).reduced(2, 4));
     addPatch_.setBounds(info.removeFromRight(95).reduced(2, 4));
     patches_.setBounds(info.removeFromRight(170).reduced(2, 4));
     banner_.setBounds(info);
     status_.setBounds(bounds.removeFromBottom(34));
     dockWorkspace_.setBounds(bounds.reduced(0, 4));
+    runtime_->setSize(juce::jmax(400, audioView_.getWidth() - 16), 300);
 }
 
 void MainComponent::showStatus(const juce::String& text)
@@ -109,12 +187,15 @@ void MainComponent::refresh()
     dockWorkspace_.canvas().synchronise();
     if (displayedPatch_ != workspace_.project().activePatch)
     {
+        if (runtime_) { const auto stopped = runtime_->stop(); if (!stopped.succeeded) showStatus(juce::String::fromUTF8(stopped.error.c_str())); }
         displayedPatch_ = workspace_.project().activePatch;
         dockWorkspace_.visualizations().reset();
         dockWorkspace_.canvas().resetForProject();
     }
     updateProjectChrome();
     commands_.commandStatusChanged();
+    if (runtime_) runtime_->synchronize();
+    if (editor_) editor_->refresh();
 }
 
 void MainComponent::report(const application::Result& result)
@@ -129,13 +210,19 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID>& result)
 {
     result.addArray({rename, undo, redo, toggleInspector, resetLayout,
                      showCanvas, showModules, showExplorer, showProperties, showAudioSettings, quit,
-                     saveProject, saveProjectAs, loadProject, addPatch});
+                     saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport});
 }
 
 void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCommandInfo& info)
 {
     switch (command)
     {
+        case startTransport:
+            info.setInfo("Start", "Explicitly start selected native configuration or offline preview", "Audio", 0);
+            info.setActive(!runtime_->running()); info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
+        case stopTransport:
+            info.setInfo("Stop", "Stop/quiesce audio and detach visualizer sources", "Audio", 0);
+            info.setActive(runtime_->running()); info.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::shiftModifier); break;
         case rename: info.setInfo("Rename workspace", "Change project name", "Workspace", 0); break;
         case saveProject:
         case saveProjectAs:
@@ -162,15 +249,15 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
             info.addDefaultKeypress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
             break;
         case toggleInspector:
-            info.setInfo("Show Property Inspector", "Show or hide the placeholder inspector", "View", 0);
+            info.setInfo("Show Property Inspector", "Show properties, script editor and signal inspection", "View", 0);
             info.setTicked(inspectorVisible());
             break;
         case resetLayout: info.setInfo("Reset Layout", "Restore shell panels", "View", 0); break;
-        case showCanvas: info.setInfo("Patch Canvas", "Focus the patch placeholder", "View", 0); break;
-        case showModules: info.setInfo("Module Browser", "Show the module placeholder", "View", 0); break;
-        case showExplorer: info.setInfo("Project Explorer", "Show the project placeholder", "View", 0); break;
-        case showProperties: info.setInfo("Property Inspector", "Show the properties placeholder", "View", 0); break;
-        case showAudioSettings: info.setInfo("Audio Settings", "Show unavailable audio settings", "View", 0); break;
+        case showCanvas: info.setInfo("Patch Canvas", "Focus the patch editor", "View", 0); break;
+        case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
+        case showExplorer: info.setInfo("Project Explorer", "Show project navigation guidance", "View", 0); break;
+        case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
+        case showAudioSettings: info.setInfo("Audio Settings", "Configure backend/devices and explicit transport", "View", 0); break;
         case quit:
             info.setInfo("Quit", "Close Visual Audio Lab", "File", 0);
             info.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
@@ -184,6 +271,18 @@ bool MainComponent::perform(const InvocationInfo& invocation)
 {
     switch (invocation.commandID)
     {
+        case startTransport:
+        {
+            const auto result = runtime_->start();
+            if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
+            return true;
+        }
+        case stopTransport:
+        {
+            const auto result = runtime_->stop();
+            if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
+            return true;
+        }
         case rename: report(workspace_.rename(toolbar_.workspaceName().toStdString())); return true;
         case undo: captureProjectView(); report(workspace_.undo()); return true;
         case redo: captureProjectView(); report(workspace_.redo()); return true;
@@ -257,8 +356,8 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
     }
     else if (index == 3)
     {
-        menu.addItem(4, "Start Audio (no backend)", false);
-        menu.addItem(5, "Stop Audio (no backend)", false);
+        menu.addCommandItem(&commands_, startTransport);
+        menu.addCommandItem(&commands_, stopTransport);
         menu.addSeparator();
         menu.addCommandItem(&commands_, showAudioSettings);
     }
@@ -359,9 +458,11 @@ application::Result MainComponent::loadProjectFrom(const std::filesystem::path& 
 {
     if (!project_) return application::Result::failure("Project storage is unavailable.");
     dockWorkspace_.canvas().cancelGesture();
+    const auto stopped = runtime_->stop();
+    if (!stopped.succeeded) return stopped;
     const auto result = project_->load(path);
     if (result.succeeded) restoreProjectView();
-    fileResult(result, "Project loaded. No audio processing.");
+    fileResult(result, "Project loaded. Transport stopped; Start is explicit.");
     return result;
 }
 

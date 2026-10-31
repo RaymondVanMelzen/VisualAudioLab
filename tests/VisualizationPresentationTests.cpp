@@ -47,8 +47,17 @@ void runVisualizationPresentationTests()
             && inspector.plot(VisualizationKind::spectrum).setRefreshHz(15).succeeded,
             "Each view validates its refresh ceiling.");
     shell.dockWorkspace().showPanel(PanelId::propertyInspector);
+    juce::TabbedComponent* inspectorTabs{};
+    for (auto* child : shell.dockWorkspace().panel(PanelId::propertyInspector).getChildren())
+        if (auto* tabs = dynamic_cast<juce::TabbedComponent*>(child)) inspectorTabs = tabs;
+    require(inspectorTabs, "Property Inspector hosts distinct parameter/script and Signal tabs.");
+    inspectorTabs->setCurrentTabIndex(1);
     session.refresh();
     require(inspector.demanding(), "Visible selected inspector requests one shared observation.");
+    inspectorTabs->setCurrentTabIndex(0); session.refresh();
+    require(!inspector.demanding() && !capture->enabled(), "Hidden Signal tab releases observation demand.");
+    inspectorTabs->setCurrentTabIndex(1); session.refresh();
+    require(inspector.demanding(), "Returning to Signal restores observation demand.");
     inspector.setFrozen(true); session.refresh();
     require(!inspector.demanding() && !capture->enabled(), "Last frozen view detaches capture without retaining a result-page lease.");
     inspector.setFrozen(false);

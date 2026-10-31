@@ -29,19 +29,19 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
     switch (panel)
     {
         case PanelId::patchCanvas:
-            description = "Empty patch canvas\nPatch editing and processing are not implemented.";
+            description = "Patch Canvas content is supplied by the desktop host.";
             break;
         case PanelId::moduleBrowser:
-            description = "No modules available\nModule discovery and insertion are not implemented.";
+            description = "Module catalog is supplied by the desktop host.";
             break;
         case PanelId::projectExplorer:
-            description = "Project Explorer placeholder\nUse File for project files and the patch selector to navigate graphs.";
+            description = "Project Explorer\nUse File for project files and the patch selector to navigate graphs.";
             break;
         case PanelId::propertyInspector:
-            description = "Property Inspector placeholder\nObject properties and parameter editing are not implemented.";
+            description = "Select a module to inspect properties or signals.";
             break;
         case PanelId::audioSettings:
-            description = "Audio backend unavailable. No devices are queried or opened.";
+            description = "Audio settings are supplied by the desktop runtime host.";
             break;
     }
     description_.setText(description, juce::dontSendNotification);
@@ -54,25 +54,18 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
         description_.setVisible(false);
     }
 
-    if (panel == PanelId::audioSettings)
-    {
-        deviceLabel_.setText("Device", juce::dontSendNotification);
-        rateLabel_.setText("Sample rate", juce::dontSendNotification);
-        device_.setTitle("Audio device (unavailable)");
-        sampleRate_.setTitle("Sample rate (unavailable)");
-        device_.setTextWhenNothingSelected("Not available");
-        sampleRate_.setTextWhenNothingSelected("Not available");
-        device_.setEnabled(false);
-        sampleRate_.setEnabled(false);
-        for (auto* child : std::initializer_list<juce::Component*>{
-                 &deviceLabel_, &device_, &rateLabel_, &sampleRate_})
-            addAndMakeVisible(child);
-    }
 }
 
 WorkspacePanel::~WorkspacePanel()
 {
     heading_.removeMouseListener(this);
+}
+void WorkspacePanel::setContent(juce::Component& content)
+{
+    if (content_ && content_->getParentComponent() == this) removeChildComponent(content_);
+    content_ = &content; addAndMakeVisible(content_);
+    description_.setVisible(false);
+    resized();
 }
 
 void WorkspacePanel::paint(juce::Graphics& graphics)
@@ -99,16 +92,6 @@ void WorkspacePanel::resized()
     {
         content_->setBounds(bounds);
         return;
-    }
-    if (panel_ == PanelId::audioSettings)
-    {
-        auto row = bounds.removeFromTop(28);
-        deviceLabel_.setBounds(row.removeFromLeft(100));
-        device_.setBounds(row);
-        bounds.removeFromTop(4);
-        row = bounds.removeFromTop(28);
-        rateLabel_.setBounds(row.removeFromLeft(100));
-        sampleRate_.setBounds(row);
     }
     description_.setBounds(bounds);
 }

@@ -4,8 +4,10 @@ This is the implemented subset of [ValScriptArchitecture.md](ValScriptArchitectu
 not a claim that every proposed feature exists. The local C++20 compiler emits verified
 typed register IR, **not native machine code**. `ScriptNode` executes that finite plan
 once per sample frame inside the existing `AudioGraph`. This is actual buffer processing,
-not a parse-only prototype. There is no script editor, automatic file loading, graph
-playback on edit/load, plugin integration or external compiler dependency.
+not a parse-only prototype. The desktop Properties / Script panel now provides source
+editing/loading, examples, Compile/Apply and diagnostics; see [DesktopWorkflow.md](DesktopWorkflow.md).
+Loading a project never starts playback. Valid applied source can update an already-running
+graph. There is no plugin integration or external compiler dependency.
 
 ## Small example and runnable sources
 
@@ -188,7 +190,8 @@ be pending activation; a new generation does not carry an old fault. The audio w
 stores the immutable first-fault payload before a release publication; control reads
 with acquire. Repeated queries do not clear it. Reset/reprepare requires quiescence;
 stop/replacement reclaims failed nodes normally. There is no automatic retry/recovery
-or UI diagnostic panel in this feature.
+or automatic recovery. The desktop reports the node/location and stops transport on a
+latched script fault; fix the source and restart explicitly.
 
 | Resource | Bound |
 |---|---|

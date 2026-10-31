@@ -66,7 +66,7 @@ private:
 };
 }
 
-Result WorkspaceService::createNode(domain::Position position, std::string name)
+Result WorkspaceService::createNode(domain::Position position, std::string name, std::map<std::string, domain::Parameter> parameters)
 {
     if (!validPosition(position))
         return Result::failure("Node position must be finite and within +/-1,000,000 patch units.");
@@ -76,9 +76,14 @@ Result WorkspaceService::createNode(domain::Position position, std::string name)
         return Result::failure("Use a non-blank node label of 1-128 bytes without control characters.");
     if (nextId_ == std::numeric_limits<domain::GraphId>::max())
         return Result::failure("The workspace has exhausted its stable object identities.");
+    for (const auto& [key, value] : parameters)
+        if (key.empty() || key.size() > 128 || key.find('\0') != std::string::npos
+            || (std::holds_alternative<std::string>(value) && std::get<std::string>(value).find('\0') != std::string::npos)
+            || (std::holds_alternative<double>(value) && !std::isfinite(std::get<double>(value))))
+            return Result::failure("Initial node parameters need valid keys and finite scalar values.");
     const auto id = nextId_;
     domain::Graph alternate;
-    alternate.nodes.emplace(id, domain::Node{id, std::move(name), position});
+    alternate.nodes.emplace(id, domain::Node{id, std::move(name), position, std::move(parameters)});
     auto result = history_.execute(std::make_unique<GraphEdit>(
         activeGraph(), "Create node", std::move(alternate), std::vector{id}, std::vector<domain::GraphId>{}, state_.activePatch));
     if (result.succeeded)

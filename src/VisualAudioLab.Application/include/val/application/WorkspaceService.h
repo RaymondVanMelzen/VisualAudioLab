@@ -31,7 +31,8 @@ public:
     [[nodiscard]] bool canRedo() const noexcept { return history_.canRedo(); }
     /** Accepted editor content; all mutation goes through this service and its existing history. */
     [[nodiscard]] const domain::Graph& graph() const noexcept { return state_.patches.at(state_.activePatch).graph; }
-    [[nodiscard]] Result createNode(domain::Position position, std::string name = "Node");
+    [[nodiscard]] Result createNode(domain::Position position, std::string name = "Node",
+        std::map<std::string, domain::Parameter> parameters = {});
     [[nodiscard]] Result deleteNodes(const std::vector<domain::GraphId>& nodes);
     [[nodiscard]] Result moveNodes(const std::map<domain::GraphId, domain::Position>& positions);
     [[nodiscard]] Result connect(domain::Endpoint source, domain::Endpoint destination);

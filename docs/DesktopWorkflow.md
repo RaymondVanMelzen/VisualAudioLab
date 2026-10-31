@@ -18,10 +18,19 @@ stopped/setup-required, scanning, inspecting, ready or running state.
    device and either an input device or **None (output only)**. ASIO selects
    one driver; input is either that same driver or None, not a second driver.
    WASAPI selects separate Windows capture/render endpoints.
-3. Click **Inspect selected devices** to query channels, sample rates and buffer
-   sizes for the selected configuration in one JUCE device instance. This is
+3. Click the highlighted **Detect rates, buffers & channels** button on its own
+   row directly below **Scan devices**. Disabled fields saying **Click Detect
+   above** are not buttons: the options have not been queried yet. Status above
+   the fields distinguishes not-loaded, loading, failed and ready states; hover
+   it for the full diagnostic. Detection queries the selected configuration
+   in one JUCE device instance. This is
    deliberately separate from enumeration: initializing a
    driver can affect hardware, and ASIO inspection may briefly start/stop it.
+   Discovery is queued with loading feedback before invoking JUCE; an individual
+   vendor call may still temporarily block the message thread and cannot safely
+   be forcibly cancelled. Detection does not start playback. Loading capabilities
+   automatically on launch is a policy some JUCE apps choose, not a way to obtain
+   driver capabilities without runtime initialization.
 4. Select the reported sample rate, buffer frames and output channel count.
    Input count must be zero or match output count. Counts select the first N
    reported channels; tooltips list their names. WASAPI pair candidates follow
@@ -42,12 +51,12 @@ Unavailable drivers, stale devices, unsupported configurations and stream
 errors are shown in the panel/status bar. No silent fallback occurs. Device
 inventory changes stop transport and invalidate capabilities. Exact unambiguous
 device-name matches can be restored, but missing/ambiguous devices are never
-replaced. Scan and Inspect remain explicit, followed by explicit Start.
+replaced. Scan and Detect remain explicit, followed by explicit Start.
 
 Validated backend/device names, rate, buffer and channel counts persist in
 machine-local `settings.json` using the existing preference lifecycle. They
 are hints, not device identities: launch loads them without opening hardware,
-Scan resolves fresh tokens, and Inspect revalidates saved choices. Tokens and
+Scan resolves fresh tokens, and Detect revalidates saved choices. Tokens and
 transport state are never persisted. Old window-only preferences remain valid;
 malformed preferences preserve their original file and disable automatic writes.
 

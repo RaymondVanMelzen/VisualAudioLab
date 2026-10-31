@@ -77,7 +77,7 @@ private:
     std::array<float, 4096 * 32> offlineOutput_{};
     std::array<float*, 32> offlinePointers_{};
     juce::ComboBox api_, input_, output_, rateChoice_, buffer_, inputCount_, outputCount_;
-    juce::TextButton scan_{"Scan devices"}, inspect_{"Inspect selected devices"}, start_{"Start"}, stop_{"Stop"}, done_{"Done"};
+    juce::TextButton scan_{"Scan devices"}, inspect_{"Detect rates, buffers & channels"}, start_{"Start"}, stop_{"Stop"}, done_{"Done"};
     std::array<juce::Label, 7> labels_;
     juce::Label notice_, state_;
     juce::String lastStatus_{"Stopped. Choose an API, scan, select devices, then inspect capabilities. No device opens automatically."};

@@ -35,7 +35,7 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
             description = "No modules available\nModule discovery and insertion are not implemented.";
             break;
         case PanelId::projectExplorer:
-            description = "No project loaded\nProject files and persistence are not implemented.";
+            description = "Project Explorer placeholder\nUse File for project files and the patch selector to navigate graphs.";
             break;
         case PanelId::propertyInspector:
             description = "Property Inspector placeholder\nObject properties and parameter editing are not implemented.";
@@ -249,6 +249,48 @@ DockWorkspace::~DockWorkspace()
 WorkspacePanel& DockWorkspace::panel(PanelId id) noexcept
 {
     return *panels_[static_cast<std::size_t>(id)];
+}
+
+application::ProjectLayout DockWorkspace::projectLayout() const
+{
+    application::ProjectLayout value;
+    for (std::size_t i = 0; i < panels_.size(); ++i)
+    {
+        const auto& placement = layout_.placement(static_cast<PanelId>(i));
+        value.docks[i] = static_cast<int>(placement.position);
+        value.visible[i] = placement.visible;
+    }
+    value.ratios = {leftRatio_, rightRatio_, bottomRatio_};
+    const std::array<const DockArea*, 4> docks{&left_, &centre_, &right_, &bottom_};
+    value.selectedPanels.fill(-1);
+    for (std::size_t dock = 0; dock < docks.size(); ++dock)
+        for (std::size_t panelIndex = 0; panelIndex < panels_.size(); ++panelIndex)
+            if (docks[dock]->getCurrentContentComponent() == panels_[panelIndex].get())
+                value.selectedPanels[dock] = static_cast<int>(panelIndex);
+    return value;
+}
+
+void DockWorkspace::restoreLayout(const application::ProjectLayout& value)
+{
+    for (std::size_t i = 0; i < panels_.size(); ++i)
+    {
+        const auto panelId = static_cast<PanelId>(i);
+        layout_.move(panelId, static_cast<DockPosition>(value.docks[i]));
+        layout_.setVisible(panelId, value.visible[i]);
+    }
+    leftRatio_ = static_cast<float>(value.ratios[0]);
+    rightRatio_ = static_cast<float>(value.ratios[1]);
+    bottomRatio_ = static_cast<float>(value.ratios[2]);
+    rebuild();
+    const std::array<DockArea*, 4> docks{&left_, &centre_, &right_, &bottom_};
+    for (std::size_t dock = 0; dock < docks.size(); ++dock)
+        for (int tab = 0; tab < docks[dock]->getNumTabs(); ++tab)
+        {
+            const auto selected = value.selectedPanels[dock];
+            if (selected >= 0 && docks[dock]->getTabContentComponent(tab) == panels_[selected].get())
+                docks[dock]->setCurrentTabIndex(tab);
+        }
+    resized();
 }
 
 DockWorkspace::DockArea& DockWorkspace::area(DockPosition position) noexcept

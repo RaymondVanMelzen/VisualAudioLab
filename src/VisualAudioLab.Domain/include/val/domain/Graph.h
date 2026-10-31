@@ -3,9 +3,12 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <variant>
 
 namespace val::domain
 {
+/** Portable scalar parameter data, without DSP behavior or processor metadata. */
+using Parameter = std::variant<std::monostate, bool, double, std::string>;
 /** Stable document-local identity; zero denotes no object and IDs are never recycled. */
 using GraphId = std::uint64_t;
 
@@ -33,6 +36,7 @@ struct Node final
     GraphId id{};
     std::string name;
     Position position;
+    std::map<std::string, Parameter> parameters;
     bool operator==(const Node&) const = default;
 };
 
@@ -44,7 +48,7 @@ struct Connection final
     bool operator==(const Connection&) const = default;
 };
 
-/** Accepted transient graph owned by the workspace; views borrow immutable snapshots by ID. */
+/** Accepted structural graph owned by its project patch; views resolve immutable content by ID. */
 struct Graph final
 {
     std::map<GraphId, Node> nodes;

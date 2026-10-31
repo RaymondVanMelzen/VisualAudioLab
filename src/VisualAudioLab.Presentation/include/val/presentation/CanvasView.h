@@ -48,6 +48,10 @@ public:
     [[nodiscard]] std::optional<domain::Endpoint> portAt(juce::Point<float> screenPoint) const;
     [[nodiscard]] domain::GraphId connectionAt(juce::Point<float> screenPoint) const;
     [[nodiscard]] juce::Rectangle<int> viewport() const;
+    [[nodiscard]] application::PatchViewport navigation() const { return {zoom_, offset_.x, offset_.y}; }
+    void restoreNavigation(application::PatchViewport value);
+    /** A project/patch transition clears object-local focus and selection, not just stale IDs. */
+    void resetForProject();
     std::function<void(const application::Result&)> onEdit;
 
 private:

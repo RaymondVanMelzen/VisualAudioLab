@@ -6,7 +6,7 @@ namespace val::presentation
 {
 /**
  * Compact command-bound toolbar; the command manager is borrowed and outlives this view.
- * The existing temporary workspace identity is not a project name or a persistence promise.
+ * Renaming edits project identity; saving remains an explicit File command.
  */
 class ShellToolbar final : public juce::Component
 {

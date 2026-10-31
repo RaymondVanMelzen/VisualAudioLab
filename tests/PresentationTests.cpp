@@ -17,6 +17,7 @@ ComponentType* findControl(juce::Component& parent)
 
 void runNodeEditorTests();
 void runLargeGraphBenchmark();
+void runProjectPresentationTests();
 
 int main(int argc, char** argv)
 {
@@ -28,6 +29,8 @@ int main(int argc, char** argv)
                 runNodeEditorTests();
             else if (std::string_view(argv[1]) == "--benchmark")
                 runLargeGraphBenchmark();
+            else if (std::string_view(argv[1]) == "--projects")
+                runProjectPresentationTests();
             else
                 throw std::runtime_error("Unknown presentation test selector.");
         });
@@ -37,8 +40,8 @@ int main(int argc, char** argv)
         val::application::WorkspaceService service;
         val::presentation::MainComponent shell(service);
         shell.setSize(1000, 700);
-        require(shell.getNumChildComponents() == 5,
-                "Menu, toolbar, capability banner, status bar and dock workspace are constructed.");
+        require(shell.getNumChildComponents() == 7,
+                "Shell chrome, dock workspace and patch navigation are constructed.");
         require(shell.inspectorVisible(), "Inspector starts visible.");
         shell.setInspectorVisible(false);
         require(!shell.inspectorVisible(), "Inspector can be hidden without a backend.");
@@ -47,7 +50,7 @@ int main(int argc, char** argv)
         shell.showStatus("Test status");
         juce::Array<juce::CommandID> commands;
         shell.getAllCommands(commands);
-        require(commands.size() == 11, "Shell registers history, navigation, layout and lifecycle commands.");
+        require(commands.size() == 15, "Shell registers history, navigation, layout, project and lifecycle commands.");
         auto* nameEditor = findControl<juce::TextEditor>(shell);
         require(nameEditor != nullptr, "Workspace name has an editable control.");
         auto commandId = [&](const juce::String& name)

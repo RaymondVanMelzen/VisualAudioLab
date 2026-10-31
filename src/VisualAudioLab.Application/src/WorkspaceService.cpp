@@ -28,8 +28,8 @@ Result WorkspaceService::rename(std::string name)
         || std::all_of(name.begin(), name.end(), [](unsigned char ch) { return ch <= 32; })
         || std::any_of(name.begin(), name.end(), [](unsigned char ch) { return ch < 32 || ch == 127; }))
         return Result::failure("Use a non-blank workspace name of at most 128 UTF-8 bytes without control characters.");
-    if (name == workspace_.name)
+    if (name == state_.workspace.name)
         return Result::success();
-    return history_.execute(std::make_unique<RenameWorkspace>(workspace_, std::move(name)));
+    return history_.execute(std::make_unique<RenameWorkspace>(state_.workspace, std::move(name)));
 }
 }

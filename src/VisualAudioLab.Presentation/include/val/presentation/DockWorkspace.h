@@ -36,7 +36,7 @@ private:
 
 /**
  * Four fixed tab docks with draggable panel headings and bounded resizable dividers.
- * Owns every view and the canvas independently of its current tab parent. Layout is transient UI state;
+ * Owns every view and the canvas independently of its current tab parent. Layout is navigation state;
  * rebuilding tabs must not destroy panels or mutate application/service history.
  * All calls and callbacks run on the JUCE message thread.
  */
@@ -54,6 +54,8 @@ public:
     [[nodiscard]] const DockLayout& layout() const noexcept { return layout_; }
     [[nodiscard]] WorkspacePanel& panel(PanelId id) noexcept;
     [[nodiscard]] CanvasView& canvas() noexcept { return canvas_; }
+    [[nodiscard]] application::ProjectLayout projectLayout() const;
+    void restoreLayout(const application::ProjectLayout& value);
     [[nodiscard]] bool accepts(const juce::DragAndDropTarget::SourceDetails& details) const;
     std::function<void()> onLayoutChanged;
 

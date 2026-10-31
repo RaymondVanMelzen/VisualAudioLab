@@ -8,5 +8,6 @@ namespace val::domain
 struct Workspace final
 {
     std::string name{"Untitled"};
+    bool operator==(const Workspace&) const = default;
 };
 }

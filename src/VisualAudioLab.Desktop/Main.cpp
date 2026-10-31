@@ -2,6 +2,7 @@
 #include <val/application/SettingsService.h>
 #include <val/infrastructure/FileLogger.h>
 #include <val/infrastructure/LocalSettingsStore.h>
+#include <val/infrastructure/LocalProjectStore.h>
 #include <val/presentation/MainComponent.h>
 #include <iostream>
 
@@ -19,13 +20,14 @@ std::filesystem::path nativePath(const juce::File& file)
 class MainWindow final : public juce::DocumentWindow
 {
 public:
-    MainWindow(application::WorkspaceService& workspace, const application::Settings& settings)
+    MainWindow(application::WorkspaceService& workspace, application::ProjectSession& project,
+               const application::Settings& settings)
         : juce::DocumentWindow("Visual Audio Lab", juce::Colour(0xff20252b), allButtons)
     {
         setUsingNativeTitleBar(true);
         setResizable(true, false);
         setResizeLimits(800, 600, 7680, 4320);
-        content_ = new presentation::MainComponent(workspace);
+        content_ = new presentation::MainComponent(workspace, &project);
         setContentOwned(content_, false);
         content_->setInspectorVisible(settings.inspectorVisible);
         centreWithSize(settings.windowWidth, settings.windowHeight);
@@ -62,7 +64,9 @@ public:
         store_ = std::make_unique<infrastructure::LocalSettingsStore>(nativePath(root.getChildFile("settings.json")));
         settings_ = std::make_unique<application::SettingsService>(*store_);
         const auto loaded = settings_->load();
-        window_ = std::make_unique<MainWindow>(workspace_, settings_->current());
+        projectStore_ = std::make_unique<infrastructure::LocalProjectStore>(nativePath(root.getChildFile("recent-projects.json")));
+        project_ = std::make_unique<application::ProjectSession>(workspace_, *projectStore_);
+        window_ = std::make_unique<MainWindow>(workspace_, *project_, settings_->current());
         if (!loaded.succeeded)
         {
             window_->content().showStatus(juce::String::fromUTF8(loaded.error.c_str())
@@ -76,6 +80,14 @@ public:
     {
         if (quitting_)
             return;
+        if (window_)
+            window_->content().requestClose([this] { finishQuit(); });
+        else
+            finishQuit();
+    }
+
+    void finishQuit()
+    {
         quitting_ = true;
         if (window_ && settings_)
         {
@@ -101,6 +113,8 @@ public:
     void shutdown() override
     {
         window_.reset();
+        project_.reset();
+        projectStore_.reset();
         if (logger_)
             log(application::LogLevel::info, "lifecycle", "Application skeleton stopped.");
         settings_.reset();
@@ -134,6 +148,8 @@ private:
     std::unique_ptr<infrastructure::LocalSettingsStore> store_;
     std::unique_ptr<application::SettingsService> settings_;
     application::WorkspaceService workspace_;
+    std::unique_ptr<infrastructure::LocalProjectStore> projectStore_;
+    std::unique_ptr<application::ProjectSession> project_;
     std::unique_ptr<MainWindow> window_;
     bool quitting_{false};
 };

@@ -15,8 +15,16 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     banner_.setTooltip("Choose modules, connect a valid graph, select audio settings and start explicitly.");
 
     runtime_ = std::make_unique<RuntimePanel>(workspace_, dockWorkspace_.visualizations(), std::move(backends));
-    runtime_->onStatus = [this](juce::String value) { showStatus(value); commands_.commandStatusChanged(); };
+    runtime_->onStatus = [this](juce::String value)
+    {
+        banner_.setText(runtime_->compactStatus() + " | Audio Setup to configure; Start / Stop are explicit.",
+                        juce::dontSendNotification);
+        banner_.setTooltip(value);
+        showStatus(value); commands_.commandStatusChanged();
+    };
     runtime_->onStarted = [this] { dockWorkspace_.canvas().synchronise(); };
+    runtime_->onDismissSetup = [this] { dockWorkspace_.setPanelVisible(PanelId::audioSettings, false); };
+    runtime_->setSize(640, 300);
     audioView_.setViewedComponent(runtime_.get(), false);
     dockWorkspace_.setPanelContent(PanelId::audioSettings, audioView_);
     catalog_ = std::make_unique<ModuleCatalog>();
@@ -90,7 +98,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
             updateProjectChrome();
         runtime_->synchronize();
     };
-    showStatus("Ready. Choose modules and configure Audio Settings; transport is stopped.");
+    banner_.setText(runtime_->compactStatus() + " | Audio Setup to configure; Start / Stop are explicit.", juce::dontSendNotification);
+    showStatus("Ready. Modules are reusable audio functions; placed nodes are instances. Configure Audio Setup, then Start explicitly.");
     refresh();
     if (project_ && !project_->warning().empty())
         showStatus(juce::String::fromUTF8(project_->warning().c_str()));
@@ -163,7 +172,6 @@ void MainComponent::resized()
     banner_.setBounds(info);
     status_.setBounds(bounds.removeFromBottom(34));
     dockWorkspace_.setBounds(bounds.reduced(0, 4));
-    runtime_->setSize(juce::jmax(400, audioView_.getWidth() - 16), 300);
 }
 
 void MainComponent::showStatus(const juce::String& text)
@@ -219,7 +227,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
     {
         case startTransport:
             info.setInfo("Start", "Explicitly start selected native configuration or offline preview", "Audio", 0);
-            info.setActive(!runtime_->running()); info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
+            info.setActive(runtime_->ready()); info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
         case stopTransport:
             info.setInfo("Stop", "Stop/quiesce audio and detach visualizer sources", "Audio", 0);
             info.setActive(runtime_->running()); info.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::shiftModifier); break;
@@ -257,7 +265,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
         case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
         case showExplorer: info.setInfo("Project Explorer", "Show project navigation guidance", "View", 0); break;
         case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
-        case showAudioSettings: info.setInfo("Audio Settings", "Configure backend/devices and explicit transport", "View", 0); break;
+        case showAudioSettings: info.setInfo("Audio Setup", "Occasional device setup; hide when finished. Transport stays explicit.", "View", 0); break;
         case quit:
             info.setInfo("Quit", "Close Visual Audio Lab", "File", 0);
             info.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);

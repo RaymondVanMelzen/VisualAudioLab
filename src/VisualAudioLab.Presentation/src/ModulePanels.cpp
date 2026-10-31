@@ -107,7 +107,9 @@ public:
         list_.setName("Available modules");
         list_.setRowHeight(30);
         insert_.onClick = [this] { insert(); };
-        for (auto* child : std::initializer_list<juce::Component*>{&search_, &list_, &insert_, &status_})
+        help_.setText("Modules are reusable audio functions.\nPlace a node to create an instance.\nInput / Output are routing utilities.", juce::dontSendNotification);
+        help_.setFont(juce::FontOptions(11.0f));
+        for (auto* child : std::initializer_list<juce::Component*>{&search_, &list_, &insert_, &status_, &help_})
             addAndMakeVisible(child);
         filter();
     }
@@ -115,6 +117,7 @@ public:
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(8);
+        help_.setBounds(bounds.removeFromTop(52));
         search_.setBounds(bounds.removeFromTop(30));
         bounds.removeFromTop(6);
         insert_.setBounds(bounds.removeFromBottom(30));
@@ -128,7 +131,8 @@ private:
         if (row < 0 || row >= getNumRows()) return;
         if (selected) graphics.fillAll(ShellTheme::accent().withAlpha(0.25f));
         graphics.setColour(juce::Colours::white);
-        graphics.drawText(filtered_[static_cast<std::size_t>(row)], 8, 0, width - 16, height,
+        const auto& type = filtered_[static_cast<std::size_t>(row)];
+        graphics.drawText(type + ((type == "Input" || type == "Output") ? " (routing)" : ""), 8, 0, width - 16, height,
                           juce::Justification::centredLeft);
     }
     void selectedRowsChanged(int row) override { insert_.setEnabled(row >= 0 && row < getNumRows()); }
@@ -148,7 +152,7 @@ private:
         if (!filtered_.empty())
             list_.selectRow(found == filtered_.end() ? 0 : static_cast<int>(found - filtered_.begin()));
         insert_.setEnabled(!filtered_.empty());
-        status_.setText(juce::String(getNumRows()) + " modules", juce::dontSendNotification);
+        status_.setText(juce::String(getNumRows()) + " modules / routing utilities", juce::dontSendNotification);
     }
     void insert()
     {
@@ -163,7 +167,7 @@ private:
     juce::TextEditor search_;
     juce::ListBox list_;
     juce::TextButton insert_{"Insert selected module"};
-    juce::Label status_;
+    juce::Label status_, help_;
     std::vector<juce::String> filtered_;
 };
 
@@ -267,12 +271,12 @@ public:
         title_.setText(selected ? juce::String(selected->name) : "Module editor", juce::dontSendNotification);
         bypass_.setEnabled(false);
         if (!selected)
-            status(selected_ == 0 ? "Select an audio module to edit." : "Selected node no longer exists.");
+            status(selected_ == 0 ? "Select an audio module instance (placed node) to edit." : "Selected node no longer exists.");
         else
         {
             const auto field = selected->parameters.find("audio.type");
             const auto* type = field != selected->parameters.end() ? std::get_if<std::string>(&field->second) : nullptr;
-            if (!type) status("Cannot edit a generic node: an explicit audio.type string is required.");
+            if (!type) status("Structural routing draft, not a module instance or executable pass-through. An explicit audio.type is required for execution. Use Module Browser for audio functions or Input / Output routing utilities.");
             else
             {
                 type_ = *type;
@@ -317,14 +321,19 @@ public:
                     else
                     {
                         valid_ = true;
-                        bypass_.setEnabled(true);
+                        const bool routing = type_ == "Input" || type_ == "Output";
+                        bypass_.setEnabled(!routing);
+                        title_.setText(juce::String(selected->name) + (routing ? " - routing utility" : " - module instance"),
+                                       juce::dontSendNotification);
                         const auto bypass = selected->parameters.find("audio.bypass");
                         bypass_.setToggleState(bypass != selected->parameters.end() && std::get<bool>(bypass->second),
                                                juce::dontSendNotification);
                         addRows(*selected);
                         status(script_ ? "Saved source verified. Script INPUT/OUTPUT counts must match the runtime bus; "
                                          "mono examples require a mono bus."
-                                       : "Saved base values are shown; live automation/override state is owned by the runtime.");
+                                       : routing ? "Routing utility: connects the configured device bus, not a reusable effect. No bypass or processing parameters."
+                                       : type_ == "Analyzer" ? "Analysis module instance; audio passes through unchanged while shared visualizations observe it."
+                                       : "Module instance: saved base values are shown; live automation/override state is owned by the runtime.");
                     }
                 }
                 else if (!script_) status("Unsupported explicit audio.type: " + juce::String(type_));

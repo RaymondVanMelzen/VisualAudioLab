@@ -24,16 +24,26 @@ bool contentEqual(const domain::Graph& left, const domain::Graph& right)
 RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& visualizations, BackendFactory factory)
     : workspace_(workspace), visualizations_(visualizations), factory_(std::move(factory))
 {
-    api_.addItem("ASIO (Windows)", 1); api_.addItem("WASAPI Exclusive (Windows)", 2);
-    api_.addItem("WASAPI Shared (Windows)", 3); api_.addItem("CoreAudio (macOS)", 4);
+#if JUCE_WINDOWS
+    const auto platform = AudioPlatform::windows;
+#elif JUCE_MAC
+    const auto platform = AudioPlatform::macOS;
+#else
+    const auto platform = AudioPlatform::other;
+#endif
+    const juce::String backendNames[]{"ASIO", "WASAPI Exclusive", "WASAPI Shared", "CoreAudio"};
+    for (auto backend : supportedAudioBackends(platform))
+        api_.addItem(backendNames[static_cast<int>(backend)], static_cast<int>(backend) + 1);
     api_.addItem("Offline preview (no hardware)", 5);
 #if JUCE_MAC
     api_.setSelectedId(4, juce::dontSendNotification);
-#else
+#elif JUCE_WINDOWS
     api_.setSelectedId(1, juce::dontSendNotification);
+#else
+    api_.setSelectedId(5, juce::dontSendNotification);
 #endif
     for (auto* control : std::initializer_list<juce::Component*>{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_,
-             &scan_, &inspect_, &start_, &stop_, &notice_, &state_}) addAndMakeVisible(control);
+             &scan_, &inspect_, &start_, &stop_, &done_, &notice_, &state_}) addAndMakeVisible(control);
     const juce::String names[]{"Backend", "Input device", "Output device", "Sample rate", "Buffer frames", "Input channels", "Output channels"};
     juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_};
     for (int i = 0; i < 7; ++i)
@@ -47,20 +57,25 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
     state_.setText(lastStatus_, juce::dontSendNotification); state_.setFont(juce::FontOptions(11.0f));
     api_.onChange = [this] { selectBackend(); };
     scan_.onClick = [this] { scan(); }; inspect_.onClick = [this] { inspect(); };
-    input_.onChange = output_.onChange = [this]
-    {
-        ++probeSerial_; probing_ = false; inputCaps_.reset(); outputCaps_.reset();
-        rateChoice_.clear(); buffer_.clear(); inputCount_.clear(); outputCount_.clear();
-        message("Selection changed. Inspect selected devices before starting."); enableControls();
-    };
+    input_.onChange = [this] { selectionChanged(); };
+    output_.onChange = [this] { selectionChanged(true); };
+    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
+        box->onChange = [this] { enableControls(); };
     start_.onClick = [this] { const auto result = start(); if (!result.succeeded) message(text(result.error)); };
     stop_.onClick = [this] { const auto result = stop(); if (!result.succeeded) message(text(result.error)); };
+    done_.onClick = [this] { if (onDismissSetup) onDismissSetup(); };
+    clearConfiguration("Scan and inspect first");
+    labels_[1].setText(api_.getSelectedId() == 1 ? "ASIO input" : "Input device", juce::dontSendNotification);
+    labels_[2].setText(api_.getSelectedId() == 1 ? "ASIO driver" : "Output device", juce::dontSendNotification);
+    input_.setTextWhenNothingSelected("Scan devices first");
+    output_.setTextWhenNothingSelected("Scan devices first");
+    if (api_.getSelectedId() == 5) configureOffline(2);
     startTimerHz(30);
     enableControls();
 }
 RuntimePanel::~RuntimePanel()
 {
-    stopTimer(); onStatus = nullptr; onStarted = nullptr;
+    stopTimer(); onStatus = nullptr; onStarted = nullptr; onDismissSetup = nullptr;
     const auto stopped = stop(); juce::ignoreUnused(stopped);
     if (backend_) { const auto result = backend_->shutdown(); juce::ignoreUnused(result); }
 }
@@ -74,9 +89,10 @@ void RuntimePanel::resized()
     auto bounds = getLocalBounds().reduced(6);
     auto buttons = bounds.removeFromTop(30);
     start_.setBounds(buttons.removeFromLeft(70).reduced(2)); stop_.setBounds(buttons.removeFromLeft(70).reduced(2));
+    done_.setBounds(buttons.removeFromRight(70).reduced(2));
     scan_.setBounds(buttons.removeFromLeft(110).reduced(2)); inspect_.setBounds(buttons.reduced(2));
     juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_};
-    // Two compact columns keep the non-modal settings useful in the default bottom dock.
+    // Two compact columns fit the occasional setup dock.
     for (int i = 0; i < 7; ++i)
     {
         const int row = i / 2, col = i % 2, column = bounds.getWidth() / 2;
@@ -88,20 +104,57 @@ void RuntimePanel::resized()
 }
 void RuntimePanel::enableControls()
 {
-    for (auto* component : std::initializer_list<juce::Component*>{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_})
-        component->setEnabled(!running_ && !probing_);
-    scan_.setEnabled(!running_ && !probing_ && !offline_ && static_cast<bool>(factory_));
-    inspect_.setEnabled(!running_ && !probing_ && !offline_ && backend_ != nullptr);
-    start_.setEnabled(!running_ && !probing_);
+    const bool editable = !running_ && !probing_ && !scanning_;
+    api_.setEnabled(editable);
+    input_.setEnabled(editable && !offline_ && input_.getNumItems() > 0
+                      && (api_.getSelectedId() != 1 || output_.getSelectedId() > 0));
+    output_.setEnabled(editable && !offline_ && output_.getNumItems() > 0);
+    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
+        box->setEnabled(editable && box->getNumItems() > 0);
+    scan_.setEnabled(editable && !offline_ && static_cast<bool>(factory_));
+    inspect_.setEnabled(editable && !offline_ && backend_ != nullptr && output_.getSelectedId() > 0);
+    start_.setEnabled(editable && request().value.has_value());
     stop_.setEnabled(running_);
+    if (onStatus) onStatus(lastStatus_);
+}
+void RuntimePanel::clearConfiguration(juce::String placeholder)
+{
+    inputCaps_.reset(); outputCaps_.reset();
+    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
+    {
+        box->clear(juce::dontSendNotification);
+        box->setTextWhenNothingSelected(placeholder);
+        box->setTooltip(placeholder);
+    }
+}
+void RuntimePanel::selectionChanged(bool outputChanged)
+{
+    ++probeSerial_; probing_ = false;
+    if (api_.getSelectedId() == 1 && outputChanged)
+    {
+        const auto index = output_.getSelectedId() - 1;
+        input_.clear(juce::dontSendNotification);
+        input_.addItem("None (output only)", 1);
+        if (index >= 0 && index < static_cast<int>(outputs_.size()))
+        {
+            input_.addItem("Same ASIO driver (duplex)", index + 2);
+            input_.setSelectedId(index + 2, juce::dontSendNotification);
+        }
+        else input_.setSelectedId(1, juce::dontSendNotification);
+    }
+    clearConfiguration("Inspect selected devices");
+    message("Selection changed. Inspect selected devices before starting."); enableControls();
 }
 void RuntimePanel::selectBackend()
 {
     if (running_) return;
-    ++probeSerial_; probing_ = false;
+    ++probeSerial_; probing_ = false; scanning_ = false;
     if (backend_) { const auto result = backend_->shutdown(); if (!result.succeeded()) message(text(result.message)); backend_.reset(); }
-    inputs_.clear(); outputs_.clear(); input_.clear(); output_.clear();
-    inputCaps_.reset(); outputCaps_.reset(); rateChoice_.clear(); buffer_.clear(); inputCount_.clear(); outputCount_.clear();
+    inputs_.clear(); outputs_.clear(); input_.clear(juce::dontSendNotification); output_.clear(juce::dontSendNotification);
+    clearConfiguration("Scan and inspect first");
+    labels_[1].setText(api_.getSelectedId() == 1 ? "ASIO input" : "Input device", juce::dontSendNotification);
+    labels_[2].setText(api_.getSelectedId() == 1 ? "ASIO driver" : "Output device", juce::dontSendNotification);
+    input_.setTextWhenNothingSelected("Scan devices first"); output_.setTextWhenNothingSelected("Scan devices first");
     offline_ = api_.getSelectedId() == 5;
     if (offline_) configureOffline(2);
     else message("Stopped. Click Scan devices; discovery is not automatic.");
@@ -109,7 +162,8 @@ void RuntimePanel::selectBackend()
 }
 void RuntimePanel::scan()
 {
-    if (running_ || !factory_) { message("Native backend composition unavailable, or stop transport before scanning."); return; }
+    if (running_ || probing_ || scanning_ || offline_ || !factory_) { message("Stop transport and wait for inspection before scanning a native backend."); return; }
+    preference_ = setupPreference();
     if (!backend_)
     {
         backend_ = factory_(static_cast<AudioBackendKind>(api_.getSelectedId() - 1));
@@ -118,65 +172,99 @@ void RuntimePanel::scan()
         { if (safe) safe->inventory(snapshot); });
         if (!listen.succeeded()) { message(text(listen.message)); return; }
     }
+    scanning_ = true;
+    message("Scanning selected backend...");
     const auto result = backend_->refresh();
-    if (!result.succeeded()) message(text(result.message));
-    else message("Scanning selected backend...");
+    if (!result.succeeded()) { scanning_ = false; clearConfiguration("Scan failed: retry Scan"); message(text(result.message)); }
     enableControls();
 }
 void RuntimePanel::inventory(const AudioBackendSnapshot& snapshot)
 {
-    ++probeSerial_; probing_ = false;
+    const auto hint = setupPreference();
+    ++probeSerial_; probing_ = false; scanning_ = false;
     if (running_)
     {
         const auto result = stop();
         if (!result.succeeded) { message(text(result.error)); return; }
         message("Device inventory changed. Transport stopped; reselect and inspect before restarting.");
     }
-    inputCaps_.reset(); outputCaps_.reset(); inputs_.clear(); outputs_.clear();
-    input_.clear(); output_.clear(); rateChoice_.clear(); buffer_.clear(); inputCount_.clear(); outputCount_.clear();
+    clearConfiguration("Inspect selected devices"); inputs_.clear(); outputs_.clear();
+    input_.clear(juce::dontSendNotification); output_.clear(juce::dontSendNotification);
     input_.addItem("None (output only)", 1); input_.setSelectedId(1, juce::dontSendNotification);
     for (const auto& device : snapshot.devices)
     {
         if (device.direction != AudioDirection::output) { inputs_.push_back(device); input_.addItem(text(device.name), static_cast<int>(inputs_.size()) + 1); }
         if (device.direction != AudioDirection::input) { outputs_.push_back(device); output_.addItem(text(device.name), static_cast<int>(outputs_.size())); }
     }
+    if (snapshot.backend == AudioBackendKind::asio)
+    {
+        input_.clear(juce::dontSendNotification);
+        input_.addItem("None (output only)", 1);
+        input_.setSelectedId(1, juce::dontSendNotification);
+    }
+    bool restored{};
+    if (hint && hint->backend == snapshot.backend)
+    {
+        preference_ = hint;
+        const auto selectNamed = [](juce::ComboBox& box, const auto& devices, const std::string& name, int offset)
+        {
+            auto found = std::find_if(devices.begin(), devices.end(), [&](const auto& device) { return device.name == name; });
+            if (found == devices.end() || std::count_if(devices.begin(), devices.end(), [&](const auto& device) { return device.name == name; }) != 1)
+                return false;
+            box.setSelectedId(static_cast<int>(found - devices.begin()) + offset, juce::dontSendNotification);
+            return true;
+        };
+        restored = selectNamed(output_, outputs_, hint->outputName, 1);
+        if (snapshot.backend == AudioBackendKind::asio && restored) selectionChanged(true);
+        if (!hint->inputName.empty())
+            restored = selectNamed(input_, inputs_, hint->inputName, 2) && restored;
+        else input_.setSelectedId(1, juce::dontSendNotification);
+        if (!restored)
+        {
+            output_.setSelectedId(0, juce::dontSendNotification);
+            input_.setSelectedId(1, juce::dontSendNotification);
+        }
+    }
+    input_.setTextWhenNothingSelected(inputs_.empty() ? "No input endpoints reported" : "Select input or None");
+    output_.setTextWhenNothingSelected(outputs_.empty() ? "No outputs: connect/install, then Scan" : "Select output explicitly");
     if (!snapshot.error.succeeded()) message(text(snapshot.error.message));
-    else message("Inventory ready. Select endpoints and click Inspect selected devices. " + text(snapshot.notes.empty() ? "" : snapshot.notes.front()));
+    else if (outputs_.empty()) message("No output devices reported. Connect a device/install its driver, then Scan; choose another supported backend explicitly if needed.");
+    else if (hint && hint->backend == snapshot.backend)
+        message(restored ? "Saved device names restored. Click Inspect to revalidate settings; transport remains stopped."
+                         : "A saved device is missing or ambiguous. Select available devices and Inspect; no replacement was selected.");
+    else message(snapshot.backend == AudioBackendKind::asio
+        ? "Select one ASIO driver for both directions, then Inspect. ASIO does not combine different drivers."
+        : "Inventory ready. Select separate input/output endpoints, then Inspect their combined configuration.");
     enableControls();
 }
 void RuntimePanel::inspect()
 {
-    if (!backend_ || running_ || output_.getSelectedId() < 1) { message("Select an output device first."); return; }
-    inputCaps_.reset(); outputCaps_.reset(); probing_ = true;
+    if (!backend_ || running_ || scanning_ || probing_ || output_.getSelectedId() < 1) { message("Select an output device and wait for scanning first."); return; }
+    clearConfiguration("Inspecting..."); probing_ = true;
     const auto serial = ++probeSerial_;
     auto safe = juce::Component::SafePointer<RuntimePanel>(this);
-    const auto result = backend_->queryCapabilities(outputs_.at(static_cast<std::size_t>(output_.getSelectedId() - 1)).token,
+    std::optional<AudioDeviceToken> input;
+    if (input_.getSelectedId() > 1) input = inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).token;
+    message("Inspecting selected configuration. Driver initialization may touch hardware.");
+    const auto result = backend_->queryConfigurationCapabilities(input, outputs_.at(static_cast<std::size_t>(output_.getSelectedId() - 1)).token,
         [safe, serial](auto query)
         {
             if (!safe || safe->probeSerial_ != serial) return;
-            safe->capabilities(false, std::move(query));
+            safe->capabilities(std::move(query));
         });
-    if (!result.succeeded()) { probing_ = false; message(text(result.message)); }
-    else if (probing_) message("Inspecting selected output. Driver initialization may touch hardware.");
+    if (!result.succeeded()) { probing_ = false; clearConfiguration("Inspection rejected: retry Inspect"); message(text(result.message)); }
     enableControls();
 }
-void RuntimePanel::capabilities(bool input, AudioQuery<AudioDeviceCapabilities> result)
+void RuntimePanel::capabilities(AudioQuery<AudioDeviceCapabilities> result)
 {
-    if (!result.value) { probing_ = false; message(text(result.error.message)); enableControls(); return; }
-    if (input) inputCaps_ = std::move(*result.value); else outputCaps_ = std::move(*result.value);
-    if (!input && input_.getSelectedId() > 1)
-    {
-        const auto serial = probeSerial_; auto safe = juce::Component::SafePointer<RuntimePanel>(this);
-        const auto requestResult = backend_->queryCapabilities(inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).token,
-            [safe, serial](auto query) { if (safe && safe->probeSerial_ == serial) safe->capabilities(true, std::move(query)); });
-        if (!requestResult.succeeded()) { probing_ = false; message(text(requestResult.message)); enableControls(); }
-        return;
-    }
+    if (!result.value) { probing_ = false; clearConfiguration("Inspection failed: retry Inspect"); message(text(result.error.message)); enableControls(); return; }
+    outputCaps_ = std::move(*result.value);
+    if (input_.getSelectedId() > 1) inputCaps_ = outputCaps_;
     probing_ = false; populateConfiguration(); enableControls();
 }
 void RuntimePanel::populateConfiguration()
 {
-    rateChoice_.clear(); buffer_.clear(); inputCount_.clear(); outputCount_.clear();
+    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_}) box->clear(juce::dontSendNotification);
     inputCount_.addItem("0", 1); // Native input count uses ID count+1, including explicit zero.
     if (inputCaps_)
         for (int i = 1; i <= std::min(32, static_cast<int>(inputCaps_->inputChannels.size())); ++i) inputCount_.addItem(juce::String(i), i + 1);
@@ -191,24 +279,52 @@ void RuntimePanel::populateConfiguration()
         for (int i = 1; i <= std::min(32, static_cast<int>(outputCaps_->outputChannels.size())); ++i) outputCount_.addItem(juce::String(i), i);
         int id = 1;
         for (const auto rate : outputCaps_->sampleRates)
-            if (!inputCaps_ || std::find(inputCaps_->sampleRates.begin(), inputCaps_->sampleRates.end(), rate) != inputCaps_->sampleRates.end())
+            if (std::isfinite(rate) && rate >= 8000 && rate <= 384000)
                 rateChoice_.addItem(juce::String(rate, 0), id++);
         id = 1;
         for (const auto frames : outputCaps_->bufferFrames)
-            if (!inputCaps_ || std::find(inputCaps_->bufferFrames.begin(), inputCaps_->bufferFrames.end(), frames) != inputCaps_->bufferFrames.end())
+            if (frames > 0 && frames <= 4096)
                 buffer_.addItem(juce::String(frames), id++);
     }
     inputCount_.setSelectedId(1, juce::dontSendNotification);
-    message((rateChoice_.getNumItems() == 0 || buffer_.getNumItems() == 0
-                ? "No common reported rate/buffer candidates. This configuration cannot start; select different endpoints/API. "
-                : "Capabilities ready. Explicitly select rate, buffer and output channels. Input count must be zero or match output. ")
-            + (outputCaps_ && !outputCaps_->notes.empty() ? text(outputCaps_->notes.front()) : juce::String{}));
+    for (auto* box : {&rateChoice_, &buffer_, &outputCount_})
+        box->setTextWhenNothingSelected(box->getNumItems() == 0 ? "Not reported/supported: retry Inspect" : "Select reported choice");
+    const bool shared = api_.getSelectedId() == 3;
+    labels_[4].setText(shared ? "Callback frames" : "Buffer frames", juce::dontSendNotification);
+    buffer_.setTooltip(shared
+        ? "JUCE callback block choices. Windows manages the hardware period; these are not hardware buffer-size controls."
+        : "Driver/JUCE-reported candidates. A single reported value is fixed for this inspection; empty means unknown. Open must confirm the selected size.");
+    bool restored = false;
+    if (preference_ && static_cast<int>(preference_->backend) + 1 == api_.getSelectedId()
+        && preference_->outputName == output_.getText().toStdString()
+        && preference_->inputName == (input_.getSelectedId() > 1
+            ? inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).name : std::string{}))
+    {
+        const auto selectText = [](juce::ComboBox& box, juce::String value)
+        {
+            for (int i = 0; i < box.getNumItems(); ++i)
+                if (box.getItemText(i) == value) { box.setSelectedId(box.getItemId(i), juce::dontSendNotification); return true; }
+            return false;
+        };
+        restored = selectText(rateChoice_, juce::String(preference_->sampleRate, 0));
+        restored = selectText(buffer_, juce::String(preference_->bufferFrames)) && restored;
+        restored = selectText(outputCount_, juce::String(preference_->outputChannels)) && restored;
+        restored = selectText(inputCount_, juce::String(preference_->inputChannels)) && restored;
+    }
+    message(juce::String(outputCount_.getNumItems() == 0
+                ? "No usable output channels reported. Retry Inspect, check device/vendor setup, or select another backend. Start is unavailable. "
+                : rateChoice_.getNumItems() == 0 || buffer_.getNumItems() == 0
+                ? "Rate/buffer candidates are unreported or outside engine limits; Start is unavailable. Retry Inspect, check vendor/OS setup, or select different endpoints/backend. "
+                : restored ? "Saved settings revalidated. Start remains explicit. "
+                           : "Capabilities ready. Select reported rate, buffer and channel counts; input count is zero or matches output. ")
+            + (shared ? "Windows manages the hardware period; callback frames are application block choices. " : "")
+            + (buffer_.getNumItems() == 1 ? "One buffer value reported for this configuration. " : ""));
 }
 void RuntimePanel::configureOffline(int channels, double rate, int frames)
 {
     if (running_) return;
     offline_ = true; api_.setSelectedId(5, juce::dontSendNotification);
-    rateChoice_.clear(); buffer_.clear(); inputCount_.clear(); outputCount_.clear();
+    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_}) box->clear(juce::dontSendNotification);
     rateChoice_.addItem(juce::String(rate, 0), 1); rateChoice_.setSelectedId(1, juce::dontSendNotification);
     buffer_.addItem(juce::String(frames), 1); buffer_.setSelectedId(1, juce::dontSendNotification);
     inputCount_.addItem("0", 1); inputCount_.setSelectedId(1, juce::dontSendNotification);
@@ -217,9 +333,52 @@ void RuntimePanel::configureOffline(int channels, double rate, int frames)
     message("Offline preview selected. Start processes silent input / script generators to visualizers only; no device opens.");
     enableControls();
 }
+void RuntimePanel::restoreSetup(std::optional<AudioSetupPreference> preference)
+{
+    if (running_ || probing_ || scanning_) return;
+    preference_ = std::move(preference);
+    if (!preference_) return;
+    const auto validation = validateSettings(Settings{1100, 720, true, preference_});
+    if (!validation.succeeded) { message(text(validation.error)); preference_.reset(); return; }
+    const int id = static_cast<int>(preference_->backend) + 1;
+    if (api_.indexOfItemId(id) < 0)
+    {
+        message("Saved backend is unsupported on this OS. Choose a supported backend explicitly; no saved device was substituted.");
+        return;
+    }
+    api_.setSelectedId(id, juce::dontSendNotification);
+    selectBackend();
+    message("Saved audio setup loaded. Scan to rediscover device names, then Inspect to revalidate; no hardware opened or playback started.");
+}
+std::optional<AudioSetupPreference> RuntimePanel::setupPreference() const
+{
+    if (!offline_)
+    {
+        const auto configuration = request();
+        if (configuration.value)
+        {
+            const auto& value = *configuration.value;
+            return AudioSetupPreference{static_cast<AudioBackendKind>(api_.getSelectedId() - 1),
+                value.input ? inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).name : std::string{},
+                outputs_.at(static_cast<std::size_t>(output_.getSelectedId() - 1)).name,
+                value.sampleRate, value.bufferFrames, value.inputChannels, value.outputChannels};
+        }
+    }
+    return preference_;
+}
+juce::String RuntimePanel::compactStatus() const
+{
+    if (running_) return offline_ ? "Offline running" : "Audio running";
+    if (scanning_) return "Audio: scanning";
+    if (probing_) return "Audio: inspecting";
+    return request().value ? "Audio ready (stopped)" : "Audio setup required (stopped)";
+}
 AudioQuery<AudioStreamRequest> RuntimePanel::request() const
 {
+    if (probing_ || scanning_) return {{}, invalid("Wait for discovery/inspection to finish.")};
     AudioStreamRequest value;
+    if (rateChoice_.getSelectedId() < 1 || buffer_.getSelectedId() < 1)
+        return {{}, invalid("Inspect and explicitly select a reported rate and buffer size.")};
     value.sampleRate = rateChoice_.getText().getDoubleValue(); value.bufferFrames = buffer_.getText().getIntValue();
     value.maxFrames = std::max(512, value.bufferFrames); value.inputChannels = inputCount_.getSelectedId() - 1;
     value.outputChannels = outputCount_.getSelectedId();
@@ -279,6 +438,7 @@ Result RuntimePanel::start()
     const auto configuration = request();
     if (!configuration.value) return Result::failure(configuration.error.message);
     const auto& config = *configuration.value;
+    if (!offline_) preference_ = setupPreference();
     width_ = config.outputChannels; rate_ = config.sampleRate; block_ = config.bufferFrames;
     auto compiled = compileGraph(false);
     if (!compiled.value) return Result::failure(compiled.error.message);

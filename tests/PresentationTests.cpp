@@ -52,6 +52,8 @@ int main(int argc, char** argv)
         require(shell.getNumChildComponents() == 9,
                 "Shell chrome, dock workspace and patch navigation are constructed.");
         require(shell.inspectorVisible(), "Inspector starts visible.");
+        require(!shell.dockWorkspace().layout().placement(val::presentation::PanelId::audioSettings).visible,
+                "Audio Setup is not permanently visible on a new workspace.");
         shell.setInspectorVisible(false);
         require(!shell.inspectorVisible(), "Inspector can be hidden without a backend.");
         shell.setSize(800, 600);
@@ -155,6 +157,7 @@ int main(int argc, char** argv)
         }
         for (const auto size : {juce::Point<int>{800, 600}, {1100, 720}, {1600, 1000}})
         {
+            docks.showPanel(PanelId::audioSettings);
             shell.setSize(size.x, size.y);
             for (auto* child : docks.getChildren())
                 if (child->isVisible())

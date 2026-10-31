@@ -2,6 +2,7 @@
 
 #include "VisualizationWidgets.h"
 #include <val/application/WorkspaceService.h>
+#include <val/application/Settings.h>
 #include <val/audio/AudioEngine.h>
 #include <map>
 
@@ -26,21 +27,29 @@ public:
     [[nodiscard]] application::Result stop();
     /** Explicit offline workflow/test seam; never enumerates or opens hardware. */
     void configureOffline(int channels, double rate = 48000, int frames = 512);
+    /** Restore only hints; no device discovery, inspection or playback on launch. */
+    void restoreSetup(std::optional<application::AudioSetupPreference> preference);
+    [[nodiscard]] std::optional<application::AudioSetupPreference> setupPreference() const;
+    [[nodiscard]] juce::String compactStatus() const;
     void parameter(std::uint64_t node, std::uint16_t index, float value, audio::ParameterAction action);
     void schedule(std::uint64_t node, std::uint16_t index, float value, double seconds);
     [[nodiscard]] bool running() const noexcept { return running_; }
+    [[nodiscard]] bool ready() const { return !running_ && request().value.has_value(); }
     [[nodiscard]] int channels() const noexcept { return outputCount_.getSelectedId() > 0 ? outputCount_.getSelectedId() : 2; }
     [[nodiscard]] juce::String status() const { return lastStatus_; }
     [[nodiscard]] audio::AudioEngine& engine() noexcept { return engine_; }
     std::function<void(juce::String)> onStatus;
     std::function<void()> onStarted;
+    std::function<void()> onDismissSetup;
 private:
     void timerCallback() override;
     void selectBackend();
     void scan();
     void inventory(const application::AudioBackendSnapshot& snapshot);
     void inspect();
-    void capabilities(bool input, application::AudioQuery<application::AudioDeviceCapabilities> result);
+    void capabilities(application::AudioQuery<application::AudioDeviceCapabilities> result);
+    void selectionChanged(bool outputChanged = false);
+    void clearConfiguration(juce::String placeholder);
     void populateConfiguration();
     void message(juce::String text);
     void enableControls();
@@ -61,13 +70,14 @@ private:
     domain::GraphId patch_{};
     audio::AudioGraph acceptedAudio_;
     std::map<std::uint64_t, std::shared_ptr<audio::SignalCaptureBuffer>> captures_;
-    bool running_{}, offline_{}, probing_{};
+    bool running_{}, offline_{}, probing_{}, scanning_{};
+    std::optional<application::AudioSetupPreference> preference_;
     double rate_{48000};
     int block_{512}, width_{2};
     std::array<float, 4096 * 32> offlineOutput_{};
     std::array<float*, 32> offlinePointers_{};
     juce::ComboBox api_, input_, output_, rateChoice_, buffer_, inputCount_, outputCount_;
-    juce::TextButton scan_{"Scan devices"}, inspect_{"Inspect selected devices"}, start_{"Start"}, stop_{"Stop"};
+    juce::TextButton scan_{"Scan devices"}, inspect_{"Inspect selected devices"}, start_{"Start"}, stop_{"Stop"}, done_{"Done"};
     std::array<juce::Label, 7> labels_;
     juce::Label notice_, state_;
     juce::String lastStatus_{"Stopped. Choose an API, scan, select devices, then inspect capabilities. No device opens automatically."};

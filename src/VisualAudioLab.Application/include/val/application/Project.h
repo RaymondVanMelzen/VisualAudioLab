@@ -32,9 +32,9 @@ struct ProjectLayout final
 {
     int x{80}, y{80}, width{1100}, height{720};
     std::array<int, 5> docks{1, 0, 0, 2, 3};
-    std::array<bool, 5> visible{true, true, true, true, true};
+    std::array<bool, 5> visible{true, true, true, true, false};
     std::array<double, 3> ratios{0.22, 0.24, 0.26};
-    std::array<int, 4> selectedPanels{1, 0, 3, 4};
+    std::array<int, 4> selectedPanels{1, 0, 3, -1};
     bool operator==(const ProjectLayout&) const = default;
 };
 

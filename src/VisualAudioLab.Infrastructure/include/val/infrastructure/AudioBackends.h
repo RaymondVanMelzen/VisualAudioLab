@@ -15,6 +15,9 @@ public:
     [[nodiscard]] application::AudioError refresh() override;
     [[nodiscard]] application::AudioError queryCapabilities(application::AudioDeviceToken token,
                                                            CapabilityCallback callback) override;
+    [[nodiscard]] application::AudioError queryConfigurationCapabilities(
+        std::optional<application::AudioDeviceToken> input, application::AudioDeviceToken output,
+        CapabilityCallback callback) override;
     [[nodiscard]] application::AudioQuery<application::AudioStreamFormat>
         openStream(const application::AudioStreamRequest& request) override;
     [[nodiscard]] application::AudioError startStream(application::IAudioRenderCallback& target) override;

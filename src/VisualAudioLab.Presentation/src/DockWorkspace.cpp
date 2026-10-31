@@ -38,10 +38,10 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void(int)> dockReque
             description = "Project Explorer\nUse File for project files and the patch selector to navigate graphs.";
             break;
         case PanelId::propertyInspector:
-            description = "Select a module to inspect properties or signals.";
+            description = "Select a placed node (module instance or routing utility) to inspect properties or signals.";
             break;
         case PanelId::audioSettings:
-            description = "Audio settings are supplied by the desktop runtime host.";
+            description = "Audio Setup is supplied by the desktop runtime host. Hide this panel when configuration is complete.";
             break;
     }
     description_.setText(description, juce::dontSendNotification);

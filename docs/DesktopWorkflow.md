@@ -6,31 +6,50 @@ on launch. Project editing and offline preview do not require an audio device.
 
 ## Configure a native device
 
-Open **Audio > Audio Settings** (also on the toolbar). The non-modal dock is
-scrollable when its height is small.
+Open **Audio > Audio Setup** (also on the toolbar or View menu). Setup is hidden
+in a new/reset workspace; **Done** hides it again without changing transport.
+The non-modal dock is scrollable when small. The compact strip continues to show
+stopped/setup-required, scanning, inspecting, ready or running state.
 
-1. Choose **ASIO**, **WASAPI Exclusive**, **WASAPI Shared** or **CoreAudio**.
-   Windows defaults to ASIO; macOS defaults to CoreAudio. Unsupported APIs are
-   reported explicitly, never replaced with another API.
+1. Windows offers **ASIO**, **WASAPI Exclusive** and **WASAPI Shared**; macOS
+   offers **CoreAudio**. Offline preview is separate. Foreign APIs are not
+   offered. Windows defaults to ASIO; macOS defaults to CoreAudio, without fallback.
 2. Click **Scan devices** to enumerate the selected backend. Choose an output
-   device and either an input device or **None (output only)**.
+   device and either an input device or **None (output only)**. ASIO selects
+   one driver; input is either that same driver or None, not a second driver.
+   WASAPI selects separate Windows capture/render endpoints.
 3. Click **Inspect selected devices** to query channels, sample rates and buffer
-   sizes. This is deliberately separate from enumeration: initializing a
+   sizes for the selected configuration in one JUCE device instance. This is
+   deliberately separate from enumeration: initializing a
    driver can affect hardware, and ASIO inspection may briefly start/stop it.
 4. Select the reported sample rate, buffer frames and output channel count.
    Input count must be zero or match output count. Counts select the first N
-   reported channels; tooltips list their names. Shared input/output choices
-   are the intersection of reported capabilities, not a guarantee that every
-   rate/buffer combination will negotiate.
+   reported channels; tooltips list their names. WASAPI pair candidates follow
+   JUCE's combined-device rules (including shared-mode mixer conversion), not
+   an intersection of independently queried endpoint periods. Shared-mode
+   **Callback frames** configure the JUCE processing block; Windows manages
+   the hardware period. A single reported candidate is shown as such.
+   Empty lists mean unreported/unsupported, never invented defaults or proof
+   that a setting is host-managed. Disabled controls show pending/error/retry
+   guidance. Start stays unavailable until a valid explicit selection exists.
 5. Build a valid patch, check output levels, then explicitly click **Start**
    or press **F5**. There is no master limiter. **Stop** / **Shift+F5** closes
-   the stream before configuration changes.
+   the stream before configuration changes. Open verifies rate, buffer and
+   channel counts; a driver substitution fails visibly rather than silently
+   changing the requested settings.
 
 Unavailable drivers, stale devices, unsupported configurations and stream
 errors are shown in the panel/status bar. No silent fallback occurs. Device
-inventory changes stop transport and clear the selections; inspect and restart
-explicitly. Device configuration is session-local, not a portable saved device
-token.
+inventory changes stop transport and invalidate capabilities. Exact unambiguous
+device-name matches can be restored, but missing/ambiguous devices are never
+replaced. Scan and Inspect remain explicit, followed by explicit Start.
+
+Validated backend/device names, rate, buffer and channel counts persist in
+machine-local `settings.json` using the existing preference lifecycle. They
+are hints, not device identities: launch loads them without opening hardware,
+Scan resolves fresh tokens, and Inspect revalidates saved choices. Tokens and
+transport state are never persisted. Old window-only preferences remain valid;
+malformed preferences preserve their original file and disable automatic writes.
 
 ## Try DSP without opening hardware
 
@@ -41,8 +60,12 @@ script example.
 Use the **Module Browser** search and **Insert selected module**, or
 double-click/press Enter on a selected result. Available modules are Input,
 Output, Gain, EQ, Delay, Compressor, Distortion, Chorus, Reverb, Oscilloscope,
-Spectrum Analyzer, Peak Meter, RMS Meter and Script. Each insertion is one
-undoable edit with its runtime identity already attached.
+Spectrum Analyzer, Peak Meter, RMS Meter and Script. Each insertion is one undoable edit with its runtime identity already attached.
+A **module** is a reusable audio function; a placed **node** is its instance
+with its own saved parameters/source and runtime state. Input/Output are
+explicit **routing utilities**, not effects. Analyzer modules observe audio
+while passing it through unchanged. The catalog, canvas roles and inspector
+use these distinctions; reusable patch packaging is not newly implemented.
 
 For a device-free example:
 
@@ -132,8 +155,9 @@ Invalid structural/source edits remain editable and display **last accepted audi
 continues**; Stop stays available. Rejected parameter delivery stops transport
 to avoid partial/ambiguous targets. Correct the patch and restart if stopped.
 
-Generic structural **Add Node** and old saved nodes remain usable in the editor.
-They are not executable until they have a supported explicit runtime identity.
+**Routing Draft** / **N** and old generic saved nodes remain usable in the editor.
+They are clearly labeled structural utilities with no DSP, not executable
+pass-through modules, until they have a supported explicit runtime identity.
 There is no implicit mixer/channel conversion: the current engine supports one
 matching bus, one upstream connection per processing node and one Output;
 all runtime nodes must contribute to that Output. Structural graphs can be much

@@ -56,7 +56,7 @@ juce::Rectangle<int> CanvasView::viewport() const
 void CanvasView::resized()
 {
     auto row = getLocalBounds().removeFromTop(32).reduced(2);
-    add_.setBounds(row.removeFromLeft(88));
+    add_.setBounds(row.removeFromLeft(110));
     remove_.setBounds(row.removeFromLeft(65));
     fit_.setBounds(row.removeFromLeft(42));
     minus_.setBounds(row.removeFromLeft(28));
@@ -150,7 +150,7 @@ void CanvasView::paint(juce::Graphics& graphics)
     if (workspace_.graph().nodes.empty())
     {
         graphics.setColour(juce::Colours::lightgrey);
-        graphics.drawFittedText("Structural patch editor\nAdd Node, press N, or right-click to begin.\n"
+        graphics.drawFittedText("Place module instances from Module Browser.\nRouting Draft (N) creates a structural utility, not an audio function.\n"
                                 "No DSP or audio processing.",
                                 visible.toNearestInt().reduced(8), juce::Justification::centred, 4);
     }
@@ -182,7 +182,7 @@ void CanvasView::updateDetails()
     }
     zoomLabel_.setText(juce::String(juce::roundToInt(zoom_ * 100)) + "%", juce::dontSendNotification);
     remove_.setEnabled(!selected_.empty() || selectedWire_ != 0);
-    setDescription(juce::String(workspace_.graph().nodes.size()) + " structural nodes, "
+    setDescription(juce::String(workspace_.graph().nodes.size()) + " placed nodes (module instances or routing utilities), "
                     + juce::String(selected_.size()) + " selected. Focused node "
                     + juce::String(focusedNode_) + ". " + help_.getTooltip());
 }
@@ -212,7 +212,7 @@ void CanvasView::createNodeAt(juce::Point<float> point)
 {
     cancelGesture();
     const auto patch = toPatch(point);
-    const auto result = workspace_.createNode({patch.x, patch.y});
+    const auto result = workspace_.createNode({patch.x, patch.y}, "Routing draft");
     if (result.succeeded)
     {
         selected_ = {workspace_.lastCreatedNode()};
@@ -693,7 +693,7 @@ void CanvasView::contextMenu(juce::Point<float> screen)
     const auto endpoint = portAt(screen);
     const auto wire = connectionAt(screen);
     juce::PopupMenu menu;
-    menu.addItem(1, "Create structural node here");
+    menu.addItem(1, "Create routing draft here (structural only, no DSP)");
     std::vector<domain::GraphId> wires;
     if (endpoint)
     {

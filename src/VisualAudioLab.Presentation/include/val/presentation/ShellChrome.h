@@ -21,7 +21,7 @@ public:
 private:
     juce::TextEditor workspaceName_;
     juce::TextButton rename_{"Rename workspace"}, undo_{"Undo"}, redo_{"Redo"};
-    juce::TextButton audioSettings_{"Audio Settings"}, resetLayout_{"Reset Layout"};
+    juce::TextButton audioSettings_{"Audio Setup"}, resetLayout_{"Reset Layout"};
 };
 
 /** Persistent status and capability disclosure, independent of any audio-engine state. */

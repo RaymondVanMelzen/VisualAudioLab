@@ -1,15 +1,28 @@
 #pragma once
 
 #include "Result.h"
+#include "IAudioBackend.h"
+#include <cmath>
 
 namespace val::application
 {
-/** Machine-local window preferences, separate from portable project content. */
+/** Name-based machine-local setup hint, always rediscovered and inspected before use. No tokens or transport state. */
+struct AudioSetupPreference final
+{
+    AudioBackendKind backend{};
+    std::string inputName, outputName;
+    double sampleRate{};
+    int bufferFrames{}, inputChannels{}, outputChannels{};
+    bool operator==(const AudioSetupPreference&) const = default;
+};
+
+/** Machine-local preferences, separate from portable project content. */
 struct Settings final
 {
     int windowWidth{1100};
     int windowHeight{720};
     bool inspectorVisible{true};
+    std::optional<AudioSetupPreference> audioSetup;
     bool operator==(const Settings&) const = default;
 };
 
@@ -30,6 +43,19 @@ struct SettingsLoadResult final
     if (settings.windowWidth < 800 || settings.windowWidth > 7680
         || settings.windowHeight < 600 || settings.windowHeight > 4320)
         return Result::failure("Window size must be within 800x600 and 7680x4320.");
+    if (settings.audioSetup)
+    {
+        const auto& audio = *settings.audioSetup;
+        if (audio.backend < AudioBackendKind::asio || audio.backend > AudioBackendKind::coreAudio
+            || audio.outputName.empty() || audio.outputName.size() > 4096 || audio.inputName.size() > 4096
+            || !std::isfinite(audio.sampleRate) || audio.sampleRate < 8000 || audio.sampleRate > 384000
+            || audio.bufferFrames < 1 || audio.bufferFrames > 4096 || audio.inputChannels < 0
+            || audio.outputChannels < 1 || audio.outputChannels > 32
+            || (audio.inputChannels != 0 && audio.inputChannels != audio.outputChannels)
+            || (audio.inputChannels > 0) != !audio.inputName.empty()
+            || (audio.backend == AudioBackendKind::asio && !audio.inputName.empty() && audio.inputName != audio.outputName))
+            return Result::failure("Audio setup preferences have invalid backend, device names, rate, buffer or channel counts.");
+    }
     return Result::success();
 }
 

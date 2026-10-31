@@ -50,6 +50,19 @@ public:
     [[nodiscard]] application::Result loadProjectFrom(const std::filesystem::path& path);
 
 private:
+    /** Resizes setup when an initially hidden dock opens/moves, not only on shell resize. */
+    class AudioSetupViewport final : public juce::Viewport
+    {
+        void visibleAreaChanged(const juce::Rectangle<int>&) override
+        {
+            if (auto* content = getViewedComponent())
+            {
+                const int width = juce::jmax(640, getMaximumVisibleWidth());
+                if (content->getWidth() != width || content->getHeight() != 300)
+                    content->setSize(width, 300);
+            }
+        }
+    };
     /** Stable, presentation-only command identities, separate from persisted user content. */
     enum CommandId
     {
@@ -86,7 +99,7 @@ private:
     std::unique_ptr<ModuleCatalog> catalog_;
     std::unique_ptr<ModuleEditor> editor_;
     juce::TabbedComponent inspectorTabs_{juce::TabbedButtonBar::TabsAtTop};
-    juce::Viewport audioView_;
+    AudioSetupViewport audioView_;
     juce::TextButton startAudio_{"Start (F5)"}, stopAudio_{"Stop"};
 };
 }

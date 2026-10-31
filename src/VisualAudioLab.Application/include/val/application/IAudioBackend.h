@@ -11,6 +11,15 @@ namespace val::application
 {
 /** Explicit native APIs; modes are never silently substituted. */
 enum class AudioBackendKind { asio, wasapiExclusive, wasapiShared, coreAudio };
+/** Platform inventory policy shared by composition and setup UI; no implicit API fallback. */
+enum class AudioPlatform { windows, macOS, other };
+[[nodiscard]] inline std::vector<AudioBackendKind> supportedAudioBackends(AudioPlatform platform)
+{
+    if (platform == AudioPlatform::windows)
+        return {AudioBackendKind::asio, AudioBackendKind::wasapiExclusive, AudioBackendKind::wasapiShared};
+    if (platform == AudioPlatform::macOS) return {AudioBackendKind::coreAudio};
+    return {};
+}
 /** Separate endpoints or a single driver with potentially both directions. */
 enum class AudioDirection { input, output, duplex };
 /** Machine-readable control/discovery failures, not render-thread errors. */
@@ -123,6 +132,14 @@ public:
     [[nodiscard]] virtual AudioError refresh() = 0;
     /** Rejection returns an error immediately and does not invoke callback. */
     [[nodiscard]] virtual AudioError queryCapabilities(AudioDeviceToken token, CapabilityCallback callback) = 0;
+    /** Query the actual endpoint pair, not an intersection of independent endpoint periods. */
+    [[nodiscard]] virtual AudioError queryConfigurationCapabilities(std::optional<AudioDeviceToken> input,
+        AudioDeviceToken output, CapabilityCallback callback)
+    {
+        if (input && *input != output)
+            return {AudioErrorCode::unavailable, "This backend cannot inspect an endpoint pair. Select output only or another backend."};
+        return queryCapabilities(std::move(output), std::move(callback));
+    }
     /** Opens without rendering; negotiated values are returned, never guessed from candidates. */
     [[nodiscard]] virtual AudioQuery<AudioStreamFormat> openStream(const AudioStreamRequest& request) = 0;
     /** Caller owns target through stopStream(); no processing begins before explicit start. */

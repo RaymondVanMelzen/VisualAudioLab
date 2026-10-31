@@ -1,0 +1,39 @@
+NODE ShapedAverage AT AUDIO;
+INPUT InSample: REAL;
+OUTPUT OutSample: REAL;
+PARAM Gain: REAL = 1.0 RANGE 0.0 .. 2.0;
+CONST
+  Stages = 4;
+  Limit = 0.8;
+VAR
+  i: INTEGER;
+  Working, Total: REAL;
+
+FUNCTION Clip(Value: REAL): REAL;
+BEGIN
+  IF Value > Limit THEN
+    Clip := Limit
+  ELSE IF Value < -Limit THEN
+    Clip := -Limit
+  ELSE
+    Clip := Value
+END;
+
+PROCEDURE ApplyGain(Factor: REAL);
+BEGIN
+  Working := Working * Factor
+END;
+
+BEGIN
+  Working := InSample;
+  Total := 0.0;
+  FOR i := 1 TO Stages DO
+  BEGIN
+    Working := Clip(Working);
+    Total := Total + Working;
+    Working := Working * 0.5
+  END NEXT i;
+  Working := Total / Stages;
+  ApplyGain(Gain);
+  OutSample := Working
+END.

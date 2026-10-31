@@ -2,7 +2,7 @@
 
 ## Scope and boundaries
 
-`VisualAudioLab.Audio` is a standard C++20 library depending only on Application/Domain. It implements `AudioEngine`, `AudioGraph`, Input/Output and the [DSP module framework](DspModules.md). `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, scripts, mixer, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
+`VisualAudioLab.Audio` is a standard C++20 library depending on Application/Domain and the device-independent Script target. It implements `AudioEngine`, `AudioGraph`, Input/Output, the [DSP module framework](DspModules.md) and verified [VAL Script](ValScript.md) kernels. `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, mixer, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
 
 The desktop shell's Audio Settings remains a placeholder. Nothing starts audio when opening the application, loading a project or editing a patch. API callers must select endpoints and explicitly start the engine; hardware playback is not an implicit side effect of project persistence.
 
@@ -20,7 +20,8 @@ The desktop shell's Audio Settings remains a placeholder. Nothing starts audio w
 
 | Parameter | Meaning |
 |---|---|
-| `audio.type` | Exact string `Input`, `Output`, `Gain`, `EQ`, `Delay`, `Compressor`, `Distortion`, `Chorus`, `Reverb` or `Analyzer`; mandatory for each mapped node. |
+| `audio.type` | Exact string `Input`, `Output`, `Gain`, `EQ`, `Delay`, `Compressor`, `Distortion`, `Chorus`, `Reverb`, `Analyzer` or `Script`; mandatory for each mapped node. |
+| `audio.script` | Source string required on Script; compiled off-callback by the explicit structural mapper. |
 | `audio.gain` | Optional finite double in `[0,4]`, only on Gain. |
 | `audio.param.<name>` | Optional finite scalar from the processor's documented parameter domains; cannot duplicate `audio.gain`. |
 | `audio.bypass` | Optional boolean for effects/analyzers, not routing Input/Output. |

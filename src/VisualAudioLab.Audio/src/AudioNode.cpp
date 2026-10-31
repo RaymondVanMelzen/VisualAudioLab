@@ -39,9 +39,14 @@ float ParameterSmoother::next() noexcept
     return current_;
 }
 
-AudioNode::AudioNode(std::span<const ParameterSpec> parameters) : definitions_(parameters)
+AudioNode::AudioNode(std::span<const ParameterSpec> parameters)
+{
+    defineParameters(parameters);
+}
+void AudioNode::defineParameters(std::span<const ParameterSpec> parameters)
 {
     if (parameters.size() > states_.size()) throw std::invalid_argument("At most eight DSP parameters are supported.");
+    definitions_ = parameters;
     for (std::size_t i = 0; i < parameters.size(); ++i) initial_[i] = parameters[i].initial;
 }
 application::Result AudioNode::prepare(ProcessingSpec spec)
@@ -189,7 +194,7 @@ void AudioNode::process(const NodeProcessContext& context) noexcept
                 dry = dryDelay_[offset + (dryPosition_ + 1) % delayLength];
             }
             const auto output = safe(sample(channel, inputs[channel]));
-            context.destination[channel * context.stride + frame] = safe(dry * (1 - wet) + output * wet);
+            context.destination[channel * context.stride + frame] = failed() ? 0 : safe(dry * (1 - wet) + output * wet);
         }
         if (latency > 0) dryPosition_ = (dryPosition_ + 1) % delayLength;
         endFrame();

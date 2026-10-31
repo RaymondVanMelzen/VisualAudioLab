@@ -75,12 +75,16 @@ public:
     [[nodiscard]] std::uint64_t numericalFaults() const noexcept { return faults_.load(std::memory_order_relaxed); }
 protected:
     explicit AudioNode(std::span<const ParameterSpec> parameters = {});
+    /** Derived constructor only, before prepare: bind immutable metadata owned for the node lifetime. */
+    void defineParameters(std::span<const ParameterSpec> parameters);
     virtual void prepareState() {}
     virtual void resetState() noexcept {}
     virtual void beginFrame(std::span<const float>) noexcept {}
     virtual void endFrame() noexcept {}
     [[nodiscard]] virtual float sample(int channel, float input) noexcept = 0;
     [[nodiscard]] virtual bool usesInput() const noexcept { return true; }
+    /** Latched executable faults force silence even while bypassed; no failed script may leak dry output. */
+    [[nodiscard]] virtual bool failed() const noexcept { return false; }
     [[nodiscard]] virtual bool validTarget(std::uint16_t, float) const noexcept { return true; }
     [[nodiscard]] float value(std::size_t index) const noexcept { return values_[index]; }
     [[nodiscard]] float safe(float value) noexcept;

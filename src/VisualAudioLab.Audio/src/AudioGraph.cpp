@@ -1,4 +1,6 @@
 #include <val/audio/AudioGraph.h>
+#include <val/audio/ScriptNode.h>
+#include <val/script/Compiler.h>
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -12,7 +14,7 @@ using namespace application;
 namespace
 {
 AudioError invalid(std::string message) { return {AudioErrorCode::invalidArgument, std::move(message)}; }
-std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1)
+std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1, std::shared_ptr<const script::Program> script = {})
 {
     switch (type)
     {
@@ -26,6 +28,7 @@ std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1)
         case AudioNodeType::chorus: return std::make_unique<ChorusNode>();
         case AudioNodeType::reverb: return std::make_unique<ReverbNode>();
         case AudioNodeType::analyzer: return std::make_unique<AnalyzerNode>();
+        case AudioNodeType::script: return script ? std::make_unique<ScriptNode>(std::move(script)) : nullptr;
     }
     return {};
 }
@@ -53,6 +56,21 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
         else if (*type == "Chorus") definition.type = AudioNodeType::chorus;
         else if (*type == "Reverb") definition.type = AudioNodeType::reverb;
         else if (*type == "Analyzer") definition.type = AudioNodeType::analyzer;
+        else if (*type == "Script")
+        {
+            definition.type = AudioNodeType::script;
+            const auto fieldSource = node.parameters.find("audio.script");
+            const auto* source = fieldSource != node.parameters.end() ? std::get_if<std::string>(&fieldSource->second) : nullptr;
+            if (!source) return {{}, invalid("Script node " + std::to_string(id) + " requires audio.script source text.")};
+            const auto compiled = script::Compiler::compile(*source);
+            if (!compiled.value)
+            {
+                const auto& diagnostic = compiled.diagnostics.front();
+                return {{}, invalid("Script node " + std::to_string(id) + " at " + std::to_string(diagnostic.source.line)
+                    + ":" + std::to_string(diagnostic.source.column) + ": " + diagnostic.message)};
+            }
+            definition.script = *compiled.value;
+        }
         else return {{}, invalid("Unsupported audio.type on node " + std::to_string(id) + ".")};
         if (const auto gain = node.parameters.find("audio.gain"); gain != node.parameters.end())
         {
@@ -71,11 +89,13 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
             }
             if (key.starts_with("audio.param."))
             {
-                const auto name = key.substr(12);
+                auto name = key.substr(12);
+                if (definition.type == AudioNodeType::script)
+                    for (auto& c : name) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
                 const auto* value = std::get_if<double>(&scalar);
                 if (!value || !std::isfinite(*value)) return {{}, invalid("audio.param values must be finite numbers.")};
                 // Parameter identities are names in projects and immutable indices in prepared plans.
-                const auto prototype = createProcessor(definition.type);
+                const auto prototype = createProcessor(definition.type, 1, definition.script);
                 const auto parameters = prototype->parameters();
                 const auto found = std::find_if(parameters.begin(), parameters.end(), [&](const auto& item) { return name == item.name; });
                 if (found == parameters.end() || *value < found->minimum || *value > found->maximum)
@@ -118,13 +138,21 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     std::uint64_t output{};
     int capturedChannels{};
     int capturedSources{};
+    std::size_t scriptInstructions{};
     for (const auto& node : graph.nodes)
     {
         if (node.id == 0 || !nodes.emplace(node.id, &node).second || !std::isfinite(node.gain)
             || node.gain < 0 || node.gain > 4)
             return {{}, invalid("Duplicate/zero node ID or invalid gain (finite 0-4 required).")};
-        if (node.type < AudioNodeType::input || node.type > AudioNodeType::analyzer)
+        if (node.type < AudioNodeType::input || node.type > AudioNodeType::script)
             return {{}, invalid("Unsupported processor type.")};
+        if (node.type == AudioNodeType::script)
+        {
+            if (!node.script) return {{}, invalid("Script node requires a verified compiler artifact, not deferred source compilation.")};
+            scriptInstructions += node.script->instructions().size();
+            if (scriptInstructions > 4096) return {{}, invalid("Graph script budget exceeds 4096 expanded instructions per frame.")};
+        }
+        else if (node.script) return {{}, invalid("A script artifact may only be attached to a Script processor.")};
         if (node.capture)
         {
             capturedChannels += node.capture->channels();
@@ -148,6 +176,9 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             || nodes.at(edge.source)->type == AudioNodeType::output || nodes.at(edge.destination)->type == AudioNodeType::input
             || !incoming.emplace(edge.destination, edge.source).second)
             return {{}, invalid("Invalid/missing endpoint, direction, self-link or multiple input sources.")};
+        const auto& destination = *nodes.at(edge.destination);
+        if (destination.type == AudioNodeType::script && destination.script->inputs().empty())
+            return {{}, invalid("A zero-input Script generator cannot accept an upstream connection.")};
         outgoing[edge.source].push_back(edge.destination);
     }
     std::priority_queue<std::uint64_t, std::vector<std::uint64_t>, std::greater<>> ready;
@@ -183,7 +214,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         const auto& node = *nodes.at(id);
         const auto destination = (plan->steps_.size() + 1) * stride;
         const auto source = incoming.contains(id) ? offsets.at(incoming.at(id)) : 0;
-        auto processor = createProcessor(node.type, node.gain);
+        auto processor = createProcessor(node.type, node.gain, node.script);
         const ProcessingSpec spec{format.sampleRate, format.maxFrames, graph.channels};
         storageBytes += processor->requiredStorageBytes(spec);
         if (storageBytes > 128 * 1024 * 1024)
@@ -253,6 +284,13 @@ std::optional<AnalyzerSnapshot> PreparedAudioGraph::analyzerSnapshot(std::uint64
     for (const auto& step : steps_)
         if (step.id == node && step.type == AudioNodeType::analyzer)
             return static_cast<const AnalyzerNode*>(step.processor.get())->snapshot();
+    return std::nullopt;
+}
+std::optional<script::RuntimeFault> PreparedAudioGraph::scriptFault(std::uint64_t node) const noexcept
+{
+    for (const auto& step : steps_)
+        if (step.id == node && step.type == AudioNodeType::script)
+            return static_cast<const ScriptNode*>(step.processor.get())->fault();
     return std::nullopt;
 }
 std::uint64_t PreparedAudioGraph::numericalFaults() const noexcept

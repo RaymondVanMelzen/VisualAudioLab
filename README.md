@@ -1,6 +1,6 @@
 # Visual Audio Lab
 
-C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence, native audio abstractions, a realtime engine with seven built-in DSP processors and calibrated signal visualizers. Scripting, plugin hosting and plugin export are not implemented; audio is API-driven, with no automatic playback from shell controls.
+C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence, native audio abstractions, a realtime engine with seven built-in DSP processors, calibrated signal visualizers and bounded VAL Script audio kernels. Plugin hosting/export and a script editor UI are not implemented; audio is API-driven, with no automatic playback from shell controls.
 
 ## Structure and dependencies
 
@@ -8,7 +8,8 @@ C++20 / JUCE / CMake application framework for Windows and macOS. Product and de
 |---|---|
 | `src/VisualAudioLab.Domain` | Standard C++20 workspace and structural graph values with stable node/port/connection identities; no framework dependency. |
 | `src/VisualAudioLab.Application` | Project lifecycle/store contracts, multi-patch graph/workspace commands, shared bounded undo/redo and validated settings lifecycle; Domain only. |
-| `src/VisualAudioLab.Audio` | Device-independent prepared graphs, DSP modules, bounded automation, lock-free capture/render handoff, shared analysis and telemetry; Application/Domain and standard C++20 only. |
+| `src/VisualAudioLab.Script` | Standard C++20 lexer, parser, AST, semantic analyzer, compiler and immutable typed IR executor; no JUCE/host/device dependency. |
+| `src/VisualAudioLab.Audio` | Device-independent prepared graphs, DSP/script nodes, bounded automation, lock-free capture/render handoff, shared analysis and telemetry; Application/Domain, Script and standard C++20 only. |
 | `src/VisualAudioLab.Infrastructure` | Versioned JSON project/settings adapters, local diagnostics and native audio discovery; Application plus private JUCE core/device modules. |
 | `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, project-backed docking, spatially indexed canvas, lightweight node/cable views and shared visualization widgets; Application, device-independent Audio and JUCE GUI. |
 | `src/VisualAudioLab.Desktop` | Native app entry point and explicit ownership/composition. |
@@ -35,6 +36,8 @@ Application owns `IAudioBackend`; Infrastructure implements `AsioBackend`, `Wasa
 The engine exposes callback duration/deadline load and misses separately from backend-reported latency/xruns; unknown backend data stays absent and callback load is never called whole-process CPU. Generic canvas nodes map only through explicit `audio.type`, `audio.param.<name>` and `audio.bypass` fields; Gain's existing `audio.gain` remains supported. There is no automatic playback on edit/load. See [AudioEngine.md](docs/AudioEngine.md) for stream/ownership boundaries and [DspModules.md](docs/DspModules.md) for processor algorithms, parameter domains, automation ordering, bypass and offline allocation-instrumented tests.
 
 Oscilloscope, Spectrum Analyzer, Peak Meter and raw RMS Meter share bounded lock-free capture and one off-audio-thread analysis worker. Registered runtime sources appear in the Property Inspector, pinned non-modal Signal Inspector and semantic-zoom canvas sparks; without a processing source the shell explicitly shows no data. No analysis or rendering runs on the callback. Capture copies have a measured nonzero cost, not literally "zero impact." See [SignalVisualization.md](docs/SignalVisualization.md) for calibration, lifecycle, budgets, configuration, integration and reproducible metrics.
+
+VAL Script compiles Pascal-inspired `AUDIO` kernels into typed, forward-only IR consumed by `ScriptNode` in the same graph/parameter/lifetime machinery. It supports stateless scalar variables/constants, pure value functions, effect-checked procedures, `IF THEN ELSE` and compile-time bounded `FOR ... NEXT`. Source errors never publish a partial artifact; runtime arithmetic faults latch source-aware silence. No host capabilities, allocation operations or unbounded loops exist in the language. See [ValScript.md](docs/ValScript.md) for exact semantics, resource limits, API integration and four runnable examples. `CONTROL` kernels and native machine-code generation are not implemented.
 
 ## Build
 

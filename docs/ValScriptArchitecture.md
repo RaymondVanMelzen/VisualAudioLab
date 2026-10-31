@@ -4,6 +4,11 @@
 
 VAL Script is a proposed Pascal/Delphi-inspired language for defining DSP graph nodes. This document specifies language and compilation architecture only. Grammar and examples are specification material, not a compiler implementation, generated code, or files to execute.
 
+An implemented, intentionally narrower AUDIO-kernel subset is now described in
+[ValScript.md](ValScript.md), with executable examples, API integration and tested
+resource limits. This architecture remains the broader design; CONTROL ticks and
+native code generation are not implemented.
+
 The requested capability refines the previously unresolved scripting direction in [FunctionalArchitecture.md](FunctionalArchitecture.md) and [TechnicalArchitecture.md](TechnicalArchitecture.md). Unlike general project-automation scripting, VAL Script describes bounded node computation. It does not expose application commands or arbitrary host APIs.
 
 Use the graph, parameter, rate, revision, and realtime rules in [DspArchitecture.md](DspArchitecture.md), the platform boundaries in [AudioPlatformStrategy.md](AudioPlatformStrategy.md), and the independent visual workflow in [ProductVision.md](ProductVision.md) and [PRD.md](PRD.md). VAL Script is now a requested language design, not an automatic addition to the MVP or a named release. Visual patching must remain usable without it.

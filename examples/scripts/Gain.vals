@@ -1,0 +1,8 @@
+// Mono gain. Parameter targets use the engine's layers and 5 ms smoothing.
+NODE ScriptGain AT AUDIO;
+INPUT InSample: REAL;
+OUTPUT OutSample: REAL;
+PARAM Gain: REAL = 0.5 RANGE 0.0 .. 2.0;
+BEGIN
+  OutSample := InSample * Gain
+END.

@@ -1,6 +1,6 @@
 # Visual Audio Lab: Audio Platform Strategy
 
-**Status:** Revised architecture direction with proposed integration details; no implementation or performance results.
+**Status:** Revised architecture direction with proposed runtime integration details. Discovery-only adapters are now implemented as described in [AudioBackends.md](AudioBackends.md); no streaming or performance qualification is claimed.
 
 **Research as of:** 2026-10-30. All external sources listed below were accessed on this date.
 
@@ -12,9 +12,9 @@ Use **C++20 with JUCE and CMake**, with a JUCE device adapter behind application
 - **macOS primary path:** CoreAudio through JUCE.
 - **Future capabilities:** Preserve device-independent DSP boundaries for VST3 hosting and plugin export. These are architectural constraints, not implemented features or MVP/release promises.
 
-This user-directed revision supersedes the earlier PortAudio selection, managed interop design, and required WASAPI modes. JUCE provides device lifecycle/callback facilities and ASIO/CoreAudio support [S10, S13], plus processor/hosting and CMake plugin-target facilities [S15, S16, S17]. Selection is not a claim of superior measured latency.
+The stack revision supersedes the earlier PortAudio selection and managed interop design. A subsequent user request explicitly requires WASAPI Exclusive and Shared backend abstractions alongside ASIO/CoreAudio. JUCE provides device lifecycle/callback facilities and ASIO/CoreAudio support [S10, S13], plus processor/hosting and CMake plugin-target facilities [S15, S16, S17]. Selection is not a claim of superior measured latency.
 
-WASAPI Shared/Exclusive may be evaluated later as optional Windows compatibility paths. They are not required primary targets, fallback guarantees, or current release gates. Pin JUCE, toolchain/CMake and SDK revisions and qualify native packaging and licenses before distribution; no second device library or driver implementation is selected.
+WASAPI Shared/Exclusive are now required, separately implemented discovery paths. They do not replace ASIO preference or establish fallback guarantees or streaming release readiness. Pin JUCE, toolchain/CMake and SDK revisions and qualify native packaging and licenses before distribution; no second device library or driver implementation is selected.
 
 ## Product and architecture alignment
 
@@ -38,7 +38,7 @@ Core audio use remains local and offline-first, without subscription, account au
 | Layer | Meaning in this strategy |
 |---|---|
 | ASIO | Primary Windows driver-facing API used with an installed compatible driver, generally associated with professional audio interfaces. It is not available on every computer. |
-| WASAPI Shared / Exclusive | Possible future Windows compatibility paths, not primary requirements. Shared mode coexists with other audio; exclusive access may block other applications and requires explicit policy/consent. Neither mode guarantees a latency result. [S5] |
+| WASAPI Shared / Exclusive | Required distinct Windows discovery abstractions, without automatic fallback. Future shared streaming coexists with other audio; exclusive access may block other applications and requires explicit policy/consent. Neither mode guarantees a latency result. [S5] |
 | CoreAudio | Apple's native audio framework/HAL for device access on macOS, reached through the chosen library rather than reimplemented. [S6] |
 | JUCE | Selected C++ framework for UI, device integration and future plugin adapters. Its abstractions do not eliminate build, packaging, lifecycle or licensing obligations. [S10, S13-S17] |
 | RtAudio / PortAudio / NAudio | Previously evaluated alternatives, not selected dependencies. See the revised comparison below. |
@@ -78,7 +78,7 @@ Recommended lifecycle: uninitialized, ready, opening, stopped, starting, running
 
 **Windows primary path:** Present available ASIO drivers and require explicit output selection. Never select an arbitrary first driver. If no compatible driver is available, explain the prerequisite and leave audio stopped; editing, saving, examples and help remain usable. Do not silently substitute WASAPI, install a driver, or claim every built-in Windows output works. Broad consumer-device coverage is an open product decision.
 
-If WASAPI compatibility is separately approved, qualify Shared and/or Exclusive explicitly and disclose availability; do not expose unimplemented modes. Exclusive use would require visible consent and no silent mode/device fallback. JUCE defaults or auto-selection behavior must not override this product policy. [S10, S13]
+WASAPI Shared and Exclusive discovery is explicitly required and implemented separately. Qualify any future streaming implementation in each mode and disclose availability; discovery does not imply an available exclusive stream. Exclusive use would require visible consent and no silent mode/device fallback. JUCE defaults or auto-selection behavior must not override this product policy. [S10, S13]
 
 **macOS:** Use CoreAudio on the selected available output. Negotiate the actual supported rate and period; do not imply that CoreAudio uses Windows-style WASAPI modes. Avoid forced device exclusivity in the baseline.
 
@@ -165,12 +165,13 @@ Verify that requested/effective values and unknown/estimated/measured latency re
 | Platform/path | Required coverage |
 |---|---|
 | Windows ASIO | A declared reference interface with a vendor-supplied driver; supported rates/buffers, driver control-panel interaction, absent/busy driver, failure and restart. |
+| Windows WASAPI Shared / Exclusive | Distinct real discovery/capability checks now; future streaming must additionally qualify coexistence, exclusive consent, access denial and no silent mode fallback. |
 | macOS CoreAudio | Built-in and wired USB output candidates on each declared CPU/OS target; supported rates/buffers, device changes, sleep/wake, and interrupted output. |
 | All supported paths | Repeated lifecycle operations, unplug while running, unsupported preferences, parameter edits under load, window resizing, local save/load activity, and explicit stop. |
 
 Use the same documented patches and workload profiles across paths. Report differences rather than assuming a common library guarantees parity. Keep output levels controlled during hardware tests.
 
-WASAPI rows become necessary only if that optional path is approved; then include coexistence/exclusive consent and failure tests. Before future plugin releases, separately qualify VST3 discovery/failed scan, state/parameter restore, missing dependencies and editor lifecycle for hosting; for export qualify eligible/rejected patches, packaging/validation, multiple instances, editor-free processing, host-driven rate/layout/block changes, automation, bypass, latency/tails and offline host rendering. Select reference external hosts and isolation policy explicitly rather than claiming universal compatibility.
+WASAPI discovery is now a required scope; its presence does not qualify future stream behavior. Before future plugin releases, separately qualify VST3 discovery/failed scan, state/parameter restore, missing dependencies and editor lifecycle for hosting; for export qualify eligible/rejected patches, packaging/validation, multiple instances, editor-free processing, host-driven rate/layout/block changes, automation, bypass, latency/tails and offline host rendering. Select reference external hosts and isolation policy explicitly rather than claiming universal compatibility.
 
 ### Performance and fault evidence
 
@@ -182,7 +183,7 @@ Automated CI can check contracts, packaging, and some integration behavior, but 
 
 ### Adoption and release gates
 
-Before accepting the backend implementation, demonstrate both primary paths through the JUCE/C++ boundary, correct teardown/failure behavior, acceptable measured workload performance, and compatible distribution terms. If a gate fails, report the failing capability and resolve or explicitly revise support rather than claiming generic "JUCE support." No WASAPI gate or plugin release commitment is inferred.
+Before accepting a streaming backend, demonstrate both primary paths through the JUCE/C++ boundary, correct teardown/failure behavior, acceptable measured workload performance, and compatible distribution terms. If a gate fails, report the failing capability and resolve or explicitly revise support rather than claiming generic "JUCE support." The discovery-only implementation has separate contract/native-enumeration tests and declared hardware/platform limitations; it does not satisfy these streaming gates or commit a plugin release.
 
 For the PRD's prototype/MVP stages, disclose measured configurations and limits. A stable release must publish its support matrix and qualified profiles; neither a successful callback demo nor the goals in this document constitute evidence that a release is ready.
 

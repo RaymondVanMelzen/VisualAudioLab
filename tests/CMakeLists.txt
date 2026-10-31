@@ -20,6 +20,15 @@ target_link_libraries(VisualAudioLab.Infrastructure.Tests PRIVATE
 val_configure_target(VisualAudioLab.Infrastructure.Tests)
 add_test(NAME Infrastructure.LocalAdapters COMMAND VisualAudioLab.Infrastructure.Tests)
 
+add_executable(VisualAudioLab.AudioBackend.Tests AudioBackendTests.cpp)
+target_link_libraries(VisualAudioLab.AudioBackend.Tests PRIVATE
+    VisualAudioLab.Infrastructure juce::juce_events val_juce_options)
+val_configure_target(VisualAudioLab.AudioBackend.Tests)
+add_test(NAME Audio.BackendContracts COMMAND VisualAudioLab.AudioBackend.Tests)
+set_tests_properties(Audio.BackendContracts PROPERTIES TIMEOUT 45)
+add_test(NAME Audio.NativeDiscovery COMMAND VisualAudioLab.AudioBackend.Tests --native)
+set_tests_properties(Audio.NativeDiscovery PROPERTIES LABELS "native-audio" TIMEOUT 60)
+
 add_executable(VisualAudioLab.Presentation.Tests PresentationTests.cpp NodeEditorTests.cpp ProjectPresentationTests.cpp)
 target_link_libraries(VisualAudioLab.Presentation.Tests PRIVATE VisualAudioLab.Presentation VisualAudioLab.Infrastructure)
 val_configure_target(VisualAudioLab.Presentation.Tests)

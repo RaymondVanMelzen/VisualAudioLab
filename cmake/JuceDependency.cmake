@@ -25,9 +25,14 @@ if(NOT _val_juce_version VERSION_EQUAL "8.0.12")
     message(FATAL_ERROR "This skeleton is qualified against JUCE 8.0.12; supplied version is ${_val_juce_version}.")
 endif()
 
-# Apply one consistent, UI-only module configuration to every JUCE consumer.
+# Apply one consistent module configuration to every JUCE consumer.
+option(VAL_ENABLE_ASIO "Enable JUCE's bundled ASIO headers (review their license before distribution)" ON)
 add_library(val_juce_options INTERFACE)
 target_compile_definitions(val_juce_options INTERFACE
+    JUCE_ASIO=$<BOOL:${VAL_ENABLE_ASIO}>
+    JUCE_ASIO_USE_EXTERNAL_SDK=0
+    JUCE_WASAPI=1
+    JUCE_DIRECTSOUND=0
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=0)

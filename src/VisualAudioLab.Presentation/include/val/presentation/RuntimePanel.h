@@ -51,6 +51,8 @@ private:
     void selectionChanged(bool outputChanged = false);
     void clearConfiguration(juce::String placeholder);
     void populateConfiguration();
+    void configurationChanged();
+    void updateChannelTooltips();
     void message(juce::String text);
     void enableControls();
     [[nodiscard]] application::AudioQuery<audio::AudioGraph> compileGraph(bool captures);

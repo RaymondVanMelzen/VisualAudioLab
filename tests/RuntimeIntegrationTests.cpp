@@ -181,8 +181,8 @@ void runRuntimeIntegrationTests()
         auto* output = control<juce::ComboBox>(setup, "Output device");
         auto* rate = control<juce::ComboBox>(setup, "Sample rate");
         auto* buffer = control<juce::ComboBox>(setup, "Buffer frames");
-        auto* outCount = control<juce::ComboBox>(setup, "Output channels");
-        auto* inCount = control<juce::ComboBox>(setup, "Input channels");
+        auto* outCount = control<juce::ComboBox>(setup, "Output channels enabled");
+        auto* inCount = control<juce::ComboBox>(setup, "Input channels enabled");
         auto* start = control<juce::TextButton>(setup, "Start");
         require(!buffer->isEnabled() && !start->isEnabled(), "Uninspected capabilities cannot masquerade as supported controls.");
         clickButton(*scan);
@@ -223,6 +223,11 @@ void runRuntimeIntegrationTests()
         require(device->probes == 1 && device->selectedInput && !device->opens
                 && rate->getNumItems() == 1 && buffer->getNumItems() == 1 && inCount->getNumItems() == 3
                 && setup.ready() && !setup.running(), "One combined probe restores revalidated settings, including duplex ASIO, with explicit transport.");
+        require(outCount->getItemText(0) == "1 channel: 1: Left"
+                && outCount->getText() == "2 channels: 1: Left, 2: Right"
+                && inCount->getItemText(0) == "0 channels (input disabled)"
+                && inCount->getText() == "2 channels: 1: In left, 2: In right",
+                "Named choices show counts and ordered driver channel identities; saved numeric counts restore independently of labels.");
         if (kind == AudioBackendKind::asio)
         {
             require(input->getNumItems() == 2 && *device->selectedInput == device->selectedOutput,
@@ -268,6 +273,31 @@ void runRuntimeIntegrationTests()
         inspect->onClick();
         require(setup.setupPreference() == saved && setup.ready(), "Reinspection restores machine-local values without silently changing them.");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-ready.png");
+        device->capabilities.inputChannels = {"Test analog", "Test virtual A", "Test virtual B",
+            "Test virtual C", "Test loopback A", "Test loopback B", ""};
+        device->capabilities.outputChannels = {"Test main left", "Test main right", "Test virtual out"};
+        clickButton(*inspect);
+        outCount->setSelectedId(1, juce::sendNotificationSync);
+        inCount->setSelectedId(8, juce::sendNotificationSync);
+        require(!setup.ready() && !start->isEnabled() && setup.status().contains("must match")
+                && inCount->getText().startsWith("7 channels: 1: Test analog")
+                && inCount->getText().contains("7: name not reported")
+                && inCount->getTooltip().contains("Individual port selection/remapping is not supported")
+                && inCount->getTooltip().contains("Test loopback B"),
+                "Seven inputs means the first seven channels, not input port seven; mismatched widths fail visibly and unnamed metadata stays unknown.");
+        screenshot(setup, "desktop-channel-counts-" + juce::String(static_cast<int>(kind)) + "-mismatch.png");
+        outCount->setSelectedId(2, juce::sendNotificationSync);
+        inCount->setSelectedId(3, juce::sendNotificationSync);
+        require(setup.ready() && setup.setupPreference()->inputChannels == 2
+                && setup.setupPreference()->outputChannels == 2 && device->opens == 0
+                && outCount->getText() == "2 channels: 1: Test main left, 2: Test main right",
+                "Count IDs retain exact stream/preference semantics; selecting named channels never opens hardware.");
+        screenshot(setup, "desktop-channel-counts-" + juce::String(static_cast<int>(kind)) + "-ready.png");
+        inCount->setSelectedId(1, juce::sendNotificationSync);
+        require(setup.ready() && setup.setupPreference()->inputChannels == 0
+                && setup.setupPreference()->inputName.empty()
+                && inCount->getText() == "0 channels (input disabled)",
+                "Zero disables native capture without pretending it selects input port zero.");
         device->inventory.devices.clear(); device->changed(device->inventory);
         require(!setup.ready() && !output->isEnabled() && setup.status().contains("No output"),
                 "Empty inventories are truthful and actionable.");
@@ -279,6 +309,9 @@ void runRuntimeIntegrationTests()
         VisualizationSession observations;
         RuntimePanel panel(legacy, observations);
         panel.configureOffline(1);
+        require(control<juce::ComboBox>(panel, "Output channels enabled")->getText() == "1 channel: preview bus 1"
+                && control<juce::ComboBox>(panel, "Input channels enabled")->getText() == "0 channels (input disabled)",
+                "Offline channel counts refer to a preview bus, never invented hardware labels.");
         require(!legacy.createNode({0, 0}, "Invalid", {{"audio.gain", std::numeric_limits<double>::quiet_NaN()}}).succeeded
                 && legacy.graph().nodes.empty() && !legacy.canUndo(), "Invalid initial metadata never creates a partial module/history edit.");
         require(legacy.createNode({0, 0}, "Source", {{"audio.type", std::string("Script")},
@@ -454,7 +487,7 @@ void runRuntimeIntegrationTests()
             require(!runtime.start().succeeded && mock->opens == 0, "Unselected sample rate/buffer/channel configuration never silently falls back or opens hardware.");
             control<juce::ComboBox>(runtime, "Sample rate")->setSelectedId(1, juce::dontSendNotification);
             control<juce::ComboBox>(runtime, "Buffer frames")->setSelectedId(1, juce::dontSendNotification);
-            control<juce::ComboBox>(runtime, "Output channels")->setSelectedId(1, juce::dontSendNotification);
+            control<juce::ComboBox>(runtime, "Output channels enabled")->setSelectedId(1, juce::dontSendNotification);
             clickButton(*scan);
             clickButton(*inspect);
             require(runtime.getWidth() >= 640 && control<juce::ComboBox>(runtime, "Output device")->getWidth() >= 200,

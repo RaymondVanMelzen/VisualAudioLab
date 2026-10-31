@@ -4,7 +4,7 @@
 
 `IAudioBackend` is an application-owned, platform-neutral C++20 discovery boundary. Infrastructure provides `AsioBackend`, `WasapiExclusiveBackend`, `WasapiSharedBackend` and `CoreAudioBackend` through the pinned JUCE 8.0.12 device module. Production discovery is real; only tests inject a fake device source.
 
-This implements platform abstraction, not an audio engine. There is no application stream, processing callback, DSP, device preference persistence or audio-settings UI integration. The desktop shell remains usable without audio and does not construct these adapters during startup. The existing disabled Audio Settings panel describes the shell, not the availability of this new library API.
+The discovery abstraction is now extended with explicit native stream control for the [basic realtime engine](AudioEngine.md). It still provides no effects, device preference persistence or audio-settings UI integration. The desktop shell remains usable without audio and does not construct these adapters during startup. The existing disabled Audio Settings panel describes the shell, not the availability of this library API.
 
 The preferred factory returns ASIO on Windows and CoreAudio on macOS. It does not choose a device, start audio, or fall back to another API. WASAPI Shared and Exclusive are separately required implementations and are never substituted. An available API with an empty inventory does not imply usable hardware.
 
@@ -18,7 +18,7 @@ Explicit refresh, native invalidation and changed polling results advance the ge
 
 Capability queries return driver-reported input/output channel names, candidate sample rates, candidate buffer sizes and an optional default buffer size. Empty rate/period lists mean unknown/unreported, not universal support. These are **not an exhaustive Cartesian product**: rate, channel format/layout and period may be interdependent. JUCE probes a finite set of formats and may synthesize period candidates from driver limits. Shared-mode candidates may reflect Windows mixer conversion, while exclusive candidates do not prove that exclusive access will be granted.
 
-`negotiated` is always absent in this discovery-only implementation. Current stream settings must come from a future successful open, not a default, the first candidate, an OS mix format or a driver-reported nominal rate.
+The capability result's `negotiated` field remains absent: a capability query is not a running stream. Current stream settings are returned separately by explicit successful `openStream`, never inferred from a default, first candidate, OS mix format or driver-reported nominal rate.
 
 Creating a temporary JUCE device can initialize hardware. In particular, JUCE 8.0.12 ASIO initialization creates dummy buffers and may briefly start/stop the driver; it may also repair an invalid driver rate. **ASIO probing is explicit, never part of enumeration, hot-plug refresh or unattended native tests.** No application audio callback is installed. Third-party drivers can be busy, block, fail or crash in-process; this adapter is not a driver sandbox.
 
@@ -47,7 +47,7 @@ No client callbacks execute inside native notification handlers, device queries 
 - A disappearing or busy device returns an unavailable/stale error, never a shared-mode fallback. No native device handles escape a probe or survive for later dereference.
 - JUCE may report an empty inventory for no active devices or some native enumeration failures; the adapter cannot recover native error detail JUCE does not expose. Empty inventories are not evidence of hardware availability.
 
-This abstraction holds no running application stream to stop/restart on unplug. Future streaming must implement separate callback quiescence and explicit reselection/restart; no current stream lifecycle is claimed.
+The explicit stream extension now quiesces/closes on invalidation and requires reselection/restart; see [AudioEngine.md](AudioEngine.md). Capability probing while a stream is open is rejected. Native realtime error signaling does not invoke ordinary change callbacks or allocate error text.
 
 ## Build and licensing
 

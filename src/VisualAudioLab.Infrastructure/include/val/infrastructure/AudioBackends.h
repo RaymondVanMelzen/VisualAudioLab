@@ -15,6 +15,12 @@ public:
     [[nodiscard]] application::AudioError refresh() override;
     [[nodiscard]] application::AudioError queryCapabilities(application::AudioDeviceToken token,
                                                            CapabilityCallback callback) override;
+    [[nodiscard]] application::AudioQuery<application::AudioStreamFormat>
+        openStream(const application::AudioStreamRequest& request) override;
+    [[nodiscard]] application::AudioError startStream(application::IAudioRenderCallback& target) override;
+    [[nodiscard]] application::AudioError stopStream() override;
+    [[nodiscard]] application::AudioError closeStream() override;
+    [[nodiscard]] application::AudioQuery<application::AudioStreamDiagnostics> streamDiagnostics() const override;
     [[nodiscard]] application::AudioError shutdown() override;
 
 protected:

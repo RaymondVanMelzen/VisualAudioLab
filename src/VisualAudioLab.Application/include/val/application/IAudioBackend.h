@@ -1,5 +1,6 @@
 #pragma once
 
+#include <val/application/AudioStream.h>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -90,16 +91,25 @@ struct AudioDeviceCapabilities
     std::vector<std::string> notes;
 };
 
+/** Explicit endpoint/channel selection; no implicit device, rate, channel or API fallback. */
+struct AudioStreamRequest
+{
+    std::optional<AudioDeviceToken> input, output;
+    double sampleRate{};
+    int bufferFrames{}, maxFrames{}, inputChannels{}, outputChannels{};
+};
+
 /**
- * Platform-neutral device discovery/control boundary; contains no DSP or streaming API.
+ * Platform-neutral device discovery and explicit stream-control boundary; contains no DSP.
  *
  * Construct, call and destroy on the designated control thread (JUCE message thread in
  * the native adapter). Refresh is coalesced; capability requests are bounded and
- * asynchronous. Accepted callbacks run later on that same thread, never inside a
- * native notification or real-time callback. Callbacks must be short and non-throwing.
+ * asynchronous. Discovery completions/listeners run later on that same thread, never
+ * inside a native notification or real-time callback, and must be short/non-throwing.
  * Replacing a listener cancels its pending notifications. Shutdown/destruction cancels
- * pending work without callbacks; captured callback resources are released on the owner
- * thread. Reentrant requests are queued, not recursively dispatched. No method is RT-safe.
+ * pending discovery work without completion; captures are released on the owner thread.
+ * Stream stop may signal the borrowed render target before quiescence. Reentrant discovery
+ * requests are queued, not recursively dispatched. No backend control method is RT-safe.
  */
 class IAudioBackend
 {
@@ -113,6 +123,15 @@ public:
     [[nodiscard]] virtual AudioError refresh() = 0;
     /** Rejection returns an error immediately and does not invoke callback. */
     [[nodiscard]] virtual AudioError queryCapabilities(AudioDeviceToken token, CapabilityCallback callback) = 0;
+    /** Opens without rendering; negotiated values are returned, never guessed from candidates. */
+    [[nodiscard]] virtual AudioQuery<AudioStreamFormat> openStream(const AudioStreamRequest& request) = 0;
+    /** Caller owns target through stopStream(); no processing begins before explicit start. */
+    [[nodiscard]] virtual AudioError startStream(IAudioRenderCallback& target) = 0;
+    /** Stops/quiesces callbacks before returning, preserving the opened device for restart. */
+    [[nodiscard]] virtual AudioError stopStream() = 0;
+    /** Quiesces and releases the device; idempotent on the owner/control thread. */
+    [[nodiscard]] virtual AudioError closeStream() = 0;
+    [[nodiscard]] virtual AudioQuery<AudioStreamDiagnostics> streamDiagnostics() const = 0;
     /** Idempotent owner-thread cancellation; no callbacks occur after return. */
     [[nodiscard]] virtual AudioError shutdown() = 0;
 };

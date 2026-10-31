@@ -106,6 +106,8 @@ public:
         ParameterAction action = ParameterAction::automation);
     /** Lock-free fields from the latest accepted plan; a pending/new analyzer initially reports zero windows. */
     [[nodiscard]] application::AudioQuery<AnalyzerSnapshot> analyzerSnapshot(std::uint64_t revision, std::uint64_t node) const;
+    /** Owner-thread first-fault observation for the accepted script generation; no callback formatting/logging. */
+    [[nodiscard]] application::AudioQuery<script::RuntimeFault> scriptFault(std::uint64_t revision, std::uint64_t node) const;
     /** Frees retired plans only on the owner thread; call regularly while publishing. */
     [[nodiscard]] application::Result collectRetired();
     /** Backend stop/close establishes quiescence before graph reclamation. */

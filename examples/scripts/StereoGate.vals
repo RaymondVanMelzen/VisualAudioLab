@@ -1,0 +1,20 @@
+// Separately named scalar ports map to bus channels in declaration order.
+NODE StereoGate AT AUDIO;
+INPUT LeftIn: REAL;
+INPUT RightIn: REAL;
+OUTPUT LeftOut: REAL;
+OUTPUT RightOut: REAL;
+PARAM Threshold: REAL = 0.1 RANGE 0.0 .. 1.0;
+
+FUNCTION Gate(Value: REAL): REAL;
+BEGIN
+  IF (Value >= Threshold) OR (Value <= -Threshold) THEN
+    Gate := Value
+  ELSE
+    Gate := 0.0
+END;
+
+BEGIN
+  LeftOut := Gate(LeftIn);
+  RightOut := Gate(RightIn)
+END.

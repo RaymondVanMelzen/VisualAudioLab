@@ -1,0 +1,7 @@
+// A stateless source kernel, not an oscillator; no hidden input or sample clock.
+NODE ConstantSource AT AUDIO;
+OUTPUT OutSample: REAL;
+PARAM Level: REAL = 0.125 RANGE -1.0 .. 1.0;
+BEGIN
+  OutSample := Level
+END.

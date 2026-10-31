@@ -26,6 +26,14 @@ val_configure_target(VisualAudioLab.Visualization.Tests)
 add_test(NAME Audio.Visualization COMMAND VisualAudioLab.Visualization.Tests)
 set_tests_properties(Audio.Visualization PROPERTIES TIMEOUT 90)
 
+add_executable(VisualAudioLab.Script.Tests ScriptTests.cpp AudioAllocationProbe.cpp)
+target_link_libraries(VisualAudioLab.Script.Tests PRIVATE VisualAudioLab.Script VisualAudioLab.Audio)
+val_configure_target(VisualAudioLab.Script.Tests)
+add_test(NAME Script.CompilerRuntime COMMAND VisualAudioLab.Script.Tests)
+add_test(NAME Script.Examples COMMAND VisualAudioLab.Script.Tests --examples "${PROJECT_SOURCE_DIR}/examples/scripts")
+add_test(NAME Script.Stress COMMAND VisualAudioLab.Script.Tests --stress)
+set_tests_properties(Script.CompilerRuntime Script.Examples Script.Stress PROPERTIES TIMEOUT 90)
+
 add_executable(VisualAudioLab.Project.Tests ProjectTests.cpp)
 target_link_libraries(VisualAudioLab.Project.Tests PRIVATE
     VisualAudioLab.Infrastructure juce::juce_core val_juce_options)

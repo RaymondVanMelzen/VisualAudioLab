@@ -169,6 +169,15 @@ AudioQuery<AnalyzerSnapshot> AudioEngine::analyzerSnapshot(std::uint64_t revisio
     if (!snapshot) return {{}, {AudioErrorCode::invalidArgument, "No Analyzer node with that identity in this revision."}};
     return {*snapshot, {}};
 }
+AudioQuery<script::RuntimeFault> AudioEngine::scriptFault(std::uint64_t revision, std::uint64_t node) const
+{
+    if (const auto check = owner(); !check.succeeded) return {{}, {AudioErrorCode::wrongThread, check.error}};
+    if (!configured_ || revision != acceptedRevision_)
+        return {{}, {AudioErrorCode::invalidArgument, "Script fault observation requires the latest accepted session revision."}};
+    const auto fault = latest_->scriptFault(node);
+    if (!fault) return {{}, {AudioErrorCode::invalidArgument, "No Script node with that identity in this revision."}};
+    return {*fault, {}};
+}
 void AudioEngine::clearPlans()
 {
     delete pending_.exchange(nullptr, std::memory_order_acq_rel);

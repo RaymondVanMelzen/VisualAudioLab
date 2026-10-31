@@ -5,6 +5,8 @@
 #include "DockWorkspace.h"
 #include "ShellChrome.h"
 #include "ShellTheme.h"
+#include "RuntimePanel.h"
+#include "ModulePanels.h"
 
 namespace val::presentation
 {
@@ -18,15 +20,20 @@ class MainComponent final : public juce::Component,
                             public juce::MenuBarModel
 {
 public:
-    explicit MainComponent(application::WorkspaceService& workspace, application::ProjectSession* project = nullptr);
+    explicit MainComponent(application::WorkspaceService& workspace, application::ProjectSession* project = nullptr,
+        RuntimePanel::BackendFactory backends = {});
     ~MainComponent() override;
     void paint(juce::Graphics& graphics) override;
     void resized() override;
+    bool keyPressed(const juce::KeyPress& key) override;
     void showStatus(const juce::String& text);
     /** Existing local preference controls the Property Inspector shared signal preview. */
     [[nodiscard]] bool inspectorVisible() const noexcept;
     void setInspectorVisible(bool visible);
     [[nodiscard]] DockWorkspace& dockWorkspace() noexcept { return dockWorkspace_; }
+    [[nodiscard]] RuntimePanel& runtime() noexcept { return *runtime_; }
+    /** Catalog insertion is one undoable content edit with persisted runtime metadata. */
+    void insertModule(std::string type);
 
     juce::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
     void getAllCommands(juce::Array<juce::CommandID>& commands) override;
@@ -48,7 +55,7 @@ private:
     {
         rename = 0x2100, undo, redo, toggleInspector, resetLayout,
         showCanvas, showModules, showExplorer, showProperties, showAudioSettings, quit,
-        saveProject, saveProjectAs, loadProject, addPatch
+        saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport
     };
     void refresh();
     void report(const application::Result& result);
@@ -75,5 +82,11 @@ private:
     juce::TextButton addPatch_{"New Patch"};
     ShellStatusBar status_;
     DockWorkspace dockWorkspace_{workspace_};
+    std::unique_ptr<RuntimePanel> runtime_;
+    std::unique_ptr<ModuleCatalog> catalog_;
+    std::unique_ptr<ModuleEditor> editor_;
+    juce::TabbedComponent inspectorTabs_{juce::TabbedButtonBar::TabsAtTop};
+    juce::Viewport audioView_;
+    juce::TextButton startAudio_{"Start (F5)"}, stopAudio_{"Stop"};
 };
 }

@@ -4,7 +4,7 @@
 
 `VisualAudioLab.Audio` is a standard C++20 library depending on Application/Domain and the device-independent Script target. It implements `AudioEngine`, `AudioGraph`, Input/Output, the [DSP module framework](DspModules.md) and verified [VAL Script](ValScript.md) kernels. `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, mixer, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
 
-The desktop shell's Audio Settings remains a placeholder. Nothing starts audio when opening the application, loading a project or editing a patch. API callers must select endpoints and explicitly start the engine; hardware playback is not an implicit side effect of project persistence.
+The desktop now composes the engine and backend through [explicit Audio Settings and transport](DesktopWorkflow.md). Nothing opens or starts audio on startup/load. The user selects endpoints/configuration and starts transport; valid edits can then publish new prepared graphs. Load/patch switch stops transport. Hardware playback is not an implicit side effect of persistence.
 
 ## Minimal graph semantics
 
@@ -24,9 +24,9 @@ The desktop shell's Audio Settings remains a placeholder. Nothing starts audio w
 | `audio.script` | Source string required on Script; compiled off-callback by the explicit structural mapper. |
 | `audio.gain` | Optional finite double in `[0,4]`, only on Gain. |
 | `audio.param.<name>` | Optional finite scalar from the processor's documented parameter domains; cannot duplicate `audio.gain`. |
-| `audio.bypass` | Optional boolean for effects/analyzers, not routing Input/Output. |
+| `audio.bypass` | Optional boolean for effects/analyzers/Script (dry for effects, silence for sources), not routing Input/Output. |
 
-Stable node IDs and directed connections are preserved; display names and positions do not affect processing. Ordinary generic editor nodes are **not** silently converted into processors. `fromStructural` maps data; `prepare` still validates the complete graph/configuration. Unknown processor types/parameters are rejected. Mapping is an API, not a new module-browser or inspector UI. Existing project persistence already retains these scalar fields without a schema change.
+Stable node IDs and directed connections are preserved; display names and positions do not affect processing. Ordinary generic editor nodes are **not** silently converted into processors. `fromStructural` maps data; `prepare` still validates the complete graph/configuration. Unknown processor types/parameters are rejected. The desktop catalog supplies explicit metadata and its inspector edits saved targets. Existing persistence retains these scalar fields without a schema change.
 
 Live parameter changes affect runtime state only, not project data/history. A caller that wants persistence must separately make an undoable workspace parameter edit and submit the corresponding runtime change. Graph replacement resets processor state to its supplied prepared values; it does not promise click-free topology changes or DSP-state migration.
 

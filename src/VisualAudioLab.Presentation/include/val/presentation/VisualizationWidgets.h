@@ -96,6 +96,8 @@ private:
 class VisualizationWidgets final : public juce::Component
 {
 public:
+    /** Select a catalog analyzer's initial display without creating a separate analysis pipeline. */
+    void showKind(VisualizationKind kind) { tabs_.setCurrentTabIndex(static_cast<int>(kind)); }
     explicit VisualizationWidgets(VisualizationSession& session, VisualizationHost host = VisualizationHost::inspector);
     ~VisualizationWidgets() override;
     void paint(juce::Graphics& graphics) override;

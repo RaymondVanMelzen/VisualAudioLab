@@ -113,6 +113,8 @@ public:
     /** Backend stop/close establishes quiescence before graph reclamation. */
     [[nodiscard]] application::Result stop();
     [[nodiscard]] application::AudioQuery<AudioEngineTelemetry> telemetry() const;
+    /** Owner-thread negotiated format, available only while a session is configured. */
+    [[nodiscard]] application::AudioQuery<application::AudioStreamFormat> streamFormat() const;
     void process(const application::AudioBuffer& buffer) noexcept override;
     void interrupted(application::AudioStreamStop reason) noexcept override;
 private:

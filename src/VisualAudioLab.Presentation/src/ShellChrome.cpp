@@ -35,7 +35,7 @@ ShellStatusBar::ShellStatusBar()
 {
     setName("Application status bar");
     message_.setTitle("Application status");
-    capability_.setText("UI ONLY | Audio unavailable", juce::dontSendNotification);
+    capability_.setText("Explicit transport | No auto playback", juce::dontSendNotification);
     capability_.setColour(juce::Label::textColourId, ShellTheme::accent());
     capability_.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(message_);

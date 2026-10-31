@@ -1,5 +1,7 @@
 add_library(VisualAudioLab.Presentation STATIC
     src/MainComponent.cpp
+    src/RuntimePanel.cpp
+    src/ModulePanels.cpp
     src/NodeView.cpp
     src/ConnectionView.cpp
     src/CanvasScene.cpp

@@ -3,6 +3,7 @@
 #include <val/infrastructure/FileLogger.h>
 #include <val/infrastructure/LocalSettingsStore.h>
 #include <val/infrastructure/LocalProjectStore.h>
+#include <val/infrastructure/AudioBackends.h>
 #include <val/presentation/MainComponent.h>
 #include <iostream>
 
@@ -27,7 +28,17 @@ public:
         setUsingNativeTitleBar(true);
         setResizable(true, false);
         setResizeLimits(800, 600, 7680, 4320);
-        content_ = new presentation::MainComponent(workspace, &project);
+        content_ = new presentation::MainComponent(workspace, &project, [](application::AudioBackendKind kind) -> std::unique_ptr<application::IAudioBackend>
+        {
+            switch (kind)
+            {
+                case application::AudioBackendKind::asio: return std::make_unique<infrastructure::AsioBackend>();
+                case application::AudioBackendKind::wasapiExclusive: return std::make_unique<infrastructure::WasapiExclusiveBackend>();
+                case application::AudioBackendKind::wasapiShared: return std::make_unique<infrastructure::WasapiSharedBackend>();
+                case application::AudioBackendKind::coreAudio: return std::make_unique<infrastructure::CoreAudioBackend>();
+            }
+            return {};
+        });
         setContentOwned(content_, false);
         content_->setInspectorVisible(settings.inspectorVisible);
         centreWithSize(settings.windowWidth, settings.windowHeight);
@@ -73,7 +84,7 @@ public:
                                           + " Using temporary defaults; original will not be overwritten.");
             log(application::LogLevel::warning, "settings.load", "Preferences unavailable; preserving original.");
         }
-        log(application::LogLevel::info, "lifecycle", "Application skeleton started; no audio capabilities.");
+        log(application::LogLevel::info, "lifecycle", "Application started with explicit audio transport; no automatic device probing/playback.");
     }
 
     void systemRequestedQuit() override

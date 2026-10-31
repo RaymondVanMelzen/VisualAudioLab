@@ -326,6 +326,12 @@ void AudioEngine::process(const AudioBuffer& buffer) noexcept
             misses_.store(misses_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     }
 }
+AudioQuery<AudioStreamFormat> AudioEngine::streamFormat() const
+{
+    if (const auto check = owner(); !check.succeeded) return {{}, {AudioErrorCode::wrongThread, check.error}};
+    if (!configured_) return {{}, {AudioErrorCode::stopped, "No configured audio stream."}};
+    return {format_, {}};
+}
 AudioQuery<AudioEngineTelemetry> AudioEngine::telemetry() const
 {
     if (const auto check = owner(); !check.succeeded)

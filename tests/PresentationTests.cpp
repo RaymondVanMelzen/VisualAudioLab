@@ -19,6 +19,8 @@ void runNodeEditorTests();
 void runLargeGraphBenchmark();
 void runProjectPresentationTests();
 void runVisualizationPresentationTests();
+void runRuntimeIntegrationTests();
+void runModulePanelIntegrationTests();
 
 int main(int argc, char** argv)
 {
@@ -34,6 +36,10 @@ int main(int argc, char** argv)
                 runProjectPresentationTests();
             else if (std::string_view(argv[1]) == "--visualization")
                 runVisualizationPresentationTests();
+            else if (std::string_view(argv[1]) == "--runtime")
+                runRuntimeIntegrationTests();
+            else if (std::string_view(argv[1]) == "--module-panels")
+                runModulePanelIntegrationTests();
             else
                 throw std::runtime_error("Unknown presentation test selector.");
         });
@@ -43,7 +49,7 @@ int main(int argc, char** argv)
         val::application::WorkspaceService service;
         val::presentation::MainComponent shell(service);
         shell.setSize(1000, 700);
-        require(shell.getNumChildComponents() == 7,
+        require(shell.getNumChildComponents() == 9,
                 "Shell chrome, dock workspace and patch navigation are constructed.");
         require(shell.inspectorVisible(), "Inspector starts visible.");
         shell.setInspectorVisible(false);
@@ -53,7 +59,17 @@ int main(int argc, char** argv)
         shell.showStatus("Test status");
         juce::Array<juce::CommandID> commands;
         shell.getAllCommands(commands);
-        require(commands.size() == 15, "Shell registers history, navigation, layout, project and lifecycle commands.");
+        require(commands.size() == 17, "Shell registers history, navigation, layout, project and explicit transport commands.");
+        const auto audioMenu = shell.getMenuForIndex(3, "Audio");
+        juce::PopupMenu::MenuItemIterator audioItems(audioMenu);
+        int transportItems{};
+        while (audioItems.next())
+        {
+            const auto& item = audioItems.getItem();
+            require(!item.text.contains("no backend"), "Audio menu contains no obsolete disabled transport placeholders.");
+            if (item.text == "Start" || item.text == "Stop") ++transportItems;
+        }
+        require(transportItems == 2, "Audio menu exposes the real command-bound Start and Stop.");
         auto* nameEditor = findControl<juce::TextEditor>(shell);
         require(nameEditor != nullptr, "Workspace name has an editable control.");
         auto commandId = [&](const juce::String& name)
@@ -117,7 +133,8 @@ int main(int argc, char** argv)
         for (auto* child : audio.getChildren())
             if (auto* combo = dynamic_cast<juce::ComboBox*>(child); combo && !combo->isEnabled())
                 ++unavailableControls;
-        require(unavailableControls == 2, "Audio controls are disabled rather than fake device operations.");
+        require(unavailableControls == 0, "Legacy disabled placeholder controls are removed from Audio Settings.");
+        require(!shell.runtime().running(), "The shell composes runtime settings without automatically opening a device.");
 
         const juce::DragAndDropTarget::SourceDetails ownDrag(
             0, &docks.panel(PanelId::patchCanvas), {});

@@ -57,7 +57,7 @@ set_tests_properties(Audio.StreamLifecycle PROPERTIES TIMEOUT 45)
 add_test(NAME Audio.NativeDiscovery COMMAND VisualAudioLab.AudioBackend.Tests --native)
 set_tests_properties(Audio.NativeDiscovery PROPERTIES LABELS "native-audio" TIMEOUT 60)
 
-add_executable(VisualAudioLab.Presentation.Tests PresentationTests.cpp NodeEditorTests.cpp ProjectPresentationTests.cpp VisualizationPresentationTests.cpp)
+add_executable(VisualAudioLab.Presentation.Tests PresentationTests.cpp NodeEditorTests.cpp ProjectPresentationTests.cpp VisualizationPresentationTests.cpp RuntimeIntegrationTests.cpp ModulePanelIntegrationTests.cpp)
 target_link_libraries(VisualAudioLab.Presentation.Tests PRIVATE VisualAudioLab.Presentation VisualAudioLab.Infrastructure)
 val_configure_target(VisualAudioLab.Presentation.Tests)
 add_test(NAME Presentation.Shell COMMAND VisualAudioLab.Presentation.Tests)
@@ -68,6 +68,9 @@ add_test(NAME Presentation.Projects COMMAND VisualAudioLab.Presentation.Tests --
 set_tests_properties(Presentation.Projects PROPERTIES LABELS "gui" TIMEOUT 30)
 add_test(NAME Presentation.Visualization COMMAND VisualAudioLab.Presentation.Tests --visualization)
 set_tests_properties(Presentation.Visualization PROPERTIES LABELS "gui" TIMEOUT 60)
+add_test(NAME Presentation.Runtime COMMAND VisualAudioLab.Presentation.Tests --runtime)
+add_test(NAME Presentation.ModulePanels COMMAND VisualAudioLab.Presentation.Tests --module-panels)
+set_tests_properties(Presentation.Runtime Presentation.ModulePanels PROPERTIES LABELS "gui" TIMEOUT 60)
 
 # The layout value deliberately compiles and runs without JUCE or a desktop session.
 add_executable(VisualAudioLab.DockLayout.Tests DockLayoutTests.cpp)

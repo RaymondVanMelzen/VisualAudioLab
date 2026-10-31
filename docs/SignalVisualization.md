@@ -6,9 +6,10 @@ and future products are proposals, not claims that they are implemented or quali
 
 Implemented: Oscilloscope, Spectrum Analyzer, Peak Meter and RMS Meter. There are no new
 effect processors, spectrograms, true-peak meters, LUFS meters, audio devices or automatic playback.
-The existing structural editor remains structural. Runtime processing is still API-driven.
-The shell displays **No target**, not fabricated audio, until composition registers an actual
-scheduled source. Tests supply deterministic buffers through the real offline AudioEngine.
+The structural editor now has [desktop runtime composition](DesktopWorkflow.md): executable
+modules register scheduled captures on explicit Start, and valid live edits update producers.
+The shell displays **No target**, not fabricated audio, until a real source is scheduled.
+Device-free desktop preview and tests process deterministic buffers through the real offline AudioEngine.
 
 ## Classes and ownership
 

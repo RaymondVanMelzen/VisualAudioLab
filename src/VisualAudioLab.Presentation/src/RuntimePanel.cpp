@@ -11,6 +11,19 @@ namespace
 {
 juce::String text(const std::string& value) { return juce::String::fromUTF8(value.c_str()); }
 AudioError invalid(std::string value) { return {AudioErrorCode::invalidArgument, std::move(value)}; }
+juce::String channelChoice(int count, const std::vector<std::string>& names, bool offline = false)
+{
+    if (count == 0) return "0 channels (input disabled)";
+    juce::String result = juce::String(count) + (count == 1 ? " channel: " : " channels: ");
+    if (offline) return result + "preview bus 1" + (count > 1 ? "-" + juce::String(count) : "");
+    juce::StringArray selected;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto name = text(names.at(static_cast<std::size_t>(i)));
+        selected.add(juce::String(i + 1) + ": " + (name.trim().isEmpty() ? "name not reported" : name));
+    }
+    return result + selected.joinIntoString(", ");
+}
 bool contentEqual(const domain::Graph& left, const domain::Graph& right)
 {
     if (left.connections != right.connections || left.nodes.size() != right.nodes.size()) return false;
@@ -52,7 +65,12 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
         labels_[i].setText(names[i], juce::dontSendNotification); addAndMakeVisible(labels_[i]);
         boxes[i]->setTitle(names[i]); boxes[i]->setTextWhenNothingSelected("Select explicitly");
     }
+    labels_[5].setText("Input channels enabled", juce::dontSendNotification);
+    labels_[6].setText("Output channels enabled", juce::dontSendNotification);
+    inputCount_.setTitle("Input channels enabled");
+    outputCount_.setTitle("Output channels enabled");
     notice_.setText("Check output levels before Start; there is no master limiter. Detect may initialize drivers (ASIO may briefly start/stop). "
+                    "Counts enable the first N driver channels; individual port routing is not supported. "
                     "Capability lists are candidates, not guaranteed combinations. No automatic fallback.", juce::dontSendNotification);
     notice_.setFont(juce::FontOptions(11.0f));
     state_.setText(lastStatus_, juce::dontSendNotification); state_.setFont(juce::FontOptions(12.0f));
@@ -68,7 +86,7 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
     input_.onChange = [this] { selectionChanged(); };
     output_.onChange = [this] { selectionChanged(true); };
     for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
-        box->onChange = [this] { enableControls(); };
+        box->onChange = [this] { configurationChanged(); };
     start_.onClick = [this] { const auto result = start(); if (!result.succeeded) message(text(result.error)); };
     stop_.onClick = [this] { const auto result = stop(); if (!result.succeeded) message(text(result.error)); };
     done_.onClick = [this] { if (onDismissSetup) onDismissSetup(); };
@@ -108,7 +126,7 @@ void RuntimePanel::resized()
     {
         const int row = i / 2, col = i % 2, column = bounds.getWidth() / 2;
         auto cell = juce::Rectangle<int>(bounds.getX() + col * column, bounds.getY() + row * 28, column, 28).reduced(2);
-        labels_[i].setBounds(cell.removeFromLeft(100)); boxes[i]->setBounds(cell);
+        labels_[i].setBounds(cell.removeFromLeft(i >= 5 ? 155 : 100)); boxes[i]->setBounds(cell);
     }
     bounds.removeFromTop(112);
     notice_.setBounds(bounds.removeFromTop(52));
@@ -141,6 +159,28 @@ void RuntimePanel::clearConfiguration(juce::String placeholder)
         box->clear(juce::dontSendNotification);
         box->setTextWhenNothingSelected(placeholder);
         box->setTooltip(placeholder);
+    }
+}
+void RuntimePanel::configurationChanged()
+{
+    updateChannelTooltips();
+    const auto configuration = request();
+    if (!configuration.value) message(text(configuration.error.message));
+    else message(offline_ ? "Preview bus width selected; no hardware ports. Start remains explicit."
+        : "Channel counts selected, not individual ports. Native audio enables the first N driver channels. "
+          "Start remains explicit; hover the channel choices for all enabled names.");
+    enableControls();
+}
+void RuntimePanel::updateChannelTooltips()
+{
+    for (auto* box : {&inputCount_, &outputCount_})
+    {
+        const auto selection = box->getSelectedId() > 0 ? box->getText() : juce::String("No channel count selected.");
+        box->setTooltip(selection + (offline_
+            ? "\nOffline preview bus only; no hardware ports."
+            : "\nCount, not port number: enables the first N channels in driver-reported order. "
+              "Individual port selection/remapping is not supported. Driver names are shown verbatim; "
+              "physical/virtual classification is not provided by this metadata. Check vendor routing."));
     }
 }
 void RuntimePanel::selectionChanged(bool outputChanged)
@@ -295,18 +335,14 @@ void RuntimePanel::capabilities(AudioQuery<AudioDeviceCapabilities> result)
 void RuntimePanel::populateConfiguration()
 {
     for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_}) box->clear(juce::dontSendNotification);
-    inputCount_.addItem("0", 1); // Native input count uses ID count+1, including explicit zero.
+    inputCount_.addItem(channelChoice(0, {}), 1); // Native input count uses ID count+1, including explicit zero.
     if (inputCaps_)
-        for (int i = 1; i <= std::min(32, static_cast<int>(inputCaps_->inputChannels.size())); ++i) inputCount_.addItem(juce::String(i), i + 1);
+        for (int i = 1; i <= std::min(32, static_cast<int>(inputCaps_->inputChannels.size())); ++i)
+            inputCount_.addItem(channelChoice(i, inputCaps_->inputChannels), i + 1);
     if (outputCaps_)
     {
-        juce::StringArray channelNames;
-        for (const auto& channel : outputCaps_->outputChannels) channelNames.add(text(channel));
-        outputCount_.setTooltip("Channels are the first N reported channels: " + channelNames.joinIntoString(", "));
-        channelNames.clear();
-        if (inputCaps_) for (const auto& channel : inputCaps_->inputChannels) channelNames.add(text(channel));
-        inputCount_.setTooltip("Channels are the first N reported channels: " + channelNames.joinIntoString(", "));
-        for (int i = 1; i <= std::min(32, static_cast<int>(outputCaps_->outputChannels.size())); ++i) outputCount_.addItem(juce::String(i), i);
+        for (int i = 1; i <= std::min(32, static_cast<int>(outputCaps_->outputChannels.size())); ++i)
+            outputCount_.addItem(channelChoice(i, outputCaps_->outputChannels), i);
         int id = 1;
         for (const auto rate : outputCaps_->sampleRates)
             if (std::isfinite(rate) && rate >= 8000 && rate <= 384000)
@@ -338,15 +374,19 @@ void RuntimePanel::populateConfiguration()
         };
         restored = selectText(rateChoice_, juce::String(preference_->sampleRate, 0));
         restored = selectText(buffer_, juce::String(preference_->bufferFrames)) && restored;
-        restored = selectText(outputCount_, juce::String(preference_->outputChannels)) && restored;
-        restored = selectText(inputCount_, juce::String(preference_->inputChannels)) && restored;
+        const int outputId = preference_->outputChannels, inputId = preference_->inputChannels + 1;
+        if (outputCount_.indexOfItemId(outputId) >= 0) outputCount_.setSelectedId(outputId, juce::dontSendNotification);
+        else restored = false;
+        if (inputCount_.indexOfItemId(inputId) >= 0) inputCount_.setSelectedId(inputId, juce::dontSendNotification);
+        else restored = false;
     }
+    updateChannelTooltips();
     message(juce::String(outputCount_.getNumItems() == 0
                 ? "No usable output channels reported. Retry Inspect, check device/vendor setup, or select another backend. Start is unavailable. "
                 : rateChoice_.getNumItems() == 0 || buffer_.getNumItems() == 0
                 ? "Rate/buffer candidates are unreported or outside engine limits; Start is unavailable. Retry Inspect, check vendor/OS setup, or select different endpoints/backend. "
                 : restored ? "Saved settings revalidated. Start remains explicit. "
-                           : "Capabilities ready. Select reported rate, buffer and channel counts; input count is zero or matches output. ")
+                           : "Capabilities ready. Select counts, not port numbers: first N driver channels. Input must be disabled or match output. ")
             + (shared ? "Windows manages the hardware period; callback frames are application block choices. " : "")
             + (buffer_.getNumItems() == 1 ? "One buffer value reported for this configuration. " : ""));
 }
@@ -357,9 +397,10 @@ void RuntimePanel::configureOffline(int channels, double rate, int frames)
     for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_}) box->clear(juce::dontSendNotification);
     rateChoice_.addItem(juce::String(rate, 0), 1); rateChoice_.setSelectedId(1, juce::dontSendNotification);
     buffer_.addItem(juce::String(frames), 1); buffer_.setSelectedId(1, juce::dontSendNotification);
-    inputCount_.addItem("0", 1); inputCount_.setSelectedId(1, juce::dontSendNotification);
-    for (int i = 1; i <= 32; ++i) outputCount_.addItem(juce::String(i), i);
+    inputCount_.addItem(channelChoice(0, {}), 1); inputCount_.setSelectedId(1, juce::dontSendNotification);
+    for (int i = 1; i <= 32; ++i) outputCount_.addItem(channelChoice(i, {}, true), i);
     outputCount_.setSelectedId(channels, juce::dontSendNotification);
+    updateChannelTooltips();
     message("Offline preview selected. Start processes silent input / script generators to visualizers only; no device opens.");
     enableControls();
 }
@@ -417,7 +458,7 @@ AudioQuery<AudioStreamRequest> RuntimePanel::request() const
     if (value.sampleRate < 8000 || value.sampleRate > 384000 || value.bufferFrames < 1 || value.bufferFrames > 4096
         || value.outputChannels < 1 || value.outputChannels > 32 || value.inputChannels < 0
         || (value.inputChannels != 0 && value.inputChannels != value.outputChannels))
-        return {{}, invalid("Select a reported rate/buffer and matching input/output counts, or zero inputs. 8-384 kHz, 1-4096 frames, 1-32 outputs.")};
+        return {{}, invalid("Start unavailable: select a reported rate/buffer; input channels enabled must match output channels enabled, or be 0 (disabled). These are counts, not port numbers.")};
     if (!offline_)
     {
         if (!outputCaps_ || output_.getSelectedId() < 1 || !backend_) return {{}, invalid("Scan/select/inspect native devices first.")};

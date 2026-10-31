@@ -31,9 +31,19 @@ stopped/setup-required, scanning, inspecting, ready or running state.
    be forcibly cancelled. Detection does not start playback. Loading capabilities
    automatically on launch is a policy some JUCE apps choose, not a way to obtain
    driver capabilities without runtime initialization.
-4. Select the reported sample rate, buffer frames and output channel count.
-   Input count must be zero or match output count. Counts select the first N
-   reported channels; tooltips list their names. WASAPI pair candidates follow
+4. Select the reported sample rate, buffer frames and **Output channels enabled**.
+   **Input channels enabled** must be **0 channels (input disabled)** or match
+   the output count. These choices are counts, **not individual port numbers**:
+   `2 channels: 1: <driver name>, 2: <driver name>` enables the first two channels
+   in driver-reported order. `7 channels` enables channels 1 through 7, not just
+   channel 7. The choice and its tooltip show the enabled names verbatim;
+   an empty name is explicitly marked **name not reported**.
+   Individual port selection, arbitrary channel masks and remapping are not
+   supported by the current engine. Channel names may describe physical,
+   virtual or loopback channels; JUCE's name list does not classify them.
+   Check the vendor mixer/routing panel rather than assuming every reported
+   channel is a physical socket. Offline choices describe the preview bus only.
+   WASAPI pair candidates follow
    JUCE's combined-device rules (including shared-mode mixer conversion), not
    an intersection of independently queried endpoint periods. Shared-mode
    **Callback frames** configure the JUCE processing block; Windows manages

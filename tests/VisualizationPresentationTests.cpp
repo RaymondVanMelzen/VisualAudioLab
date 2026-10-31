@@ -83,7 +83,10 @@ void runVisualizationPresentationTests()
     {
         const auto outputFile = juce::File(path);
         auto stream = outputFile.createOutputStream();
-        require(stream && juce::PNGImageFormat{}.writeImageToStream(snapshot, *stream), "Persist actual widget screenshot.");
+        require(stream && stream->setPosition(0) && stream->truncate().wasOk()
+                && juce::PNGImageFormat{}.writeImageToStream(snapshot, *stream), "Persist actual widget screenshot, replacing an earlier run.");
+        stream->flush();
+        require(stream->getStatus().wasOk(), "Screenshot writes reach storage without I/O errors.");
     }
     inspector.setVisible(false); session.refresh();
     require(!inspector.demanding() && capture->enabled(), "Hidden inspector stops demand while pinned visible detail continues sharing.");

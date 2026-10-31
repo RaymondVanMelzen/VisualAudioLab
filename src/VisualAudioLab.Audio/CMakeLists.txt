@@ -1,4 +1,6 @@
 add_library(VisualAudioLab.Audio STATIC
+    src/SignalCaptureBuffer.cpp
+    src/AnalyzerEngine.cpp
     src/AudioNode.cpp
     src/DspNodes.cpp
     src/AudioGraph.cpp

@@ -53,6 +53,12 @@ public:
     /** A project/patch transition clears object-local focus and selection, not just stale IDs. */
     void resetForProject();
     std::function<void(const application::Result&)> onEdit;
+    /** Single selected node, connected source endpoint, or zero for absent/ambiguous targets. */
+    std::function<void(domain::GraphId)> onObservationTarget;
+    /** Optional shared observation rendering; never owns a processor, timer or analysis worker. */
+    std::function<void(juce::Graphics&, domain::GraphId, juce::Rectangle<float>)> paintObservation;
+    [[nodiscard]] bool observationVisible(domain::GraphId node) const;
+    void repaintObservation(domain::GraphId node);
 
 private:
     /** Only one provisional pointer/keyboard operation may own the canvas at a time. */

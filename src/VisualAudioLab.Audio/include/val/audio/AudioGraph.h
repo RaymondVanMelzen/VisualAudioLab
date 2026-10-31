@@ -19,6 +19,8 @@ struct AudioNodeDefinition
     float gain{1};
     std::vector<std::pair<std::uint16_t, float>> parameters;
     bool bypassed{};
+    /** Optional already-admitted observation transport; control retains ownership until callback retirement. */
+    std::shared_ptr<SignalCaptureBuffer> capture;
 };
 /** Single-bus graph edge; fan-out allowed, implicit fan-in/mixing forbidden. */
 struct AudioConnection
@@ -44,6 +46,8 @@ public:
         prepare(const AudioGraph& graph, application::AudioStreamFormat format, std::uint64_t revision);
     /** Audio thread only, bounded by the prepared resource limits; no allocations/ownership changes. */
     void process(const application::AudioBuffer& buffer, int offset = 0, int frames = -1) noexcept;
+    /** Copy complete node outputs once per host block, after all sample-offset parameter spans. */
+    void capture(int frames, std::uint64_t epoch, std::uint64_t firstFrame) noexcept;
     [[nodiscard]] bool gainIndex(std::uint64_t node, std::size_t& index) const noexcept;
     /** Applies a prevalidated gain event to a prepared index on the audio thread. */
     void setGain(std::size_t index, float value) noexcept;
@@ -62,6 +66,7 @@ private:
         AudioNodeType type{};
         std::unique_ptr<AudioProcessorNode> processor;
         std::size_t source{}, destination{};
+        std::shared_ptr<SignalCaptureBuffer> capture;
     };
     application::AudioStreamFormat format_;
     std::uint64_t revision_{};

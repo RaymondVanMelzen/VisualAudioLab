@@ -9,14 +9,14 @@ The existing device-independent C++20 Audio library now supplies seven built-in 
 | `AudioNode` | Prepared limits, immutable parameter definitions, render-owned base/automation/override layers, smoothing, numerical protection, latency-aligned bypass and bounded processing. |
 | `EffectNode` | Audio-to-audio extension point; receives immutable upstream samples and owns wet processing state. |
 | `GeneratorNode` | Source extension point; ignores upstream audio, fades to silence on bypass. No product oscillator was added. |
-| `AnalyzerNode` | Pass-through analyzer extension point and actual peak/RMS meter with lock-free observations of completed 256-frame windows. |
+| `AnalyzerNode` | Pass-through observation endpoint; explicit bounded capture feeds the shared off-audio-thread [visualization worker](SignalVisualization.md), not callback peak/RMS accumulation. |
 | `ParameterSmoother` | Resettable linear physical-domain ramps measured in samples rather than callbacks. Inputs must be validated by parameter metadata before use. |
 
 These are API-driven processing modules, not a module-browser/inspector redesign. Generic canvas names still have no DSP meaning; opening/editing/loading a project never starts audio. Plugin hosting/export, scripts, MIDI, editable/recorded automation lanes, transport/seek/loop, modulators, feedback graphs, mixing, control-rate nodes and parallel scheduling remain outside this change. The control grid described in `DspArchitecture.md` remains a proposed separate capability; these processors are audio-rate. No deviation from its target-then-smooth or frame/acceptance-order semantics is needed.
 
 ## Lifecycle and realtime ownership
 
-All preparation, buffer resizing, initial-value edits and destruction occur off the callback, with rendering quiescent. `prepare(ProcessingSpec)` validates 8-384 kHz, 1-4096 frame capacity, 1-32 channels and processor-specific domains, allocates state and calls reset. A sample-rate/layout change requires stop/reprepare/restart, starting a new engine epoch; it does not reinterpret existing automation timestamps. `reset()` requires exclusive node access and clears filters, delay/reverb/chorus history, LFO phase, detector state, transient parameter layers, bypass ramps and analyzer windows to the prepared initial values. It is not a concurrent control-thread operation on live nodes. Applications should reset large delay-based plans off-callback.
+All preparation, buffer resizing, initial-value edits and destruction occur off the callback, with rendering quiescent. `prepare(ProcessingSpec)` validates 8-384 kHz, 1-4096 frame capacity, 1-32 channels and processor-specific domains, allocates state and calls reset. A sample-rate/layout change requires stop/reprepare/restart, starting a new engine epoch; it does not reinterpret existing automation timestamps. `reset()` requires exclusive node access and clears filters, delay/reverb/chorus history, LFO phase, detector state, transient parameter layers and bypass ramps to the prepared initial values. Worker observation windows instead reset on capture continuity/epoch/revision changes. Reset is not a concurrent control-thread operation on live nodes. Applications should reset large delay-based plans off-callback.
 
 Standalone node users must prepare the intended channel layout before processing and provide valid planar spans. A constructor alone does not negotiate a mono/stereo host layout. `GainNode(gain, sampleRate)` retains its legacy constructor and default stereo preparation, but explicit prepare is the normal lifecycle.
 
@@ -107,7 +107,7 @@ For generic project nodes: exact `audio.type` strings are `Input`, `Output`, `Ga
 
 All supplied processors declare **zero additional algorithmic pipeline latency**. Delay/chorus/reverb intentional wet timing and decay are effects, not compensation delays; they must not be added as host latency to every dry/bypassed sample. The base still supports a declared bounded nonzero latency: bypass uses preallocated matching dry delay and a five-millisecond linear crossfade. A test-only one-sample processor verifies compensation. Future nonzero-latency processors need graph/host latency reporting qualification before addition.
 
-Bypass preserves channel count and **keeps wet state processing** behind the dry crossfade, so unbypass does not restart a frozen delay/filter. This is a click-reducing signal transition, not silence detection, tail spill routing, a CPU-saving suspend mode, or a guarantee against arbitrary discontinuities already present in the input. Generator bypass crossfades to silence; analyzer windows continue behind bypass.
+Bypass preserves channel count and **keeps wet state processing** behind the dry crossfade, so unbypass does not restart a frozen delay/filter. This is a click-reducing signal transition, not silence detection, tail spill routing, a CPU-saving suspend mode, or a guarantee against arbitrary discontinuities already present in the input. Generator bypass crossfades to silence; explicitly armed observation captures continue independently of effect bypass.
 
 ## Algorithm references and originality
 

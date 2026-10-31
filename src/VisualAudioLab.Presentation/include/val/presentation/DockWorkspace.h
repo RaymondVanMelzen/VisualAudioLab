@@ -2,6 +2,7 @@
 
 #include "DockLayout.h"
 #include "CanvasView.h"
+#include "VisualizationWidgets.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <functional>
@@ -11,13 +12,13 @@ namespace val::presentation
 {
 /**
  * Tool panel with a draggable heading and keyboard-accessible docking selector.
- * Borrows an optional structural canvas; other bodies disclose their placeholder capabilities.
+ * Borrows optional canvas/visualization content; other bodies disclose their placeholder capabilities.
  * Neither tool controls nor the canvas instantiate an audio/device backend.
  */
 class WorkspacePanel final : public juce::Component
 {
 public:
-    WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested, CanvasView* canvas = nullptr);
+    WorkspacePanel(PanelId panel, std::function<void(int)> dockRequested, juce::Component* content = nullptr);
     ~WorkspacePanel() override;
     void paint(juce::Graphics& graphics) override;
     void resized() override;
@@ -31,7 +32,7 @@ private:
     juce::ComboBox destination_;
     juce::Label deviceLabel_, rateLabel_;
     juce::ComboBox device_, sampleRate_;
-    CanvasView* canvas_{};
+    juce::Component* content_{};
 };
 
 /**
@@ -54,6 +55,10 @@ public:
     [[nodiscard]] const DockLayout& layout() const noexcept { return layout_; }
     [[nodiscard]] WorkspacePanel& panel(PanelId id) noexcept;
     [[nodiscard]] CanvasView& canvas() noexcept { return canvas_; }
+    /** Shared visualization composition boundary; no audio starts from a view. */
+    [[nodiscard]] VisualizationSession& visualizations() noexcept { return visualizations_; }
+    [[nodiscard]] VisualizationWidgets& signalPreview() noexcept { return signalPreview_; }
+    void showSignalInspector();
     [[nodiscard]] application::ProjectLayout projectLayout() const;
     void restoreLayout(const application::ProjectLayout& value);
     [[nodiscard]] bool accepts(const juce::DragAndDropTarget::SourceDetails& details) const;
@@ -92,9 +97,20 @@ private:
 
     void rebuild();
     void changed();
+    /** Persistent non-modal detail host; closed windows hide and stop demand without losing pin identity. */
+    class SignalInspectorWindow final : public juce::DocumentWindow
+    {
+    public:
+        explicit SignalInspectorWindow(VisualizationSession& session);
+        void closeButtonPressed() override { setVisible(false); }
+        [[nodiscard]] VisualizationWidgets& view() { return *static_cast<VisualizationWidgets*>(getContentComponent()); }
+    };
     [[nodiscard]] DockArea& area(DockPosition position) noexcept;
 
     DockLayout layout_;
+    VisualizationSession visualizations_;
+    VisualizationWidgets signalPreview_{visualizations_};
+    std::unique_ptr<SignalInspectorWindow> signalWindow_;
     CanvasView canvas_;
     std::array<std::unique_ptr<WorkspacePanel>, DockLayout::panelCount> panels_;
     DockArea left_, centre_, right_, bottom_;

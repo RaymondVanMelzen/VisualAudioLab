@@ -116,6 +116,8 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     std::map<std::uint64_t, std::uint64_t> incoming;
     std::map<std::uint64_t, std::vector<std::uint64_t>> outgoing;
     std::uint64_t output{};
+    int capturedChannels{};
+    int capturedSources{};
     for (const auto& node : graph.nodes)
     {
         if (node.id == 0 || !nodes.emplace(node.id, &node).second || !std::isfinite(node.gain)
@@ -123,6 +125,15 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             return {{}, invalid("Duplicate/zero node ID or invalid gain (finite 0-4 required).")};
         if (node.type < AudioNodeType::input || node.type > AudioNodeType::analyzer)
             return {{}, invalid("Unsupported processor type.")};
+        if (node.capture)
+        {
+            capturedChannels += node.capture->channels();
+            ++capturedSources;
+            if (node.capture->source() != node.id || node.capture->sampleRate() != format.sampleRate
+                || node.capture->firstChannel() + node.capture->channels() > graph.channels || capturedChannels > 16
+                || capturedSources > 8 || capturedChannels * format.sampleRate > 768000)
+                return {{}, invalid("Capture source/rate/channel mismatch or 16-channel observation limit exceeded.")};
+        }
         if (node.type == AudioNodeType::output)
         {
             if (output) return {{}, invalid("Only one explicit Output bus is supported; no implicit mixing.")};
@@ -186,7 +197,9 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         processor->initialBypass(node.bypassed);
         if (const auto prepared = processor->prepare(spec); !prepared.succeeded)
             return {{}, invalid(prepared.error)};
-        plan->steps_.push_back({id, node.type, std::move(processor), source, destination});
+        if (node.type == AudioNodeType::analyzer)
+            static_cast<AnalyzerNode*>(processor.get())->bindCapture(node.capture);
+        plan->steps_.push_back({id, node.type, std::move(processor), source, destination, node.capture});
         offsets.emplace(id, destination);
     }
     return {std::move(plan), {}};
@@ -202,6 +215,12 @@ void PreparedAudioGraph::process(const AudioBuffer& buffer, int offset, int fram
     for (auto& step : steps_)
         step.processor->process({scratch_.data() + step.source + offset, scratch_.data() + step.destination + offset,
                                  channels_, format_.maxFrames, frames, buffer, offset});
+}
+void PreparedAudioGraph::capture(int frames, std::uint64_t epoch, std::uint64_t firstFrame) noexcept
+{
+    for (auto& step : steps_)
+        if (step.capture)
+            step.capture->capture(scratch_.data() + step.destination, format_.maxFrames, frames, revision_, epoch, firstFrame);
 }
 bool PreparedAudioGraph::parameterIndex(std::uint64_t node, std::uint16_t parameter, float value,
                                         ParameterAction action, std::size_t& index) const noexcept

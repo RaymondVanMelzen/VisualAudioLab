@@ -277,8 +277,7 @@ void testBypassAndBases()
     std::fill(signal.begin() + 512, signal.end(), -0.25f);
     require(render(analyzer, signal, 2, 17) == signal, "Analyzer base passes through audio.");
     const auto snapshot = analyzer.snapshot();
-    require(snapshot.windows == 2 && snapshot.peak[0] == 0.5f && snapshot.rms[0] == 0.5f
-            && snapshot.peak[1] == 0.25f && snapshot.rms[1] == 0.25f, "Bounded lock-free analyzer publishes 256-sample windows.");
+    require(snapshot.windows == 0, "Unobserved analyzer does no statistics on the callback; worker calibration is covered by visualization tests.");
     analyzer.reset();
     require(analyzer.snapshot().windows == 0, "Analyzer reset clears observation epoch.");
     std::atomic<bool> corrupt{};
@@ -306,7 +305,7 @@ void testBypassAndBases()
             corrupt.store(true);
     }
     renderThread.join();
-    require(!corrupt.load() && analyzer.snapshot().windows == 500, "Concurrent bounded analyzer observations need no render-thread ownership or locks.");
+    require(!corrupt.load() && analyzer.snapshot().windows == 0, "Unarmed analyzer has no observation work or callback allocations.");
 }
 
 void testProtection()
@@ -414,8 +413,8 @@ void testAutomationAndGraph()
         for (auto value : output) require(std::isfinite(value), "Integrated processor graph produces finite samples.");
     }
     const auto revision = static_cast<std::uint64_t>(AudioNodeType::analyzer) + 10;
-    require(engine.analyzerSnapshot(revision, 2).value->windows == 2
-            && !engine.analyzerSnapshot(revision, 1).value, "Analyzer handoff is accessible by stable identity through engine.");
+    require(engine.analyzerSnapshot(revision, 2).value->windows == 0
+            && !engine.analyzerSnapshot(revision, 1).value, "Analyzer identity is retained without implicit audio-thread analysis.");
     input[0] = std::numeric_limits<float>::quiet_NaN();
     engineProcess(engine, input.data(), output.data(), 128);
     require(output[0] == 0 && engine.telemetry().value->latestPlanNumericalFaults == 1,
@@ -505,7 +504,7 @@ void testAllProcessorWorkload()
     }
     const auto report = *engine.telemetry().value;
     require(report.appliedEvents == 128 && report.latestPlanNumericalFaults == 0 && report.samplePosition == 256000
-            && engine.analyzerSnapshot(1, 9).value->windows == 1000, "Long-run integrated state and automation remain bounded.");
+            && engine.analyzerSnapshot(1, 9).value->windows == 0, "Long-run integrated state and automation remain bounded without unarmed observation.");
     std::cout << "Offline seven-effect stereo workload: 2000 x 128 frames, 128 scheduled events; "
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count()
               << " s; last/max engine callback ns " << report.callbackNanoseconds << "/" << report.maxCallbackNanoseconds

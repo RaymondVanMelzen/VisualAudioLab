@@ -199,40 +199,13 @@ void AudioNode::process(const NodeProcessContext& context) noexcept
 #endif
 }
 
-void AnalyzerNode::resetState() noexcept
+void AnalyzerNode::process(const NodeProcessContext& context) noexcept
 {
-    peak_.fill(0); squares_.fill(0); frames_ = 0;
-    for (auto& value : publishedPeak_) value.store(0, std::memory_order_relaxed);
-    for (auto& value : publishedRms_) value.store(0, std::memory_order_relaxed);
-    windows_.store(0, std::memory_order_relaxed);
-}
-float AnalyzerNode::sample(int channel, float input) noexcept
-{
-    peak_[channel] = std::max(peak_[channel], std::abs(input));
-    squares_[channel] += static_cast<double>(input) * input;
-    return input;
-}
-void AnalyzerNode::endFrame() noexcept
-{
-    if (++frames_ < 256) return;
-    for (int channel = 0; channel < spec_.channels; ++channel)
-    {
-        publishedPeak_[channel].store(std::bit_cast<std::uint32_t>(peak_[channel]), std::memory_order_relaxed);
-        publishedRms_[channel].store(std::bit_cast<std::uint32_t>(static_cast<float>(std::sqrt(squares_[channel] / 256))),
-                                     std::memory_order_relaxed);
-    }
-    windows_.store(windows_.load(std::memory_order_relaxed) + 1, std::memory_order_release);
-    peak_.fill(0); squares_.fill(0); frames_ = 0;
+    for (int channel = 0; channel < context.channels; ++channel)
+        std::copy_n(context.source + channel * context.stride, context.frames, context.destination + channel * context.stride);
 }
 AnalyzerSnapshot AnalyzerNode::snapshot() const noexcept
 {
-    AnalyzerSnapshot result;
-    result.windows = windows_.load(std::memory_order_acquire);
-    for (std::size_t channel = 0; channel < result.peak.size(); ++channel)
-    {
-        result.peak[channel] = std::bit_cast<float>(publishedPeak_[channel].load(std::memory_order_relaxed));
-        result.rms[channel] = std::bit_cast<float>(publishedRms_[channel].load(std::memory_order_relaxed));
-    }
-    return result;
+    return capture_ ? capture_->meters() : AnalyzerSnapshot{};
 }
 }

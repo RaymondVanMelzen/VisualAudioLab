@@ -1,21 +1,21 @@
 # Visual Audio Lab
 
-C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a transient dockable workspace, a structural node editor and tested framework boundaries. No audio devices, audio processing, DSP nodes, scripting, project files, plugin hosting or plugin export are implemented.
+C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence and tested framework boundaries. No audio devices, audio processing, DSP nodes, scripting, plugin hosting or plugin export are implemented.
 
 ## Structure and dependencies
 
 | Location / target | Responsibility and dependencies |
 |---|---|
 | `src/VisualAudioLab.Domain` | Standard C++20 workspace and structural graph values with stable node/port/connection identities; no framework dependency. |
-| `src/VisualAudioLab.Application` | Service contracts, atomic structural graph/workspace commands, shared bounded undo/redo and validated settings lifecycle; Domain only. |
-| `src/VisualAudioLab.Infrastructure` | Local rotating text diagnostics and versioned JSON settings adapters; Application plus private JUCE core. |
-| `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, transient docking model, spatially indexed canvas and lightweight node/cable views; Application and JUCE GUI. |
+| `src/VisualAudioLab.Application` | Project lifecycle/store contracts, multi-patch graph/workspace commands, shared bounded undo/redo and validated settings lifecycle; Domain only. |
+| `src/VisualAudioLab.Infrastructure` | Versioned JSON project/settings adapters and local rotating text diagnostics; Application plus private JUCE core. |
+| `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, project-backed docking layout, spatially indexed canvas and lightweight node/cable views; Application and JUCE GUI. |
 | `src/VisualAudioLab.Desktop` | Native app entry point and explicit ownership/composition. |
 | `modules` | Reserved first-party module integration point; deliberately no DSP or empty processing targets. |
 | `resources` | Embedded shell limitation notice. |
 | `tests` | Application/history/graph, local-adapter, dock-layout and shell/canvas tests registered with CTest; opt-in large-graph benchmark. |
 | `cmake` | Target-scoped C++20/warnings and dependency policy. |
-| `docs` | Existing product/design specifications, unchanged by this skeleton. |
+| `docs` | Product/design specifications and the implemented [project schema/workflows](docs/ProjectFormat.md). |
 
 No Audio or plugin target is scaffolded before it has a real responsibility. Future processing must remain independent of the desktop/device owner, per the architecture. Production layers do not depend on tests; Presentation does not include concrete persistence/logging adapters.
 
@@ -49,15 +49,21 @@ The executable/bundle is generated under `src/VisualAudioLab.Desktop/VisualAudio
 
 ## Shell, settings and diagnostics
 
-The component-scoped dark theme surrounds a menu bar, command-bound toolbar, capability banner, status bar and four fixed dock destinations (left, centre, right and bottom). Patch Canvas hosts the structural editor; Module Browser, Project Explorer, Property Inspector and Audio Settings remain placeholders. Panels in a shared dock are selectable tabs. Drag a panel's heading into a visible dock, or use its **Dock** selector to move it to any destination, including a collapsed dock. Peripheral docks collapse when empty; the empty centre remains a drop target. There are no floating windows, third-party docking packages or persisted layouts.
+The component-scoped dark theme surrounds a menu bar, command-bound toolbar, capability banner, status bar and four fixed dock destinations (left, centre, right and bottom). Patch Canvas hosts the structural editor; Module Browser, Project Explorer, Property Inspector and Audio Settings remain placeholders. Panels in a shared dock are selectable tabs. Drag a panel's heading into a visible dock, or use its **Dock** selector to move it to any destination, including a collapsed dock. Peripheral docks collapse when empty; the empty centre remains a drop target. Projects retain window bounds, docking, visibility, splitter proportions and selected tabs. There are no floating windows or third-party docking packages.
 
-Drag the dividers to resize occupied docks within bounded proportions; focused dividers also accept arrow keys. Use the panel selector to hide a secondary panel and the **View** menu to reopen/focus any named area. Patch Canvas cannot be hidden. **Reset Layout** restores every panel and the default proportions. The toolbar and **Audio** menu also reach Audio Settings; its disabled controls explicitly disclose that devices and sample rates are unavailable. File and audio product operations are disabled, not simulated. This is the application-shell framework requested here, not the broader functional fixture described in the prototype study documents.
+Drag the dividers to resize occupied docks within bounded proportions; focused dividers also accept arrow keys. Use the panel selector to hide a secondary panel and the **View** menu to reopen/focus any named area. Patch Canvas cannot be hidden. **Reset Layout** restores every panel and the default proportions. The toolbar and **Audio** menu also reach Audio Settings; its disabled controls explicitly disclose that devices and sample rates are unavailable. Audio product operations remain disabled, not simulated. This is not the broader functional fixture described in the prototype study documents.
 
-Renaming the existing temporary workspace and editing its graph use the same service/command/history boundary; Undo and Redo menu items/buttons operate on this shared history while focused text fields retain native editing history. Panel moves, selection and viewport navigation never enter document history. There is no project workflow or audio engine.
+Renaming the workspace and editing its patches use the same service/command/history boundary; Undo and Redo menu items/buttons operate on this shared history while focused text fields retain native editing history. Panel moves, selection and viewport navigation never enter document history. There is no audio engine.
+
+## Project persistence
+
+Use **File > Save Project**, **Save Project As...**, **Load Project...** and **Recent Files** for human-readable, versioned `.valab` JSON. Save/Load use Ctrl+S/Ctrl+O on Windows and Command+S/Command+O on macOS; Shift+Save chooses a new path. Dirty content is marked in the window title, and replacement/close offers Save/Discard/Cancel. **New Patch** adds another graph; the patch selector changes the active graph without losing undo history.
+
+Projects retain all patches, node/connection identities and geometry, scalar parameters, window/dock layout and per-patch zoom/pan. Selection and undo history are not serialized. Compatible unknown JSON fields survive read-edit-save; unsupported schemas and invalid references never replace active content or get overwritten. Saves prepare, verify, flush and replace through a sibling temporary file. Recent Files is bounded to ten persistent local paths, labels missing entries and supports their removal. See [ProjectFormat.md](docs/ProjectFormat.md) for the exact schema, compatibility/preservation limits, failure policy and tests.
 
 ## Structural node editor
 
-The editor starts empty. **Add Node**, **N** while the canvas is focused, or its context menu creates a generic structural node with an **In** port and **Out** port. These are editing primitives, not functional audio modules. No node creation, connection, selection or viewport action opens a device or runs DSP. All content is transient and discarded when the application closes.
+A new project starts with one empty patch. **Add Node**, **N** while the canvas is focused, or its context menu creates a generic structural node with an **In** port and **Out** port. These are editing primitives, not functional audio modules. No node creation, connection, selection or viewport action opens a device or runs DSP. Save explicitly to retain content across application runs.
 
 | Interaction | Behavior |
 |---|---|
@@ -82,7 +88,7 @@ The focused graph tests and GUI tests cover edit/history invariants, invalid con
 
 Use the corresponding executable in your build directory/configuration; the optional benchmark is not part of ordinary application startup or CTest. Its software snapshot timings are not native GPU frame-rate measurements. Keyboard actions exist, but semantic screen-reader traversal of the graph and full platform accessibility qualification remain future work; an accessible component description alone does not provide complete graph semantics.
 
-The composition root stores **machine-local application preferences only**, not projects, in `VisualAudioLab/settings.json` below JUCE's user application-data directory (`%APPDATA%` on Windows and `~/Library` on macOS). Schema version 1 records window size and inspector visibility (now the Property Inspector); all other docking state resets on restart. Loads validate JSON types/ranges/version; failed loads preserve the current defaults and disable automatic writes, with a visible status message. Saves validate and use a sibling temporary replacement file. This is a single-process settings adapter, not concurrent editing or a power-loss durability guarantee. It differs from the earlier strictly in-memory prototype study by providing the settings framework explicitly requested for this skeleton; project saving remains unavailable.
+The composition root stores **machine-local application preferences**, separate from `.valab` projects, in `VisualAudioLab/settings.json` below JUCE's user application-data directory (`%APPDATA%` on Windows and `~/Library` on macOS). Settings schema version 1 records window size and inspector visibility (now the Property Inspector); loading a project overrides the view with its own saved layout. Loads validate JSON types/ranges/version; failed settings loads preserve defaults and disable automatic preference writes, with a visible status message. Saves validate and use a sibling temporary replacement file. This is a single-process settings adapter, not concurrent editing or a power-loss durability guarantee.
 
 Local diagnostics are in the adjacent `Logs/shell.log`. Epoch-millisecond timestamps, severity and category are recorded; no project content, paths or names are logged by default. Current and previous files are capped at approximately 1 MiB each, with per-record truncation and control-character escaping. There is no telemetry or remote export. Write failures are surfaced separately, not recursively logged. Shutdown saves only window preferences; failures are visible and do not claim success.
 

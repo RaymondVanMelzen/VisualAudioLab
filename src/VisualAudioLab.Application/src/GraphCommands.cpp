@@ -26,15 +26,18 @@ class GraphEdit final : public Command
 {
 public:
     GraphEdit(domain::Graph& graph, std::string label, domain::Graph alternate,
-              std::vector<domain::GraphId> nodes, std::vector<domain::GraphId> connections)
+              std::vector<domain::GraphId> nodes, std::vector<domain::GraphId> connections,
+              domain::GraphId& activePatch)
         : graph_(graph), label_(std::move(label)), alternate_(std::move(alternate)),
-          nodes_(std::move(nodes)), connections_(std::move(connections)) {}
+          nodes_(std::move(nodes)), connections_(std::move(connections)),
+          activePatch_(activePatch), patch_(activePatch) {}
 
     std::string_view name() const noexcept override { return label_; }
     Result execute() override
     {
         exchange(graph_.nodes, alternate_.nodes, nodes_);
         exchange(graph_.connections, alternate_.connections, connections_);
+        activePatch_ = patch_;
         return Result::success();
     }
     Result undo() override { return execute(); }
@@ -58,6 +61,8 @@ private:
     std::string label_;
     domain::Graph alternate_;
     std::vector<domain::GraphId> nodes_, connections_;
+    domain::GraphId& activePatch_;
+    domain::GraphId patch_;
 };
 }
 
@@ -75,7 +80,7 @@ Result WorkspaceService::createNode(domain::Position position, std::string name)
     domain::Graph alternate;
     alternate.nodes.emplace(id, domain::Node{id, std::move(name), position});
     auto result = history_.execute(std::make_unique<GraphEdit>(
-        graph_, "Create node", std::move(alternate), std::vector{id}, std::vector<domain::GraphId>{}));
+        activeGraph(), "Create node", std::move(alternate), std::vector{id}, std::vector<domain::GraphId>{}, state_.activePatch));
     if (result.succeeded)
     {
         ++nextId_;
@@ -90,15 +95,15 @@ Result WorkspaceService::deleteNodes(const std::vector<domain::GraphId>& nodes)
     if (unique.empty())
         return Result::failure("Select at least one node to delete.");
     for (auto id : unique)
-        if (!graph_.nodes.contains(id))
+        if (!graph().nodes.contains(id))
             return Result::failure("Cannot delete a node that is no longer in the graph.");
     std::vector<domain::GraphId> connections;
-    for (const auto& [id, wire] : graph_.connections)
+    for (const auto& [id, wire] : graph().connections)
         if (unique.contains(wire.source.node) || unique.contains(wire.destination.node))
             connections.push_back(id);
     return history_.execute(std::make_unique<GraphEdit>(
-        graph_, "Delete nodes", domain::Graph{},
-        std::vector<domain::GraphId>(unique.begin(), unique.end()), std::move(connections)));
+        activeGraph(), "Delete nodes", domain::Graph{},
+        std::vector<domain::GraphId>(unique.begin(), unique.end()), std::move(connections), state_.activePatch));
 }
 
 Result WorkspaceService::moveNodes(const std::map<domain::GraphId, domain::Position>& positions)
@@ -109,8 +114,8 @@ Result WorkspaceService::moveNodes(const std::map<domain::GraphId, domain::Posit
     std::vector<domain::GraphId> nodes;
     for (const auto& [id, position] : positions)
     {
-        const auto found = graph_.nodes.find(id);
-        if (found == graph_.nodes.end() || !validPosition(position))
+        const auto found = graph().nodes.find(id);
+        if (found == graph().nodes.end() || !validPosition(position))
             return Result::failure("Cannot move missing nodes or use invalid patch coordinates.");
         if (position == found->second.position)
             continue;
@@ -122,21 +127,21 @@ Result WorkspaceService::moveNodes(const std::map<domain::GraphId, domain::Posit
     if (nodes.empty())
         return Result::success();
     return history_.execute(std::make_unique<GraphEdit>(
-        graph_, "Move nodes", std::move(alternate), std::move(nodes), std::vector<domain::GraphId>{}));
+        activeGraph(), "Move nodes", std::move(alternate), std::move(nodes), std::vector<domain::GraphId>{}, state_.activePatch));
 }
 
 Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint destination) const
 {
     if (source.port != domain::Port::output || destination.port != domain::Port::input)
         return Result::failure("Connect an output port to an input port.");
-    if (!graph_.nodes.contains(source.node) || !graph_.nodes.contains(destination.node))
+    if (!graph().nodes.contains(source.node) || !graph().nodes.contains(destination.node))
         return Result::failure("Both connection endpoints must belong to this graph.");
     if (source.node == destination.node)
         return Result::failure("A node cannot connect to itself.");
 
     std::unordered_map<domain::GraphId, std::vector<domain::GraphId>> outgoing;
-    outgoing.reserve(graph_.nodes.size());
-    for (const auto& [id, wire] : graph_.connections)
+    outgoing.reserve(graph().nodes.size());
+    for (const auto& [id, wire] : graph().connections)
     {
         (void) id;
         if (wire.source == source && wire.destination == destination)
@@ -171,7 +176,7 @@ Result WorkspaceService::connect(domain::Endpoint source, domain::Endpoint desti
     domain::Graph alternate;
     alternate.connections.emplace(id, domain::Connection{id, source, destination});
     auto result = history_.execute(std::make_unique<GraphEdit>(
-        graph_, "Connect ports", std::move(alternate), std::vector<domain::GraphId>{}, std::vector{id}));
+        activeGraph(), "Connect ports", std::move(alternate), std::vector<domain::GraphId>{}, std::vector{id}, state_.activePatch));
     if (result.succeeded)
         ++nextId_;
     return result;
@@ -179,10 +184,26 @@ Result WorkspaceService::connect(domain::Endpoint source, domain::Endpoint desti
 
 Result WorkspaceService::disconnect(domain::GraphId connection)
 {
-    if (!graph_.connections.contains(connection))
+    if (!graph().connections.contains(connection))
         return Result::failure("Select an existing connection to disconnect.");
     return history_.execute(std::make_unique<GraphEdit>(
-        graph_, "Disconnect ports", domain::Graph{}, std::vector<domain::GraphId>{},
-        std::vector{connection}));
+        activeGraph(), "Disconnect ports", domain::Graph{}, std::vector<domain::GraphId>{},
+        std::vector{connection}, state_.activePatch));
+}
+
+Result WorkspaceService::setParameter(domain::GraphId node, std::string key, domain::Parameter value)
+{
+    if (!graph().nodes.contains(node) || key.empty() || key.size() > 128 || key.find('\0') != std::string::npos
+        || (std::holds_alternative<std::string>(value) && std::get<std::string>(value).find('\0') != std::string::npos)
+        || (std::holds_alternative<double>(value) && !std::isfinite(std::get<double>(value))))
+        return Result::failure("Parameter needs an existing node, a 1-128 byte key and a finite scalar value.");
+    auto replacement = graph().nodes.at(node);
+    replacement.parameters.insert_or_assign(std::move(key), std::move(value));
+    if (replacement == graph().nodes.at(node))
+        return Result::success();
+    domain::Graph alternate;
+    alternate.nodes.emplace(node, std::move(replacement));
+    return history_.execute(std::make_unique<GraphEdit>(
+        activeGraph(), "Set parameter", std::move(alternate), std::vector{node}, std::vector<domain::GraphId>{}, state_.activePatch));
 }
 }

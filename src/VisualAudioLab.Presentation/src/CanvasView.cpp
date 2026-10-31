@@ -30,6 +30,24 @@ CanvasView::CanvasView(application::WorkspaceService& workspace) : workspace_(wo
 
 CanvasView::~CanvasView() = default;
 
+void CanvasView::restoreNavigation(application::PatchViewport value)
+{
+    cancelGesture();
+    zoom_ = static_cast<float>(value.zoom);
+    offset_ = {static_cast<float>(value.x), static_cast<float>(value.y)};
+    updateDetails();
+    repaint();
+}
+
+void CanvasView::resetForProject()
+{
+    cancelGesture();
+    selected_.clear();
+    selectedWire_ = focusedNode_ = 0;
+    synchronise();
+    restoreNavigation(workspace_.project().patches.at(workspace_.project().activePatch).viewport);
+}
+
 juce::Rectangle<int> CanvasView::viewport() const
 {
     return getLocalBounds().withTrimmedTop(34).withTrimmedBottom(26);
@@ -496,6 +514,7 @@ bool CanvasView::keyPressed(const juce::KeyPress& key)
     if (modifiers.isCommandDown() && (code == 'Z' || code == 'Y'))
     {
         cancelGesture();
+        workspace_.setViewport(navigation());
         finish(modifiers.isShiftDown() || code == 'Y' ? workspace_.redo() : workspace_.undo());
         return true;
     }

@@ -1,5 +1,6 @@
 add_library(VisualAudioLab.Infrastructure STATIC
     src/FileLogger.cpp
+    src/LocalProjectStore.cpp
     src/LocalSettingsStore.cpp)
 target_include_directories(VisualAudioLab.Infrastructure PUBLIC include)
 target_link_libraries(VisualAudioLab.Infrastructure

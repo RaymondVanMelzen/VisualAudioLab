@@ -9,7 +9,7 @@ ShellToolbar::ShellToolbar(juce::ApplicationCommandManager& commands, juce::Comm
 {
     setName("Application toolbar");
     workspaceName_.setTitle("Temporary workspace name");
-    workspaceName_.setDescription("In-memory identity only. No project file is saved.");
+    workspaceName_.setDescription("Project name. Rename applies an undoable edit; File saves the project.");
     rename_.setCommandToTrigger(&commands, rename, true);
     undo_.setCommandToTrigger(&commands, undo, true);
     redo_.setCommandToTrigger(&commands, redo, true);

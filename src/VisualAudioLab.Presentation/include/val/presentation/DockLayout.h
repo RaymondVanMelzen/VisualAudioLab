@@ -8,10 +8,10 @@ namespace val::presentation
 /** Stable identities for the shell's UI-only placeholder areas. */
 enum class PanelId { patchCanvas, moduleBrowser, projectExplorer, propertyInspector, audioSettings };
 
-/** Fixed docking destinations; no floating windows or persisted layouts are implied. */
+/** Fixed docking destinations; floating windows are not implemented. */
 enum class DockPosition { left, centre, right, bottom };
 
-/** One panel's transient docking state, independent of JUCE and application documents. */
+/** One panel's docking state, independent of JUCE and converted at the project boundary. */
 struct PanelPlacement final
 {
     DockPosition position;

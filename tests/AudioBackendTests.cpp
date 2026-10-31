@@ -1,8 +1,11 @@
 #include "TestSupport.h"
 #include <val/infrastructure/AudioBackends.h>
+#include <val/audio/AudioEngine.h>
 #include <juce_events/juce_events.h>
 #include <chrono>
 #include <thread>
+#include <algorithm>
+#include <array>
 
 namespace
 {
@@ -18,6 +21,9 @@ struct FakeState
     AudioError scanError, probeError;
     int scans{}, probes{};
     bool stopped{}, invalidateDuringProbe{};
+    bool failOpen{}, failStart{};
+    IAudioRenderCallback* target{};
+    AudioStreamDiagnostics stream;
 };
 
 /** Deterministic injected discovery; no production discovery is replaced in native tests. */
@@ -39,7 +45,33 @@ public:
         if (!state_->probeError.succeeded()) return {{}, state_->probeError};
         return {state_->capabilities, {}};
     }
-    void stop() override { state_->stopped = true; state_->changed = {}; }
+    AudioQuery<AudioStreamFormat> open(const std::optional<DiscoveredAudioDevice>&,
+        const std::optional<DiscoveredAudioDevice>&, const AudioStreamRequest& request) override
+    {
+        if (state_->failOpen) return {{}, {AudioErrorCode::unavailable, "Injected open failure."}};
+        state_->stream = {true, false, 96, 144, 7};
+        return {AudioStreamFormat{request.sampleRate, request.bufferFrames, request.maxFrames,
+                                  request.inputChannels, request.outputChannels}, {}};
+    }
+    AudioError start(IAudioRenderCallback& target) override
+    {
+        if (!state_->stream.open || state_->failStart) return {AudioErrorCode::unavailable, "Injected start failure."};
+        state_->target = &target; state_->stream.running = true;
+        return {};
+    }
+    void stopStream() override
+    {
+        if (state_->target) state_->target->interrupted(AudioStreamStop::requested);
+        state_->target = nullptr; state_->stream.running = false;
+    }
+    void closeStream() override { stopStream(); state_->stream.open = false; }
+    void interruptStream(AudioStreamStop reason) override
+    {
+        if (state_->target) state_->target->interrupted(reason);
+        state_->target = nullptr; state_->stream.running = false; state_->stream.open = false;
+    }
+    AudioStreamDiagnostics diagnostics() const override { return state_->stream; }
+    void stop() override { closeStream(); state_->stopped = true; state_->changed = {}; }
 private:
     std::shared_ptr<FakeState> state_;
 };
@@ -280,6 +312,144 @@ void testBackends()
     }).run();
 }
 
+void testStreaming()
+{
+    using val::audio::AudioEngine;
+    using val::audio::AudioGraph;
+    using val::audio::AudioNodeType;
+    auto fake = std::make_shared<FakeState>();
+    fake->inventory.devices.push_back({"in:usb", "USB input", AudioDirection::input, true});
+    WasapiSharedBackend backend(std::make_unique<FakeDiscovery>(fake));
+    AudioEngine engine;
+    AudioGraph graph{2, {{1, AudioNodeType::input}, {2, AudioNodeType::gain, 0.25f}, {3, AudioNodeType::output}},
+                        {{1, 2}, {2, 3}}};
+    AudioStreamRequest request;
+    AsyncSteps({
+        [&] { require(backend.refresh().succeeded(), "Refresh streaming inventory."); return true; },
+        [&]
+        {
+            const auto snapshot = *backend.snapshot().value;
+            if (snapshot.devices.empty()) return false;
+            request = {snapshot.devices[1].token, snapshot.devices[0].token, 48000, 128, 512, 2, 2};
+            auto invalid = request;
+            invalid.output = invalid.input;
+            require(!backend.openStream(invalid).value, "Wrong stream direction is rejected.");
+            fake->failOpen = true;
+            require(!engine.start(backend, request, graph, 1).succeeded && !fake->stream.open,
+                    "Open failure cannot leave a running engine.");
+            fake->failOpen = false;
+            fake->failStart = true;
+            require(!engine.start(backend, request, graph, 1).succeeded && !fake->stream.open && !fake->target,
+                    "Failed start closes prepared stream and releases target.");
+            fake->failStart = false;
+            auto badGraph = graph; badGraph.channels = 1;
+            require(!engine.start(backend, request, badGraph, 1).succeeded && !fake->stream.open,
+                    "Preparation failure closes successfully opened device.");
+            require(engine.start(backend, request, graph, 1).succeeded, "Full engine -> abstraction -> injected platform lifecycle.");
+            std::array<float, 128> input, output;
+            input.fill(0.5f); output.fill(99);
+            const float* inputs[2]{input.data(), input.data()};
+            float* outputs[2]{output.data(), nullptr};
+            fake->target->process({inputs, outputs, 2, 2, 128});
+            const auto report = *engine.telemetry().value;
+            require(output[0] == 0.125f && report.callbacks == 1 && report.backendXruns == 7
+                    && report.reportedInputLatencySeconds == 0.002 && report.reportedOutputLatencySeconds == 0.003
+                    && !report.wholeProcessCpu, "Backend report and actual rendered samples retain separate meanings.");
+            require(!backend.openStream(request).value, "Reconfiguration requires explicit stop/close.");
+            fake->changed();
+            return true;
+        },
+        [&]
+        {
+            if (fake->stream.open) return false;
+            require(!fake->target && !engine.telemetry().value->running
+                    && engine.telemetry().value->stopReason == AudioStreamStop::deviceLost,
+                    "Hot-plug invalidation stops/closes and atomically notifies borrowed engine.");
+            require(engine.stop().succeeded, "Loss cleanup reclaims graph only after callback quiescence.");
+            const auto snapshot = *backend.snapshot().value;
+            request.input = snapshot.devices[1].token; request.output = snapshot.devices[0].token;
+            require(engine.start(backend, request, graph, 1).succeeded, "Explicitly reselect and restart after loss.");
+            fake->inventory.devices.front().name = "Changed without native notification";
+            require(backend.refresh().succeeded(), "Refresh uses the same inventory comparison as the polling fallback.");
+            return true;
+        },
+        [&]
+        {
+            if (fake->stream.open) return false;
+            require(!fake->target && engine.telemetry().value->stopReason == AudioStreamStop::deviceLost
+                    && engine.stop().succeeded, "Inventory changes stop the stream even if a native notification was missed.");
+            const auto snapshot = *backend.snapshot().value;
+            request.input = snapshot.devices[1].token; request.output = snapshot.devices[0].token;
+            require(engine.start(backend, request, graph, 1).succeeded, "Restart after inventory-only invalidation.");
+            require(backend.shutdown().succeeded() && !fake->target && engine.stop().succeeded,
+                    "Backend-first shutdown is quiescent and engine cleanup handles stopped backend.");
+            return true;
+        }
+    }).run();
+}
+
+void testNativeSilence()
+{
+    WasapiSharedBackend backend;
+    val::audio::AudioEngine engine;
+    bool queried{}, opened{};
+    AudioDeviceToken output;
+    std::optional<AudioDeviceCapabilities> capabilities;
+    std::string queryError;
+    AsyncSteps({
+        [&] { require(backend.refresh().succeeded(), "Refresh native shared output."); return true; },
+        [&]
+        {
+            const auto snapshot = *backend.snapshot().value;
+            if (snapshot.error.code == AudioErrorCode::notScanned) return false;
+            require(snapshot.error.succeeded(), "WASAPI Shared must be available for explicit native silence test.");
+            const auto found = std::find_if(snapshot.devices.begin(), snapshot.devices.end(),
+                [](const auto& device) { return device.direction == AudioDirection::output && device.systemDefault; });
+            require(found != snapshot.devices.end(), "No default shared output is available; native lifecycle cannot be qualified.");
+            output = found->token;
+            require(backend.queryCapabilities(output, [&](auto result)
+            {
+                queried = true;
+                capabilities = std::move(result.value);
+                queryError = result.error.message;
+            }).succeeded(), "Explicitly probe default WASAPI Shared output.");
+            return true;
+        },
+        [&]
+        {
+            if (!queried) return false;
+            require(capabilities.has_value(), queryError);
+            require(!capabilities->sampleRates.empty() && capabilities->defaultBufferFrames
+                    && !capabilities->outputChannels.empty(), "Native output must report rate, period and channels.");
+            const auto channels = static_cast<int>(capabilities->outputChannels.size());
+            val::audio::AudioGraph silence; silence.channels = channels;
+            const AudioStreamRequest request{{}, output, capabilities->sampleRates.front(),
+                *capabilities->defaultBufferFrames, 4096, 0, channels};
+            const auto started = engine.start(backend, request, silence, 1);
+            require(started.succeeded, started.error);
+            opened = true;
+            return true;
+        },
+        [&]
+        {
+            const auto report = *engine.telemetry().value;
+            require(report.running && report.invalidBlocks == 0, "Native empty plan runs without shape faults.");
+            if (report.callbacks < 100) return false;
+            std::cout << "Native WASAPI Shared SILENCE ONLY: " << report.callbacks << " callbacks, "
+                      << report.frames << " frames; last/max engine callback ns " << report.callbackNanoseconds
+                      << "/" << report.maxCallbackNanoseconds << "; average engine deadline load "
+                      << report.averageCallbackLoad << "; callback misses " << report.deadlineMisses;
+            if (report.backendXruns) std::cout << "; backend xruns " << *report.backendXruns;
+            else std::cout << "; backend xruns unknown";
+            if (report.reportedOutputLatencySeconds) std::cout << "; backend-reported output latency s " << *report.reportedOutputLatencySeconds;
+            std::cout << "; NOT physical roundtrip, NOT whole-process CPU.\n";
+            require(engine.stop().succeeded && !backend.streamDiagnostics().value->open, "Native stop/close quiesces callbacks.");
+            return true;
+        }
+    }).run();
+    require(opened, "Explicit native silent lifecycle was exercised.");
+}
+
 void testNative()
 {
     std::vector<std::unique_ptr<IAudioBackend>> backends;
@@ -383,6 +553,8 @@ int main(int argc, char** argv)
     return runTests([&]
     {
         if (argc == 2 && std::string_view(argv[1]) == "--native") testNative();
+        else if (argc == 2 && std::string_view(argv[1]) == "--streams") testStreaming();
+        else if (argc == 2 && std::string_view(argv[1]) == "--native-silence") testNativeSilence();
         else testBackends();
     });
 }

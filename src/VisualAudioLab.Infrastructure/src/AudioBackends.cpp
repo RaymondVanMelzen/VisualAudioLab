@@ -26,9 +26,9 @@ bool onOwnerThread()
     return manager && manager->isThisTheMessageThread();
 }
 
-/** Owns one JUCE driver type and temporary probes; does not install an application audio callback. */
+/** Owns a JUCE driver type, temporary probes and an explicitly requested quiescent-lifetime stream. */
 class NativeDiscovery final : public IAudioDeviceDiscovery, private juce::AudioIODeviceType::Listener,
-                              private juce::AsyncUpdater
+                              private juce::AsyncUpdater, private juce::AudioIODeviceCallback
 {
 public:
     explicit NativeDiscovery(AudioBackendKind kind) : kind_(kind)
@@ -79,6 +79,7 @@ public:
     void setChanged(std::function<void()> changed) override { changed_ = std::move(changed); }
     void stop() override
     {
+        closeStream();
 #if JUCE_WINDOWS
         if (notification_)
         {
@@ -158,7 +159,7 @@ public:
         if (defaultFrames > 0) result.defaultBufferFrames = defaultFrames;
         if (result.inputChannels.empty() && result.outputChannels.empty())
             return {{}, failure(AudioErrorCode::unavailable, "Driver reported no usable channels. The device may be disconnected or unavailable.")};
-        result.notes.push_back("Queried JUCE/driver candidates only. Formats, channel layouts and periods are interdependent and require future open-time negotiation.");
+        result.notes.push_back("Queried JUCE/driver candidates only. Formats, channel layouts and periods are interdependent and require explicit open-time negotiation.");
         result.notes.push_back("No application stream/settings negotiated. Device initialization may touch hardware; these are not current stream settings.");
         if (kind_ == AudioBackendKind::asio)
             result.notes.push_back("JUCE ASIO initialization may allocate dummy buffers and briefly start/stop the driver; capability probing is explicit, never automatic.");
@@ -173,7 +174,127 @@ public:
         return {std::move(result), {}};
     }
 
+    AudioQuery<AudioStreamFormat> open(const std::optional<DiscoveredAudioDevice>& input,
+        const std::optional<DiscoveredAudioDevice>& output, const AudioStreamRequest& request) override
+    {
+        if (device_) return {{}, failure(AudioErrorCode::invalidArgument, "Close the existing stream before opening another.")};
+        if (!type_) return {{}, error_.succeeded() ? failure(AudioErrorCode::stopped, "Discovery stopped.") : error_};
+        const auto name = [](const auto& item) { return item ? juce::String::fromUTF8(item->name.c_str()) : juce::String{}; };
+        auto device = std::unique_ptr<juce::AudioIODevice>(type_->createDevice(name(output), name(input)));
+        if (!device) return {{}, failure(AudioErrorCode::unavailable, "Selected device disappeared or its driver could not initialize.")};
+        if (device->getInputChannelNames().size() < request.inputChannels
+            || device->getOutputChannelNames().size() < request.outputChannels)
+            return {{}, failure(AudioErrorCode::invalidArgument, "Requested channels are not available; no channel truncation is performed.")};
+        juce::BigInteger inputs, outputs;
+        inputs.setRange(0, request.inputChannels, true);
+        outputs.setRange(0, request.outputChannels, true);
+        if (const auto error = device->open(inputs, outputs, request.sampleRate, request.bufferFrames); error.isNotEmpty())
+            return {{}, failure(AudioErrorCode::unavailable, "Native stream open failed: " + error.toStdString())};
+        AudioStreamFormat format{device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(), request.maxFrames,
+                                  device->getActiveInputChannels().countNumberOfSetBits(),
+                                  device->getActiveOutputChannels().countNumberOfSetBits()};
+        if (!std::isfinite(format.sampleRate) || format.sampleRate != request.sampleRate
+            || format.bufferFrames < 1 || format.bufferFrames > format.maxFrames
+            || format.inputChannels != request.inputChannels || format.outputChannels != request.outputChannels)
+        {
+            device->close();
+            return {{}, failure(AudioErrorCode::unavailable, "Driver negotiated an unsupported rate/layout/capacity. No implicit resampling or truncation is allowed.")};
+        }
+        format_ = format;
+        device_ = std::move(device);
+        fault_.store(false, std::memory_order_relaxed);
+        return {format, {}};
+    }
+
+    AudioError start(IAudioRenderCallback& target) override
+    {
+        if (!device_) return failure(AudioErrorCode::unavailable, "Open a stream before starting.");
+        if (target_.load(std::memory_order_acquire)) return failure(AudioErrorCode::invalidArgument, "Stream already started.");
+        fault_.store(false, std::memory_order_relaxed);
+        stopping_.store(false, std::memory_order_relaxed);
+        target_.store(&target, std::memory_order_release);
+        device_->start(this);
+        if (!device_->isPlaying() || fault_.load(std::memory_order_acquire))
+        {
+            stopStream();
+            return failure(AudioErrorCode::unavailable, "Native stream did not start or its format changed. Close, refresh and retry.");
+        }
+        return {};
+    }
+    void stopStream() override
+    {
+        stopping_.store(true, std::memory_order_release);
+        if (device_) device_->stop(); // Native JUCE stop establishes callback quiescence.
+        running_.store(false, std::memory_order_release);
+        if (auto* target = target_.exchange(nullptr, std::memory_order_acq_rel))
+            target->interrupted(AudioStreamStop::requested);
+    }
+    void closeStream() override
+    {
+        stopStream();
+        if (device_) device_->close();
+        device_.reset();
+    }
+    void interruptStream(AudioStreamStop reason) override
+    {
+        if (auto* target = target_.load(std::memory_order_acquire)) target->interrupted(reason);
+        // Do not replace the first fault reason with ordinary requested stop.
+        stopping_.store(true, std::memory_order_release);
+        if (device_) device_->stop();
+        target_.store(nullptr, std::memory_order_release);
+        running_.store(false, std::memory_order_release);
+        if (device_) device_->close();
+        device_.reset();
+    }
+    AudioStreamDiagnostics diagnostics() const override
+    {
+        AudioStreamDiagnostics result;
+        result.open = device_ != nullptr;
+        result.running = running_.load(std::memory_order_acquire) && !fault_.load(std::memory_order_acquire);
+        if (device_)
+        {
+            const auto input = device_->getInputLatencyInSamples(), output = device_->getOutputLatencyInSamples();
+            const auto xruns = device_->getXRunCount();
+            if (format_.inputChannels > 0 && input >= 0) result.inputLatencyFrames = input;
+            if (format_.outputChannels > 0 && output >= 0) result.outputLatencyFrames = output;
+            if (xruns >= 0) result.backendXruns = static_cast<std::uint64_t>(xruns);
+        }
+        return result;
+    }
+
 private:
+    void audioDeviceIOCallbackWithContext(const float* const* inputs, int inputChannels, float* const* outputs,
+                                          int outputChannels, int frames, const juce::AudioIODeviceCallbackContext&) override
+    {
+        if (auto* target = target_.load(std::memory_order_acquire); target && !fault_.load(std::memory_order_acquire))
+            target->process({inputs, outputs, inputChannels, outputChannels, frames});
+        else if (frames > 0 && frames <= 65536 && outputChannels >= 0 && outputChannels <= 32)
+            for (int channel = 0; channel < outputChannels; ++channel)
+                if (outputs && outputs[channel]) std::fill_n(outputs[channel], frames, 0.0f);
+    }
+    void audioDeviceAboutToStart(juce::AudioIODevice* device) override
+    {
+        const auto invalid = device->getCurrentSampleRate() != format_.sampleRate
+            || device->getCurrentBufferSizeSamples() < 1 || device->getCurrentBufferSizeSamples() > format_.maxFrames;
+        fault_.store(invalid, std::memory_order_release);
+        running_.store(!invalid, std::memory_order_release);
+        if (invalid)
+            if (auto* target = target_.load(std::memory_order_acquire)) target->interrupted(AudioStreamStop::formatChanged);
+    }
+    void audioDeviceStopped() override
+    {
+        running_.store(false, std::memory_order_release);
+        if (!stopping_.load(std::memory_order_acquire))
+        {
+            fault_.store(true, std::memory_order_release);
+            if (auto* target = target_.load(std::memory_order_acquire)) target->interrupted(AudioStreamStop::deviceLost);
+        }
+    }
+    void audioDeviceError(const juce::String&) override
+    {
+        fault_.store(true, std::memory_order_release);
+        if (auto* target = target_.load(std::memory_order_acquire)) target->interrupted(AudioStreamStop::deviceError);
+    }
     void audioDeviceListChanged() override { triggerAsyncUpdate(); }
     void handleAsyncUpdate() override { if (changed_) changed_(); }
 #if JUCE_WINDOWS
@@ -190,8 +311,14 @@ private:
     std::unique_ptr<juce::AudioIODeviceType> type_;
     std::function<void()> changed_;
     std::string notificationNote_;
+    std::unique_ptr<juce::AudioIODevice> device_;
+    AudioStreamFormat format_;
+    std::atomic<IAudioRenderCallback*> target_{};
+    std::atomic<bool> running_{}, fault_{}, stopping_{true};
 };
 
+static_assert(std::atomic<IAudioRenderCallback*>::is_always_lock_free);
+static_assert(std::atomic<bool>::is_always_lock_free);
 std::atomic<std::uint64_t> nextInstance{1};
 }
 
@@ -262,6 +389,8 @@ public:
 
     AudioQuery<AudioDeviceCapabilities> probe(const AudioDeviceToken& token)
     {
+        if (source_->diagnostics().open)
+            return {{}, failure(AudioErrorCode::invalidArgument, "Close the stream before probing capabilities; probing may initialize another driver instance.")};
         if (token.backend != kind_ || token.instance != instance_ || token.generation != state_.generation
             || invalidated_.load())
             return {{}, failure(AudioErrorCode::staleDevice, "Device token is stale or belongs to another backend. Refresh and select again.")};
@@ -280,8 +409,14 @@ public:
     {
         const auto found = source_->scan();
         const auto nextError = found.value ? AudioError{} : found.error;
-        if (!force && ((found.value && *found.value == inventory_ && state_.error.succeeded())
-            || (!found.value && nextError.code == state_.error.code && nextError.message == state_.error.message))) return;
+        const bool unchanged = (found.value && *found.value == inventory_ && state_.error.succeeded())
+            || (!found.value && nextError.code == state_.error.code && nextError.message == state_.error.message);
+        if (!force && unchanged) return;
+        if (!unchanged && source_->diagnostics().open)
+        {
+            source_->interruptStream(AudioStreamStop::deviceLost);
+            streamStarted_ = false;
+        }
         ++state_.generation;
         state_.error = nextError;
         state_.devices.clear();
@@ -302,6 +437,45 @@ public:
         pendingNotification_ = true;
     }
 
+    AudioQuery<AudioStreamFormat> open(const AudioStreamRequest& request)
+    {
+        if (const auto error = check(); !error.succeeded()) return {{}, error};
+        if (source_->diagnostics().open) return {{}, failure(AudioErrorCode::invalidArgument, "Close the current stream before opening another.")};
+        if (!state_.error.succeeded()) return {{}, state_.error};
+        if (invalidated_.load() || refresh_ || !std::isfinite(request.sampleRate)
+            || request.sampleRate < 8000 || request.sampleRate > 384000 || request.bufferFrames < 1
+            || request.maxFrames < request.bufferFrames || request.maxFrames > 4096
+            || request.inputChannels < 0 || request.inputChannels > 32
+            || request.outputChannels < 1 || request.outputChannels > 32
+            || (request.inputChannels > 0) != request.input.has_value() || !request.output)
+            return {{}, failure(AudioErrorCode::invalidArgument, "Refresh first and explicitly choose output/input tokens, 8-384 kHz, 1-4096 frame capacity and up to 32 channels.")};
+        std::optional<DiscoveredAudioDevice> input, output;
+        const auto resolve = [&](const AudioDeviceToken& token, bool isInput) -> AudioError
+        {
+            if (token.backend != kind_ || token.instance != instance_ || token.generation != state_.generation)
+                return failure(AudioErrorCode::staleDevice, "Stream endpoint token is stale or belongs to another backend.");
+            const auto found = std::find_if(inventory_.devices.begin(), inventory_.devices.end(),
+                [&](const auto& item) { return item.key == token.key; });
+            if (found == inventory_.devices.end() || (isInput && found->direction == AudioDirection::output)
+                || (!isInput && found->direction == AudioDirection::input))
+                return failure(AudioErrorCode::invalidArgument, "Stream endpoint direction/identity is invalid.");
+            (isInput ? input : output) = *found;
+            return {};
+        };
+        if (request.input)
+            if (const auto error = resolve(*request.input, true); !error.succeeded()) return {{}, error};
+        if (const auto error = resolve(*request.output, false); !error.succeeded()) return {{}, error};
+        if (kind_ == AudioBackendKind::asio && input && output && input->key != output->key)
+            return {{}, failure(AudioErrorCode::invalidArgument, "ASIO input and output must use the same driver.")};
+        auto opened = source_->open(input, output, request);
+        if (invalidated_.load())
+        {
+            source_->interruptStream(AudioStreamStop::deviceLost);
+            return {{}, failure(AudioErrorCode::staleDevice, "Device changed while opening; refresh and retry.")};
+        }
+        return opened;
+    }
+
     void handleAsyncUpdate() override
     {
         if (stopped_) return;
@@ -310,6 +484,12 @@ public:
         const auto poll = std::exchange(poll_, false);
         if (refresh || poll || invalidated)
         {
+            const auto stream = source_->diagnostics();
+            if (stream.open && (invalidated || (!stream.running && streamStarted_)))
+            {
+                source_->interruptStream(invalidated ? AudioStreamStop::deviceLost : AudioStreamStop::deviceError);
+                streamStarted_ = false;
+            }
             const auto force = std::exchange(forceRefresh_, false);
             scan(invalidated || force);
             triggerAsyncUpdate();
@@ -366,6 +546,7 @@ public:
     std::deque<Completion> completed_;
     std::atomic<bool> invalidated_{false};
     bool stopped_{}, refresh_{}, poll_{}, forceRefresh_{}, pendingNotification_{};
+    bool streamStarted_{};
     std::shared_ptr<int> lifetime_{std::make_shared<int>(0)};
 };
 
@@ -392,6 +573,33 @@ AudioError JuceAudioBackend::refresh()
 AudioError JuceAudioBackend::queryCapabilities(AudioDeviceToken token, CapabilityCallback callback)
 { return impl_->query(std::move(token), std::move(callback)); }
 AudioError JuceAudioBackend::shutdown() { return impl_->stop(); }
+AudioQuery<AudioStreamFormat> JuceAudioBackend::openStream(const AudioStreamRequest& request) { return impl_->open(request); }
+AudioError JuceAudioBackend::startStream(IAudioRenderCallback& target)
+{
+    if (const auto error = impl_->check(); !error.succeeded()) return error;
+    if (impl_->invalidated_.load() || impl_->refresh_)
+        return failure(AudioErrorCode::staleDevice, "Device inventory changed before start; close, refresh and reselect.");
+    const auto result = impl_->source_->start(target);
+    impl_->streamStarted_ = result.succeeded();
+    return result;
+}
+AudioError JuceAudioBackend::stopStream()
+{
+    if (const auto error = impl_->check(); !error.succeeded()) return error;
+    impl_->source_->stopStream(); impl_->streamStarted_ = false;
+    return {};
+}
+AudioError JuceAudioBackend::closeStream()
+{
+    if (const auto error = impl_->check(); !error.succeeded()) return error;
+    impl_->source_->closeStream(); impl_->streamStarted_ = false;
+    return {};
+}
+AudioQuery<AudioStreamDiagnostics> JuceAudioBackend::streamDiagnostics() const
+{
+    if (const auto error = impl_->check(); !error.succeeded()) return {{}, error};
+    return {impl_->source_->diagnostics(), {}};
+}
 
 AsioBackend::AsioBackend(std::unique_ptr<IAudioDeviceDiscovery> source)
     : JuceAudioBackend(AudioBackendKind::asio, std::move(source)) {}

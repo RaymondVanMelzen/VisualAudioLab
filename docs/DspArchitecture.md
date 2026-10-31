@@ -4,7 +4,9 @@
 
 This is a proposed DSP design, not an implementation or a statement of measured performance. It refines processing decisions left open in [FunctionalArchitecture.md](FunctionalArchitecture.md), within the product intent of [ProductVision.md](ProductVision.md) and [PRD.md](PRD.md).
 
-Use the C++20/JUCE/CMake boundaries in [TechnicalArchitecture.md](TechnicalArchitecture.md). Keep backend I/O separate from DSP as defined in [AudioPlatformStrategy.md](AudioPlatformStrategy.md): JUCE adapts the primary standalone paths Windows/ASIO and macOS/CoreAudio, but its device or processor abstractions do not by themselves define the graph scheduler or node semantics. WASAPI is only a possible future compatibility path.
+**Implemented subset:** The separately requested [basic realtime engine](AudioEngine.md) now implements only Input/Gain/Output, prepared graph handoff, bounded live gain changes and telemetry. The wider DSP framework below remains proposed; effects, control-rate scheduling, automation and plugins are not introduced by that implementation.
+
+Use the C++20/JUCE/CMake boundaries in [TechnicalArchitecture.md](TechnicalArchitecture.md). Keep backend I/O separate from DSP as defined in [AudioPlatformStrategy.md](AudioPlatformStrategy.md): JUCE adapts the primary standalone paths Windows/ASIO and macOS/CoreAudio, but its device or processor abstractions do not by themselves define the graph scheduler or node semantics. The subsequently requested platform abstraction also implements WASAPI Shared and Exclusive without changing the primary preferences or allowing silent fallback.
 
 The design supports inspectable visual patching, local projects, Windows and macOS, and no subscription, cloud, or AI dependency. It preserves required future VST3 hosting and plugin export boundaries without delivering those features or assigning a release. Recording, MIDI, a DAW timeline and generated DSP code are not added; the separately requested VAL Script design lowers bounded node computations into prepared plans rather than changing the visual-first core.
 

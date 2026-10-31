@@ -8,6 +8,12 @@ target_link_libraries(VisualAudioLab.Graph.Tests PRIVATE VisualAudioLab.Applicat
 val_configure_target(VisualAudioLab.Graph.Tests)
 add_test(NAME Application.GraphEdits COMMAND VisualAudioLab.Graph.Tests)
 
+add_executable(VisualAudioLab.AudioEngine.Tests AudioEngineTests.cpp AudioAllocationProbe.cpp)
+target_link_libraries(VisualAudioLab.AudioEngine.Tests PRIVATE VisualAudioLab.Audio)
+val_configure_target(VisualAudioLab.AudioEngine.Tests)
+add_test(NAME Audio.Engine COMMAND VisualAudioLab.AudioEngine.Tests)
+set_tests_properties(Audio.Engine PROPERTIES TIMEOUT 60)
+
 add_executable(VisualAudioLab.Project.Tests ProjectTests.cpp)
 target_link_libraries(VisualAudioLab.Project.Tests PRIVATE
     VisualAudioLab.Infrastructure juce::juce_core val_juce_options)
@@ -22,10 +28,12 @@ add_test(NAME Infrastructure.LocalAdapters COMMAND VisualAudioLab.Infrastructure
 
 add_executable(VisualAudioLab.AudioBackend.Tests AudioBackendTests.cpp)
 target_link_libraries(VisualAudioLab.AudioBackend.Tests PRIVATE
-    VisualAudioLab.Infrastructure juce::juce_events val_juce_options)
+    VisualAudioLab.Infrastructure VisualAudioLab.Audio juce::juce_events val_juce_options)
 val_configure_target(VisualAudioLab.AudioBackend.Tests)
 add_test(NAME Audio.BackendContracts COMMAND VisualAudioLab.AudioBackend.Tests)
 set_tests_properties(Audio.BackendContracts PROPERTIES TIMEOUT 45)
+add_test(NAME Audio.StreamLifecycle COMMAND VisualAudioLab.AudioBackend.Tests --streams)
+set_tests_properties(Audio.StreamLifecycle PROPERTIES TIMEOUT 45)
 add_test(NAME Audio.NativeDiscovery COMMAND VisualAudioLab.AudioBackend.Tests --native)
 set_tests_properties(Audio.NativeDiscovery PROPERTIES LABELS "native-audio" TIMEOUT 60)
 

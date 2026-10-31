@@ -1,6 +1,6 @@
 # Visual Audio Lab
 
-C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence, native audio abstractions and a basic Input/Gain/Output realtime engine. Effects, scripting, plugin hosting and plugin export are not implemented; audio is API-driven, not connected to the shell's placeholder controls.
+C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence, native audio abstractions and a realtime engine with seven built-in DSP processors. Scripting, plugin hosting and plugin export are not implemented; audio is API-driven, not connected to the shell's placeholder controls.
 
 ## Structure and dependencies
 
@@ -8,7 +8,7 @@ C++20 / JUCE / CMake application framework for Windows and macOS. Product and de
 |---|---|
 | `src/VisualAudioLab.Domain` | Standard C++20 workspace and structural graph values with stable node/port/connection identities; no framework dependency. |
 | `src/VisualAudioLab.Application` | Project lifecycle/store contracts, multi-patch graph/workspace commands, shared bounded undo/redo and validated settings lifecycle; Domain only. |
-| `src/VisualAudioLab.Audio` | Device-independent prepared graphs, Input/Gain/Output, lock-free render handoff and telemetry; Application/Domain and standard C++20 only. |
+| `src/VisualAudioLab.Audio` | Device-independent prepared graphs, DSP modules, bounded automation, lock-free render handoff and telemetry; Application/Domain and standard C++20 only. |
 | `src/VisualAudioLab.Infrastructure` | Versioned JSON project/settings adapters, local diagnostics and native audio discovery; Application plus private JUCE core/device modules. |
 | `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, project-backed docking layout, spatially indexed canvas and lightweight node/cable views; Application and JUCE GUI. |
 | `src/VisualAudioLab.Desktop` | Native app entry point and explicit ownership/composition. |
@@ -30,9 +30,9 @@ Application owns `IAudioBackend`; Infrastructure implements `AsioBackend`, `Wasa
 
 ## Basic realtime engine
 
-`AudioEngine` prepares `AudioGraph` instances off-callback, processes Input -> Gain -> Output buffers, publishes newer plans through a bounded lock-free handoff and reclaims obsolete nodes on the control thread. Gain changes use a bounded queue and a five-millisecond ramp. Variable blocks stay within declared capacity; invalid layouts/oversized blocks latch silence rather than allocating. Compile-time checks require callback atomics to be lock-free.
+`AudioEngine` prepares `AudioGraph` instances off-callback, processes actual buffers, publishes newer plans through a bounded lock-free handoff and reclaims obsolete nodes on the control thread. `AudioNode` (also named `AudioProcessorNode` for compatibility) unifies Effect/Generator/Analyzer bases. Gain, EQ, Delay, Compressor, Distortion, Chorus and Reverb share deterministic smoothing, automation and latency-aware bypass. Timestamped targets take effect at exact session-frame offsets, followed by declared smoothing; bounded queues report overflow/cancellation/missed delivery. Variable blocks stay within declared capacity; invalid layouts/oversized blocks latch silence rather than allocating. Compile-time checks require callback atomics to be lock-free.
 
-The engine exposes callback duration/deadline load and misses separately from backend-reported latency/xruns; unknown backend data stays absent and callback load is never called whole-process CPU. Generic canvas nodes map only through explicit `audio.type` (`Input`, `Gain`, `Output`) and `audio.gain` scalar parameters. There is no automatic playback on edit/load. See [AudioEngine.md](docs/AudioEngine.md) for limits, lifecycle, mapping, realtime ownership, synthetic stress/allocation tests and the optional silence-only native check.
+The engine exposes callback duration/deadline load and misses separately from backend-reported latency/xruns; unknown backend data stays absent and callback load is never called whole-process CPU. Generic canvas nodes map only through explicit `audio.type`, `audio.param.<name>` and `audio.bypass` fields; Gain's existing `audio.gain` remains supported. There is no automatic playback on edit/load. See [AudioEngine.md](docs/AudioEngine.md) for stream/ownership boundaries and [DspModules.md](docs/DspModules.md) for processor algorithms, parameter domains, automation ordering, bypass and offline allocation-instrumented tests.
 
 ## Build
 

@@ -9,14 +9,16 @@
 
 namespace val::audio
 {
-/** Only the three explicitly supported basic node types; no effects or plugins. */
-enum class AudioNodeType { input, gain, output };
-/** Control-owned node definition with stable identity and validated initial gain. */
+/** Built-in prepared processors; no plugin hosting or implicit processor-name inference. */
+enum class AudioNodeType { input, gain, output, eq, delay, compressor, distortion, chorus, reverb, analyzer };
+/** Control-owned node definition with stable identity, initial physical-domain parameters and bypass. */
 struct AudioNodeDefinition
 {
     std::uint64_t id{};
     AudioNodeType type{};
     float gain{1};
+    std::vector<std::pair<std::uint16_t, float>> parameters;
+    bool bypassed{};
 };
 /** Single-bus graph edge; fan-out allowed, implicit fan-in/mixing forbidden. */
 struct AudioConnection
@@ -41,10 +43,15 @@ public:
     [[nodiscard]] static application::AudioQuery<std::unique_ptr<PreparedAudioGraph>>
         prepare(const AudioGraph& graph, application::AudioStreamFormat format, std::uint64_t revision);
     /** Audio thread only, bounded by the prepared resource limits; no allocations/ownership changes. */
-    void process(const application::AudioBuffer& buffer) noexcept;
+    void process(const application::AudioBuffer& buffer, int offset = 0, int frames = -1) noexcept;
     [[nodiscard]] bool gainIndex(std::uint64_t node, std::size_t& index) const noexcept;
     /** Applies a prevalidated gain event to a prepared index on the audio thread. */
     void setGain(std::size_t index, float value) noexcept;
+    [[nodiscard]] bool parameterIndex(std::uint64_t node, std::uint16_t parameter, float value,
+                                     ParameterAction action, std::size_t& index) const noexcept;
+    void parameterEvent(std::size_t index, std::uint16_t parameter, float value, ParameterAction action) noexcept;
+    [[nodiscard]] std::optional<AnalyzerSnapshot> analyzerSnapshot(std::uint64_t node) const noexcept;
+    [[nodiscard]] std::uint64_t numericalFaults() const noexcept;
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
     [[nodiscard]] application::AudioStreamFormat format() const noexcept { return format_; }
 private:

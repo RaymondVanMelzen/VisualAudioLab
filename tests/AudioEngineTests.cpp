@@ -181,8 +181,8 @@ void testValidation()
     require(mapped.value && mapped.value->nodes[1].gain == 0.25f
             && PreparedAudioGraph::prepare(*mapped.value, format(), 1).value.has_value(),
             "Explicit stable-ID structural mapping prepares a real runtime graph.");
-    structural.nodes.at(2).parameters["audio.type"] = std::string("Delay");
-    require(!AudioGraph::fromStructural(structural, 2).value, "No unrequested effects.");
+    structural.nodes.at(2).parameters["audio.type"] = std::string("Plugin");
+    require(!AudioGraph::fromStructural(structural, 2).value, "No unrequested plugin processing.");
 }
 
 thread_local std::uint64_t ticks{};

@@ -14,6 +14,12 @@ val_configure_target(VisualAudioLab.AudioEngine.Tests)
 add_test(NAME Audio.Engine COMMAND VisualAudioLab.AudioEngine.Tests)
 set_tests_properties(Audio.Engine PROPERTIES TIMEOUT 60)
 
+add_executable(VisualAudioLab.Dsp.Tests DspTests.cpp AudioAllocationProbe.cpp)
+target_link_libraries(VisualAudioLab.Dsp.Tests PRIVATE VisualAudioLab.Audio)
+val_configure_target(VisualAudioLab.Dsp.Tests)
+add_test(NAME Audio.Dsp COMMAND VisualAudioLab.Dsp.Tests)
+set_tests_properties(Audio.Dsp PROPERTIES TIMEOUT 60)
+
 add_executable(VisualAudioLab.Project.Tests ProjectTests.cpp)
 target_link_libraries(VisualAudioLab.Project.Tests PRIVATE
     VisualAudioLab.Infrastructure juce::juce_core val_juce_options)

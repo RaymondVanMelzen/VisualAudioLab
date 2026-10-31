@@ -70,12 +70,28 @@ application::SettingsLoadResult LocalSettingsStore::load()
             || !audio->getProperty("outputChannels").isInt())
             return loadFailure("Audio setup preferences have missing or invalid types; original preserved.");
         const auto backend = static_cast<int>(audio->getProperty("backend"));
-        if (backend < 0 || backend > 3) return loadFailure("Audio setup backend is unsupported; original preserved.");
+        if (backend < 0 || backend > 4) return loadFailure("Audio setup backend is unsupported; original preserved.");
         settings.audioSetup = application::AudioSetupPreference{
             static_cast<application::AudioBackendKind>(backend),
             audio->getProperty("inputName").toString().toStdString(), audio->getProperty("outputName").toString().toStdString(),
             static_cast<double>(audio->getProperty("sampleRate")), static_cast<int>(audio->getProperty("bufferFrames")),
             static_cast<int>(audio->getProperty("inputChannels")), static_cast<int>(audio->getProperty("outputChannels"))};
+        auto& setup = *settings.audioSetup;
+        const auto readIndices = [&](const char* key, int count, std::vector<int>& indices)
+        {
+            if (!audio->hasProperty(key)) { indices = application::legacyAudioChannels(count); return true; }
+            const auto* array = audio->getProperty(key).getArray();
+            if (!array) return false;
+            for (const auto& index : *array)
+            {
+                if (!index.isInt()) return false;
+                indices.push_back(static_cast<int>(index));
+            }
+            return application::validAudioChannelSelection(indices, count);
+        };
+        if (!readIndices("inputChannelIndices", setup.inputChannels, setup.inputChannelIndices)
+            || !readIndices("outputChannelIndices", setup.outputChannels, setup.outputChannelIndices))
+            return loadFailure("Audio setup contains invalid channel identities; original preserved.");
     }
     const auto validation = application::validateSettings(settings);
     if (!validation.succeeded)
@@ -116,6 +132,14 @@ application::Result LocalSettingsStore::save(const application::Settings& settin
         audio->setProperty("bufferFrames", setup.bufferFrames);
         audio->setProperty("inputChannels", setup.inputChannels);
         audio->setProperty("outputChannels", setup.outputChannels);
+        const auto writeIndices = [&](const char* key, const std::vector<int>& indices, int count)
+        {
+            juce::Array<juce::var> values;
+            for (int index : indices.empty() ? application::legacyAudioChannels(count) : indices) values.add(index);
+            audio->setProperty(key, values);
+        };
+        writeIndices("inputChannelIndices", setup.inputChannelIndices, setup.inputChannels);
+        writeIndices("outputChannelIndices", setup.outputChannelIndices, setup.outputChannels);
         object->setProperty("audioSetup", juce::var(audio));
     }
     const juce::TemporaryFile temporary(file);

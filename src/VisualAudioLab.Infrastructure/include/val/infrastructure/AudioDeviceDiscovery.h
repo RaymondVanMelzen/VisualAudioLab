@@ -24,7 +24,9 @@ struct AudioDiscoveryInventory
 
 /**
  * Injectable native discovery seam; production uses JUCE, tests use deterministic devices.
- * All calls/lifetime belong to the message thread. The change callback may only signal
+ * All calls/lifetime belong to their process's message thread. Production discovery
+ * probes use the isolated helper; desktop source calls are explicit stream control.
+ * The change callback may only signal
  * invalidation, never query hardware. stop() must unregister and quiesce callbacks before
  * returning. Probes must not retain temporary handles; only an explicitly opened
  * stream retains a native handle until quiescent close. Implementations must not throw.
@@ -57,6 +59,8 @@ public:
     /** Control-thread invalidation; notify the borrowed renderer then quiesce/release the stream. */
     virtual void interruptStream(application::AudioStreamStop) { closeStream(); }
     [[nodiscard]] virtual application::AudioStreamDiagnostics diagnostics() const { return {}; }
+    [[nodiscard]] virtual application::AudioError showControlPanel(const DiscoveredAudioDevice&)
+    { return {application::AudioErrorCode::unavailable, "This driver has no control panel."}; }
     virtual void stop() = 0;
 };
 }

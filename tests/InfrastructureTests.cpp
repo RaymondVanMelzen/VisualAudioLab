@@ -12,7 +12,7 @@ class TestDirectory final
 {
 public:
     TestDirectory()
-        : file(juce::File::getSpecialLocation(juce::File::tempDirectory)
+        : file(juce::File::getCurrentWorkingDirectory()
                    .getChildFile("val-tests-" + juce::Uuid().toString()))
     {
         require(file.createDirectory().wasOk(), "Create test directory.");
@@ -39,11 +39,27 @@ void testSettings(const TestDirectory& directory)
     auto loaded = store.load();
     require(loaded.state == SettingsLoadState::loaded && loaded.value == value, "Preferences round-trip.");
     Settings audioValue = value;
-    audioValue.audioSetup = AudioSetupPreference{AudioBackendKind::asio, "Test driver", "Test driver", 48000, 128, 2, 2};
+    audioValue.audioSetup = AudioSetupPreference{AudioBackendKind::asio, "Test driver", "Test driver", 48000, 128, 2, 2, {4, 5}, {6, 7}};
     require(store.save(audioValue).succeeded && store.load().value == audioValue,
             "Machine-local backend/device-name/rate/buffer/channel hints round-trip without tokens or transport state.");
-    require(store.save(value).succeeded, "Optional audio preferences remain compatible with window-only settings.");
+    for (const auto backend : {AudioBackendKind::asio, AudioBackendKind::wasapiExclusive, AudioBackendKind::wasapiShared,
+                               AudioBackendKind::coreAudio, AudioBackendKind::directSound})
+    {
+        audioValue.audioSetup->backend = backend;
+        require(store.save(audioValue).succeeded && store.load().value == audioValue,
+                "All stable numerical backend values round-trip, including CoreAudio=3 and DirectSound=4.");
+    }
     auto file = directory.file.getChildFile("settings.json");
+    require(file.replaceWithText(R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":3,"inputName":"","outputName":"Legacy device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":4}})"),
+            "Seed pre-port-selection preferences.");
+    auto migrated = store.load();
+    require(migrated.state == SettingsLoadState::loaded && migrated.value.audioSetup->backend == AudioBackendKind::coreAudio
+            && migrated.value.audioSetup->inputChannelIndices.empty()
+            && migrated.value.audioSetup->outputChannelIndices == std::vector<int>{0, 1, 2, 3},
+            "Legacy counts migrate explicitly to first-N indices without changing CoreAudio's numeric identity.");
+    require(store.save(migrated.value).succeeded && store.load().value == migrated.value
+            && file.loadFileAsString().contains("outputChannelIndices"), "Migration persists explicit channel identities on the next save.");
+    require(store.save(value).succeeded, "Optional audio preferences remain compatible with window-only settings.");
     const auto original = file.loadFileAsString();
     require(!store.save({1, 1, true}).succeeded && file.loadFileAsString() == original,
             "Invalid save preserves original.");
@@ -53,6 +69,9 @@ void testSettings(const TestDirectory& directory)
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":1})",
              R"({"version":1,"windowWidth":1200,"windowHeight":1,"inspectorVisible":true})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{}})",
+             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[2,2]}})",
+             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[]}})",
+             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[0,"1"]}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":99,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2}})"})
     {
         require(file.replaceWithText(invalid), "Seed invalid settings.");

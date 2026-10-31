@@ -403,6 +403,17 @@ only view of state. (3) Controls are contextual and small until selected.
 and expands only on intent. (5) A clear, confirmed live/stopped indicator and
 Stop remain visible; hiding device settings never hides safety-critical state.
 
+Phase 1 Audio Setup follows this operation hierarchy: compact Start/Stop,
+optional Refresh / Retry, driver-supported Control Panel, and persistent state
+above endpoint/port choices. Backend selection enumerates automatically and
+endpoint selection loads capabilities automatically; there is no Detect
+banner/button competing with the signal workspace. Basic controls use actual
+driver-labeled mono ports or contiguous stereo pairs, not first-N channel
+counts. Advanced ports reveal wider contiguous groups without pretending to
+offer arbitrary routing or mono-to-stereo engine conversion. Discovery does not
+start playback; hardware-initialization warnings and errors remain visible in
+the occasional setup dock. See [DesktopWorkflow.md](DesktopWorkflow.md).
+
 ## 8. Interaction, accessibility and performance rationale
 
 - Prefer direct manipulation: drag a module onto the patch, connect typed ports,

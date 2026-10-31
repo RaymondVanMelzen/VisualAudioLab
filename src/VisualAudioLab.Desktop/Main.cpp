@@ -36,6 +36,7 @@ public:
                 case application::AudioBackendKind::wasapiExclusive: return std::make_unique<infrastructure::WasapiExclusiveBackend>();
                 case application::AudioBackendKind::wasapiShared: return std::make_unique<infrastructure::WasapiSharedBackend>();
                 case application::AudioBackendKind::coreAudio: return std::make_unique<infrastructure::CoreAudioBackend>();
+                case application::AudioBackendKind::directSound: return std::make_unique<infrastructure::DirectSoundBackend>();
             }
             return {};
         });

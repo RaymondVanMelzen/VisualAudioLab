@@ -10,13 +10,13 @@
 namespace val::application
 {
 /** Explicit native APIs; modes are never silently substituted. */
-enum class AudioBackendKind { asio, wasapiExclusive, wasapiShared, coreAudio };
+enum class AudioBackendKind { asio = 0, wasapiExclusive = 1, wasapiShared = 2, coreAudio = 3, directSound = 4 };
 /** Platform inventory policy shared by composition and setup UI; no implicit API fallback. */
 enum class AudioPlatform { windows, macOS, other };
 [[nodiscard]] inline std::vector<AudioBackendKind> supportedAudioBackends(AudioPlatform platform)
 {
     if (platform == AudioPlatform::windows)
-        return {AudioBackendKind::asio, AudioBackendKind::wasapiExclusive, AudioBackendKind::wasapiShared};
+        return {AudioBackendKind::asio, AudioBackendKind::wasapiShared, AudioBackendKind::wasapiExclusive, AudioBackendKind::directSound};
     if (platform == AudioPlatform::macOS) return {AudioBackendKind::coreAudio};
     return {};
 }
@@ -98,7 +98,27 @@ struct AudioDeviceCapabilities
     std::optional<int> defaultBufferFrames;
     std::optional<AudioCurrentSettings> negotiated;
     std::vector<std::string> notes;
+    bool hasControlPanel{};
 };
+
+/** Ascending driver channel indices, not engine bus indices. No implicit first-N mapping. */
+[[nodiscard]] inline bool validAudioChannelSelection(const std::vector<int>& indices, int count)
+{
+    if (count < 0 || count > 32 || indices.size() != static_cast<std::size_t>(count)) return false;
+    int previous = -1;
+    for (int index : indices)
+    {
+        if (index <= previous || index > 1023) return false;
+        previous = index;
+    }
+    return true;
+}
+[[nodiscard]] inline std::vector<int> legacyAudioChannels(int count)
+{
+    std::vector<int> result;
+    for (int i = 0; i < count && i < 32; ++i) result.push_back(i);
+    return result;
+}
 
 /** Explicit endpoint/channel selection; no implicit device, rate, channel or API fallback. */
 struct AudioStreamRequest
@@ -106,13 +126,15 @@ struct AudioStreamRequest
     std::optional<AudioDeviceToken> input, output;
     double sampleRate{};
     int bufferFrames{}, maxFrames{}, inputChannels{}, outputChannels{};
+    std::vector<int> inputChannelIndices, outputChannelIndices;
 };
 
 /**
  * Platform-neutral device discovery and explicit stream-control boundary; contains no DSP.
  *
  * Construct, call and destroy on the designated control thread (JUCE message thread in
- * the native adapter). Refresh is coalesced; capability requests are bounded and
+ * the native adapter's public control API). Native discovery uses a separate
+ * process's JUCE message thread, not the UI thread. Refresh is coalesced; capability requests are bounded and
  * asynchronous. Discovery completions/listeners run later on that same thread, never
  * inside a native notification or real-time callback, and must be short/non-throwing.
  * Replacing a listener cancels its pending notifications. Shutdown/destruction cancels
@@ -140,6 +162,10 @@ public:
             return {AudioErrorCode::unavailable, "This backend cannot inspect an endpoint pair. Select output only or another backend."};
         return queryCapabilities(std::move(output), std::move(callback));
     }
+    using ControlPanelCallback = std::function<void(AudioError)>;
+    /** Explicit driver UI, only when reported; never opens an application stream. */
+    [[nodiscard]] virtual AudioError showControlPanel(AudioDeviceToken, ControlPanelCallback)
+    { return {AudioErrorCode::unavailable, "This driver has no control panel."}; }
     /** Opens without rendering; negotiated values are returned, never guessed from candidates. */
     [[nodiscard]] virtual AudioQuery<AudioStreamFormat> openStream(const AudioStreamRequest& request) = 0;
     /** Caller owns target through stopStream(); no processing begins before explicit start. */

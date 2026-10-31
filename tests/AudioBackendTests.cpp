@@ -24,6 +24,8 @@ struct FakeState
     bool failOpen{}, failStart{}, substituteBuffer{};
     IAudioRenderCallback* target{};
     AudioStreamDiagnostics stream;
+    AudioStreamRequest openedRequest;
+    int opens{}, panels{};
 };
 
 /** Deterministic injected discovery; no production discovery is replaced in native tests. */
@@ -59,6 +61,8 @@ public:
     AudioQuery<AudioStreamFormat> open(const std::optional<DiscoveredAudioDevice>&,
         const std::optional<DiscoveredAudioDevice>&, const AudioStreamRequest& request) override
     {
+        ++state_->opens;
+        state_->openedRequest = request;
         if (state_->failOpen) return {{}, {AudioErrorCode::unavailable, "Injected open failure."}};
         state_->stream = {true, false, 96, 144, 7};
         return {AudioStreamFormat{request.sampleRate, state_->substituteBuffer ? 256 : request.bufferFrames, request.maxFrames,
@@ -82,6 +86,7 @@ public:
         state_->target = nullptr; state_->stream.running = false; state_->stream.open = false;
     }
     AudioStreamDiagnostics diagnostics() const override { return state_->stream; }
+    AudioError showControlPanel(const DiscoveredAudioDevice&) override { ++state_->panels; return {}; }
     void stop() override { closeStream(); state_->stopped = true; state_->changed = {}; }
 private:
     std::shared_ptr<FakeState> state_;
@@ -356,7 +361,14 @@ void testStreaming()
             require(fake->pairProbes == 1 && fake->probes == 0, "Pair inspection uses one native driver instance.");
             const auto snapshot = *backend.snapshot().value;
             if (snapshot.devices.empty()) return false;
-            request = {snapshot.devices[1].token, snapshot.devices[0].token, 48000, 128, 512, 2, 2};
+            request = {snapshot.devices[1].token, snapshot.devices[0].token, 48000, 128, 512, 2, 2, {4, 5}, {2, 3}};
+            for (const auto& indices : std::vector<std::vector<int>>{{}, {3}, {3, 3}, {3, 2}, {-1, 0}, {0, 1024}})
+            {
+                auto malformed = request;
+                malformed.outputChannelIndices = indices;
+                require(!backend.openStream(malformed).value && fake->opens == 0,
+                        "Missing, duplicate, unordered, negative and out-of-range identities reject before the native seam.");
+            }
             auto invalid = request;
             invalid.output = invalid.input;
             require(!backend.openStream(invalid).value, "Wrong stream direction is rejected.");
@@ -376,6 +388,9 @@ void testStreaming()
             require(!engine.start(backend, request, badGraph, 1).succeeded && !fake->stream.open,
                     "Preparation failure closes successfully opened device.");
             require(engine.start(backend, request, graph, 1).succeeded, "Full engine -> abstraction -> injected platform lifecycle.");
+            require(fake->openedRequest.inputChannelIndices == std::vector<int>{4, 5}
+                    && fake->openedRequest.outputChannelIndices == std::vector<int>{2, 3},
+                    "The adapter passes exact later-port masks through the injected native open seam.");
             std::array<float, 128> input, output;
             input.fill(0.5f); output.fill(99);
             const float* inputs[2]{input.data(), input.data()};
@@ -454,7 +469,7 @@ void testNativeSilence()
             const auto channels = static_cast<int>(capabilities->outputChannels.size());
             val::audio::AudioGraph silence; silence.channels = channels;
             const AudioStreamRequest request{{}, output, capabilities->sampleRates.front(),
-                *capabilities->defaultBufferFrames, 4096, 0, channels};
+                *capabilities->defaultBufferFrames, 4096, 0, channels, {}, legacyAudioChannels(channels)};
             const auto started = engine.start(backend, request, silence, 1);
             require(started.succeeded, started.error);
             opened = true;
@@ -487,6 +502,7 @@ void testNative()
     backends.push_back(std::make_unique<WasapiExclusiveBackend>());
     backends.push_back(std::make_unique<WasapiSharedBackend>());
     backends.push_back(std::make_unique<CoreAudioBackend>());
+    backends.push_back(std::make_unique<DirectSoundBackend>());
     int inventories{};
     std::size_t sent{}, probes{}, successful{};
     std::vector<std::pair<IAudioBackend*, AudioDeviceInfo>> pending;
@@ -502,7 +518,7 @@ void testNative()
     });
     steps.push_back([&]
     {
-        if (inventories < 4) return false;
+        if (inventories < 5) return false;
         for (auto& backend : backends)
         {
             const auto state = *backend->snapshot().value;
@@ -575,16 +591,135 @@ void testNative()
     require(preferred->kind() == AudioBackendKind::coreAudio, "macOS preference is CoreAudio.");
 #endif
 }
+
+/** Real subprocess transport, but the child fixture never invokes native discovery. */
+int helperFixture(const std::string& mode, const juce::File& input, const juce::File& output)
+{
+    if (mode == "stall") { juce::Thread::sleep(30000); return 4; }
+    if (mode == "crash") return 4;
+    if (mode == "invalid") return output.replaceWithText("{") ? 0 : 3;
+    const auto request = juce::JSON::parse(input.loadFileAsString());
+    const auto operation = request["operation"].toString();
+    const auto response = operation == "scan"
+        ? R"({"code":0,"message":"","devices":[{"key":"out:usb","name":"USB output","direction":1,"default":true}],"notes":["Isolated test fixture; no hardware"]})"
+        : operation == "panel" ? R"({"code":0,"message":""})"
+        : R"({"code":0,"message":"","inputs":[],"outputs":["Main L","Main R","Virtual L","Virtual \u97f3 R"],"rates":[48000],"buffers":[128],"defaultBuffer":128,"notes":["No hardware"],"panel":true})";
+    return output.replaceWithText(response) ? 0 : 3;
+}
+void testHelperIsolation(const std::string& mode)
+{
+    for (const auto* malformed : {"{", R"({"backend":99,"operation":"scan"})", R"({"backend":0,"operation":"probe"})"})
+    {
+        const auto response = juce::JSON::parse(juce::String::fromUTF8(runAudioDiscoveryHelper(malformed).c_str()));
+        require(static_cast<int>(response["code"]) == static_cast<int>(AudioErrorCode::invalidArgument),
+                "Malformed helper protocol rejects before any native type or driver is created.");
+    }
+    const auto directory = juce::File::getCurrentWorkingDirectory().getChildFile("val-helper-tests-" + juce::Uuid().toString());
+    require(directory.createDirectory().wasOk(), "Create isolated helper protocol fixture directory.");
+    if (mode != "cancel")
+    {
+        auto fake = std::make_shared<FakeState>();
+        AudioDiscoveryHelperOptions options{
+            (mode == "missing" ? directory.getChildFile("missing-helper.exe")
+                : juce::File::getSpecialLocation(juce::File::currentExecutableFile)).getFullPathName().toStdString(),
+            directory.getFullPathName().toStdString(), {"--helper-fixture", mode}, mode == "stall" ? 150 : 5000};
+        WasapiSharedBackend backend(std::make_unique<FakeDiscovery>(fake), options);
+        bool notified{}, probed{}, panelComplete{};
+        int heartbeats{};
+        require(backend.setChangeCallback([&](const auto&) { notified = true; }).succeeded()
+                && backend.refresh().succeeded() && !notified, "Helper enumeration is asynchronous.");
+        AsyncSteps({
+            [&]
+            {
+                ++heartbeats;
+                if (!notified) return false;
+                require(heartbeats >= 2 && fake->scans == 0 && fake->probes == 0 && fake->opens == 0,
+                        "UI message loop remains responsive while the helper runs; no native source is probed or opened in tests.");
+                const auto snapshot = *backend.snapshot().value;
+                if (mode != "success")
+                {
+                    require(!snapshot.error.succeeded() && snapshot.devices.empty()
+                            && snapshot.error.message.find(mode == "stall" ? "timed out" : mode == "missing" ? "could not start"
+                                : mode == "invalid" ? "invalid data" : "without a result") != std::string::npos,
+                            "Hung/crashed helpers produce actionable bounded failures, not success-shaped empty inventories.");
+                    return true;
+                }
+                require(snapshot.devices.size() == 1 && snapshot.devices.front().name == "USB output", "IPC preserves labeled endpoint identities.");
+                require(backend.queryConfigurationCapabilities({}, snapshot.devices.front().token, [&](auto result)
+                {
+                    require(result.value && result.value->outputChannels == std::vector<std::string>{"Main L", "Main R", "Virtual L", "Virtual \xE9\x9F\xB3 R"}
+                            && result.value->sampleRates == std::vector<double>{48000} && result.value->bufferFrames == std::vector<int>{128}
+                            && result.value->hasControlPanel && !result.value->negotiated,
+                            "IPC preserves driver names, candidates and panel support without negotiating a stream.");
+                    probed = true;
+                }).succeeded() && !probed, "Isolated pair query returns later.");
+                return true;
+            },
+            [&]
+            {
+                if (mode != "success") return true;
+                if (!probed) return false;
+                const auto token = backend.snapshot().value->devices.front().token;
+                require(backend.showControlPanel(token, [&](AudioError error)
+                { require(error.succeeded(), "Fixture panel completes."); panelComplete = true; }).succeeded()
+                        && !panelComplete && fake->opens == 0, "Isolated panel request never opens an application stream.");
+                return true;
+            },
+            [&]
+            {
+                if (mode == "success" && !panelComplete) return false;
+                require(backend.shutdown().succeeded(), "Helper shutdown cancels without native calls.");
+                return true;
+            }
+        }).run();
+    }
+    if (mode == "cancel")
+    {
+        auto fake = std::make_shared<FakeState>();
+        auto backend = std::make_unique<WasapiSharedBackend>(std::make_unique<FakeDiscovery>(fake),
+            AudioDiscoveryHelperOptions{juce::File::getSpecialLocation(juce::File::currentExecutableFile).getFullPathName().toStdString(),
+                directory.getFullPathName().toStdString(), {"--helper-fixture", "stall"}, 150});
+        int callbacks{};
+        require(backend->setChangeCallback([&](const auto&) { ++callbacks; }).succeeded() && backend->refresh().succeeded(),
+                "Queue cancellable helper.");
+        int ticks{};
+        AsyncSteps({
+            [&] { if (++ticks < 4) return false; backend.reset(); return true; },
+            [&]
+            {
+                if (++ticks < 80) return false;
+                require(callbacks == 0 && directory.getNumberOfChildFiles(juce::File::findFiles) == 0,
+                        "Destruction cancels helper process work, suppresses callbacks and cleans owned IPC files.");
+                return true;
+            }
+        }).run();
+    }
+    require(directory.getNumberOfChildFiles(juce::File::findFiles) == 0 && directory.deleteFile(), "Clean exact helper fixture directory.");
+}
 }
 
 int main(int argc, char** argv)
 {
+    if (argc == 5 && std::string_view(argv[1]) == "--helper-fixture")
+        return helperFixture(argv[2], juce::File(juce::String::fromUTF8(argv[3])), juce::File(juce::String::fromUTF8(argv[4])));
     const juce::ScopedJuceInitialiser_GUI juce;
     return runTests([&]
     {
         if (argc == 2 && std::string_view(argv[1]) == "--native") testNative();
         else if (argc == 2 && std::string_view(argv[1]) == "--streams") testStreaming();
         else if (argc == 2 && std::string_view(argv[1]) == "--native-silence") testNativeSilence();
-        else testBackends();
+        else if (argc == 3 && std::string_view(argv[1]) == "--helper-check") testHelperIsolation(argv[2]);
+        else
+        {
+            testBackends();
+            for (const auto* mode : {"success", "stall", "crash", "missing", "invalid", "cancel"})
+            {
+                juce::ChildProcess child;
+                require(child.start(juce::StringArray{juce::File::getSpecialLocation(juce::File::currentExecutableFile).getFullPathName(),
+                    "--helper-check", mode}) && child.waitForProcessToFinish(10000), "Run isolated non-native helper regression.");
+                const auto output = child.readAllProcessOutput().toStdString();
+                require(child.getExitCode() == 0, output);
+            }
+        }
     });
 }

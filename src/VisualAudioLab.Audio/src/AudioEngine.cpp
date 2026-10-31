@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <new>
+#include <limits>
 
 namespace val::audio
 {
@@ -39,14 +40,19 @@ void AudioEngine::resetTelemetry() noexcept
 {
     callbacks_ = 0; frames_ = 0; revision_ = 0; lastNs_ = 0; maxNs_ = 0; totalNs_ = 0; lastFrames_ = 0;
     misses_ = 0; invalid_ = 0; canceled_ = 0; stopReason_ = AudioStreamStop::requested;
+    position_ = 0; scheduleFloor_ = 0; appliedEvents_ = 0; canceledEvents_ = 0; missedEvents_ = 0;
+    lastEventSequence_ = 0; lastEventFrame_ = 0;
+    nextSequence_ = 0; lastScheduledFrame_ = 0;
 }
 Result AudioEngine::startOffline(AudioStreamFormat format, const AudioGraph& graph, std::uint64_t revision)
 {
     if (const auto check = owner(); !check.succeeded) return check;
     if (configured_) return Result::failure("Stop the existing engine session before reconfiguring.");
+    if (epoch_ == std::numeric_limits<std::uint64_t>::max()) return Result::failure("Audio session epoch exhausted; create a new engine.");
     auto prepared = PreparedAudioGraph::prepare(graph, format, revision);
     if (!prepared.value) return Result::failure(prepared.error.message);
-    inputScratch_.resize(static_cast<std::size_t>(format.maxFrames) * static_cast<std::size_t>(format.inputChannels));
+    try { inputScratch_.resize(static_cast<std::size_t>(format.maxFrames) * static_cast<std::size_t>(format.inputChannels)); }
+    catch (const std::bad_alloc&) { return Result::failure("Insufficient memory while preparing audio input staging."); }
     for (int channel = 0; channel < format.inputChannels; ++channel)
         inputPointers_[channel] = inputScratch_.data() + channel * format.maxFrames;
     format_ = format;
@@ -54,6 +60,7 @@ Result AudioEngine::startOffline(AudioStreamFormat format, const AudioGraph& gra
     latest_ = active_;
     acceptedRevision_ = revision;
     configured_ = true;
+    ++epoch_;
     resetTelemetry();
     revision_.store(revision, std::memory_order_relaxed);
     enabled_.store(true, std::memory_order_release);
@@ -100,6 +107,7 @@ Result AudioEngine::publish(const AudioGraph& graph, std::uint64_t revision)
     delete pending_.exchange(plan, std::memory_order_acq_rel); // Returned mailbox ownership never belongs to the callback.
     latest_ = plan;
     acceptedRevision_ = revision;
+    lastScheduledFrame_ = 0;
     return Result::success();
 }
 Result AudioEngine::setGain(std::uint64_t revision, std::uint64_t node, float gain)
@@ -110,7 +118,39 @@ Result AudioEngine::setGain(std::uint64_t revision, std::uint64_t node, float ga
         return Result::failure("Gain needs a running session, the latest accepted revision and a finite linear value in [0,4].");
     std::size_t index{};
     if (!latest_->gainIndex(node, index)) return Result::failure("The requested Gain node does not exist in this revision.");
-    if (!gains_.push({revision, index, gain})) return Result::failure("Gain queue is full (32); retry after processing.");
+    return setParameter(revision, node, 0, gain);
+}
+Result AudioEngine::setParameter(std::uint64_t revision, std::uint64_t node, std::uint16_t parameter,
+                                float value, ParameterAction action)
+{
+    if (const auto check = owner(); !check.succeeded) return check;
+    std::size_t index{};
+    if (!configured_ || !enabled_.load(std::memory_order_acquire) || revision != acceptedRevision_
+        || !latest_->parameterIndex(node, parameter, value, action, index))
+        return Result::failure("Live parameter needs a running latest revision, valid node/parameter/action and in-range finite value.");
+    if (nextSequence_ == std::numeric_limits<std::uint64_t>::max())
+        return Result::failure("Parameter acceptance sequence exhausted; restart the engine session.");
+    if (!gains_.push({revision, index, value, parameter, action, nextSequence_ + 1}))
+        return Result::failure("Live parameter queue is full (32); retry after processing.");
+    ++nextSequence_;
+    return Result::success();
+}
+Result AudioEngine::scheduleParameter(std::uint64_t epoch, std::uint64_t revision, std::uint64_t node,
+    std::uint16_t parameter, std::uint64_t frame, float value, ParameterAction action)
+{
+    if (const auto check = owner(); !check.succeeded) return check;
+    std::size_t index{};
+    if (!configured_ || !enabled_.load(std::memory_order_acquire) || epoch != epoch_ || revision != acceptedRevision_
+        || !latest_->parameterIndex(node, parameter, value, action, index))
+        return Result::failure("Scheduled event has an inactive epoch/revision or an invalid node/parameter/value/action.");
+    const auto floor = scheduleFloor_.load(std::memory_order_acquire);
+    if (frame < floor || frame < lastScheduledFrame_ || frame - floor > static_cast<std::uint64_t>(format_.sampleRate * 10)
+        || nextSequence_ == std::numeric_limits<std::uint64_t>::max())
+        return Result::failure("Schedule in nondecreasing frame order, ahead of the admitted render span and at most ten seconds ahead.");
+    if (!scheduled_.push({{revision, index, value, parameter, action, nextSequence_ + 1}, frame}))
+        return Result::failure("Scheduled event queue is full (128); retain future events on the control thread and retry.");
+    ++nextSequence_;
+    lastScheduledFrame_ = frame;
     return Result::success();
 }
 Result AudioEngine::collectRetired()
@@ -120,6 +160,15 @@ Result AudioEngine::collectRetired()
     while (retired_.pop(old)) delete old;
     return Result::success();
 }
+AudioQuery<AnalyzerSnapshot> AudioEngine::analyzerSnapshot(std::uint64_t revision, std::uint64_t node) const
+{
+    if (const auto check = owner(); !check.succeeded) return {{}, {AudioErrorCode::wrongThread, check.error}};
+    if (!configured_ || revision != acceptedRevision_)
+        return {{}, {AudioErrorCode::invalidArgument, "Analyzer observation requires the latest accepted session revision."}};
+    const auto snapshot = latest_->analyzerSnapshot(node);
+    if (!snapshot) return {{}, {AudioErrorCode::invalidArgument, "No Analyzer node with that identity in this revision."}};
+    return {*snapshot, {}};
+}
 void AudioEngine::clearPlans()
 {
     delete pending_.exchange(nullptr, std::memory_order_acq_rel);
@@ -128,6 +177,8 @@ void AudioEngine::clearPlans()
     assert(collected.succeeded);
     GainChange event;
     while (gains_.pop(event)) {}
+    ScheduledChange scheduled;
+    while (scheduled_.pop(scheduled)) {}
 }
 Result AudioEngine::stop()
 {
@@ -180,6 +231,11 @@ void AudioEngine::process(const AudioBuffer& buffer) noexcept
     }
     else if (enabled_.load(std::memory_order_acquire))
     {
+        const auto beganFrame = position_.load(std::memory_order_relaxed);
+        const auto endFrame = beganFrame + static_cast<std::uint64_t>(buffer.frames);
+        if (endFrame < beganFrame) { interrupted(AudioStreamStop::formatChanged); return; }
+        scheduleFloor_.store(endFrame, std::memory_order_release);
+        const auto scheduledCount = scheduled_.available();
         if (retired_.canPush())
             if (auto* next = pending_.exchange(nullptr, std::memory_order_acq_rel))
             {
@@ -187,16 +243,64 @@ void AudioEngine::process(const AudioBuffer& buffer) noexcept
                 active_ = next;
                 revision_.store(next->revision(), std::memory_order_relaxed);
             }
-        GainChange event;
-        for (int count = 0; count < 32 && gains_.peek(event); ++count)
+        const auto liveCount = gains_.available();
+        int offset{};
+        const AudioBuffer staged{inputPointers_.data(), buffer.outputs, buffer.inputChannels, buffer.outputChannels, buffer.frames};
+        std::size_t liveConsumed{}, scheduledConsumed{};
+        for (std::size_t count = 0; buffer.frames > 0 && count < scheduledCount + liveCount; ++count)
         {
-            if (active_ && event.revision > active_->revision()) break;
-            const auto popped = gains_.pop(event); (void) popped;
-            if (active_ && event.revision == active_->revision()) active_->setGain(event.index, event.value);
-            else canceled_.store(canceled_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            GainChange live;
+            ScheduledChange scheduled;
+            const auto haveLive = liveConsumed < liveCount && gains_.peek(live);
+            const auto haveScheduled = scheduledConsumed < scheduledCount && scheduled_.peek(scheduled);
+            if (haveLive && (!active_ || live.revision < active_->revision()))
+            {
+                const auto popped = gains_.pop(live); (void) popped; ++liveConsumed;
+                canceled_.store(canceled_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+                canceledEvents_.store(canceledEvents_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+                continue;
+            }
+            if (haveScheduled && (!active_ || scheduled.change.revision < active_->revision()))
+            {
+                const auto popped = scheduled_.pop(scheduled); (void) popped; ++scheduledConsumed;
+                canceledEvents_.store(canceledEvents_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+                continue;
+            }
+            if (haveScheduled && active_ && scheduled.change.revision == active_->revision() && scheduled.frame < beganFrame)
+            {
+                const auto popped = scheduled_.pop(scheduled); (void) popped; ++scheduledConsumed;
+                missedEvents_.store(missedEvents_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+                continue;
+            }
+            const auto liveReady = haveLive && active_ && live.revision == active_->revision();
+            const auto scheduledReady = haveScheduled && active_ && scheduled.change.revision == active_->revision()
+                && scheduled.frame < endFrame;
+            if (!liveReady && !scheduledReady) break;
+            const auto takeLive = liveReady && (!scheduledReady || scheduled.frame > beganFrame
+                || live.sequence < scheduled.change.sequence);
+            GainChange change;
+            std::uint64_t frame{};
+            if (takeLive)
+            {
+                const auto popped = gains_.pop(change); (void) popped; ++liveConsumed;
+                frame = beganFrame;
+            }
+            else
+            {
+                const auto popped = scheduled_.pop(scheduled); (void) popped; ++scheduledConsumed;
+                change = scheduled.change;
+                frame = scheduled.frame;
+            }
+            const auto eventOffset = static_cast<int>(frame - beganFrame);
+            if (eventOffset > offset) active_->process(staged, offset, eventOffset - offset);
+            offset = eventOffset;
+            active_->parameterEvent(change.index, change.parameter, change.value, change.action);
+            appliedEvents_.store(appliedEvents_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+            lastEventSequence_.store(change.sequence, std::memory_order_relaxed);
+            lastEventFrame_.store(frame, std::memory_order_relaxed);
         }
-        if (active_ && buffer.frames > 0)
-            active_->process({inputPointers_.data(), buffer.outputs, buffer.inputChannels, buffer.outputChannels, buffer.frames});
+        if (active_ && buffer.frames > offset) active_->process(staged, offset, buffer.frames - offset);
+        position_.store(endFrame, std::memory_order_release);
     }
     const auto ended = clock_();
     const auto elapsed = ended >= began ? ended - began : 0;
@@ -225,6 +329,14 @@ AudioQuery<AudioEngineTelemetry> AudioEngine::telemetry() const
     result.deadlineMisses = misses_.load(std::memory_order_relaxed);
     result.invalidBlocks = invalid_.load(std::memory_order_relaxed);
     result.canceledGainChanges = canceled_.load(std::memory_order_relaxed);
+    result.epoch = epoch_;
+    result.samplePosition = position_.load(std::memory_order_acquire);
+    result.appliedEvents = appliedEvents_.load(std::memory_order_relaxed);
+    result.canceledEvents = canceledEvents_.load(std::memory_order_relaxed);
+    result.missedEvents = missedEvents_.load(std::memory_order_relaxed);
+    result.lastEventSequence = lastEventSequence_.load(std::memory_order_relaxed);
+    result.lastEventFrame = lastEventFrame_.load(std::memory_order_relaxed);
+    if (configured_) result.latestPlanNumericalFaults = latest_->numericalFaults();
     result.running = enabled_.load(std::memory_order_acquire);
     result.stopReason = stopReason_.load(std::memory_order_relaxed);
     if (result.frames && format_.sampleRate > 0)

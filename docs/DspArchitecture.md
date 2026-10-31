@@ -4,7 +4,7 @@
 
 This is a proposed DSP design, not an implementation or a statement of measured performance. It refines processing decisions left open in [FunctionalArchitecture.md](FunctionalArchitecture.md), within the product intent of [ProductVision.md](ProductVision.md) and [PRD.md](PRD.md).
 
-**Implemented subset:** The separately requested [basic realtime engine](AudioEngine.md) now implements only Input/Gain/Output, prepared graph handoff, bounded live gain changes and telemetry. The wider DSP framework below remains proposed; effects, control-rate scheduling, automation and plugins are not introduced by that implementation.
+**Implemented subset:** The [realtime engine](AudioEngine.md) provides prepared graph handoff and telemetry. The subsequently requested [DSP module framework](DspModules.md) adds unified AudioNode/EffectNode/GeneratorNode/AnalyzerNode bases, seven built-in processors, bounded session-frame parameter automation, smoothing and bypass. Control-rate scheduling, modulation, plugin processing, editable automation lanes and the wider capabilities below remain proposed. The module document distinguishes actual algorithms/limits from this design's future options.
 
 Use the C++20/JUCE/CMake boundaries in [TechnicalArchitecture.md](TechnicalArchitecture.md). Keep backend I/O separate from DSP as defined in [AudioPlatformStrategy.md](AudioPlatformStrategy.md): JUCE adapts the primary standalone paths Windows/ASIO and macOS/CoreAudio, but its device or processor abstractions do not by themselves define the graph scheduler or node semantics. The subsequently requested platform abstraction also implements WASAPI Shared and Exclusive without changing the primary preferences or allowing silent fallback.
 

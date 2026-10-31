@@ -2,7 +2,7 @@
 
 ## Scope and boundaries
 
-`VisualAudioLab.Audio` is a standard C++20 library depending only on Application/Domain. It implements `AudioEngine`, `AudioGraph`, `AudioProcessorNode`, `InputNode`, `GainNode` and `OutputNode`. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, no effects, automation timeline, plugins, scripts, mixer, resampler, parallel scheduler or wider DSP framework.
+`VisualAudioLab.Audio` is a standard C++20 library depending only on Application/Domain. It implements `AudioEngine`, `AudioGraph`, Input/Output and the [DSP module framework](DspModules.md). `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, scripts, mixer, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
 
 The desktop shell's Audio Settings remains a placeholder. Nothing starts audio when opening the application, loading a project or editing a patch. API callers must select endpoints and explicitly start the engine; hardware playback is not an implicit side effect of project persistence.
 
@@ -12,20 +12,22 @@ The desktop shell's Audio Settings remains a placeholder. Nothing starts audio w
 - Input copies corresponding device input channels into prepared scratch. Null/missing input pointers produce silence; preallocated input staging permits input/output pointer aliasing.
 - Gain multiplies samples by a finite linear factor in `[0,4]` (default 1). Live gain messages ramp to the target over five milliseconds, independent of block partitioning. The initial/prepared value applies immediately. There is no implicit limiter; callers must control output levels before enabling live input routing.
 - Output copies one upstream bus to the corresponding device output channels. Outputs are cleared before execution, so an empty graph or disconnected Output produces silence.
-- Every nonempty graph has exactly one Output. Each input has at most one source; Input cannot receive wires and Output cannot send them. Missing references, cycles, duplicate/zero identities and disconnected/dead branches fail preparation. With only these node types and no mixer, useful connected graphs are Input followed by zero or more Gains and Output. Generic graph fan-out cannot produce multiple live branches without a future explicitly designed sink/mixer; it is not implicitly summed.
+- Every nonempty graph has exactly one Output. Each input has at most one source; Input cannot receive wires and Output cannot send them. Missing references, cycles, duplicate/zero identities and disconnected/dead branches fail preparation. With the current single-input processors and no mixer, useful connected graphs are Input followed by effect/analyzer nodes and Output. Generic graph fan-out cannot produce multiple live branches without a future explicitly designed sink/mixer; it is not implicitly summed.
 - An unconnected Gain reads the prepared silent bus. Empty graphs are valid silence. Invalid new graphs leave the last valid graph active and return an error.
-- This basic runtime is limited to 256 nodes/connections, 8-384 kHz, a nominal buffer size within a declared capacity of 1-4096 frames, and at most 64 MiB scratch per prepared plan. Input staging is additional (at most 512 KiB). These are explicit engineering bounds, not a claim that the largest graph meets every hardware deadline.
+- This runtime is limited to 256 nodes/connections, 8-384 kHz, a nominal buffer size within a declared capacity of 1-4096 frames, at most 64 MiB scratch and 128 MiB combined scratch/processor buffers per prepared plan. Input staging is additional (at most 512 KiB), as are bounded object/queue overheads. These are explicit engineering bounds, not a claim that the largest graph meets every hardware deadline.
 
 `AudioGraph::fromStructural()` explicitly maps persisted generic nodes through scalar parameters:
 
 | Parameter | Meaning |
 |---|---|
-| `audio.type` | Exact string `Input`, `Gain` or `Output`; mandatory for each mapped node. |
+| `audio.type` | Exact string `Input`, `Output`, `Gain`, `EQ`, `Delay`, `Compressor`, `Distortion`, `Chorus`, `Reverb` or `Analyzer`; mandatory for each mapped node. |
 | `audio.gain` | Optional finite double in `[0,4]`, only on Gain. |
+| `audio.param.<name>` | Optional finite scalar from the processor's documented parameter domains; cannot duplicate `audio.gain`. |
+| `audio.bypass` | Optional boolean for effects/analyzers, not routing Input/Output. |
 
-Stable node IDs and directed connections are preserved; display names and positions do not affect processing. Ordinary generic editor nodes are **not** silently converted into processors. `fromStructural` maps data; `prepare` still validates the complete graph/configuration. Unknown processor types, including effects, are rejected. Mapping is an API, not a new module-browser or inspector UI. Existing project persistence already retains these scalar fields without a schema change.
+Stable node IDs and directed connections are preserved; display names and positions do not affect processing. Ordinary generic editor nodes are **not** silently converted into processors. `fromStructural` maps data; `prepare` still validates the complete graph/configuration. Unknown processor types/parameters are rejected. Mapping is an API, not a new module-browser or inspector UI. Existing project persistence already retains these scalar fields without a schema change.
 
-Live `setGain()` changes runtime state only, not project data/history. A caller that wants persistence must separately make an undoable workspace parameter edit and submit the corresponding runtime change. Graph replacement resets gain state to its supplied prepared values; it does not promise click-free topology changes or DSP-state migration.
+Live parameter changes affect runtime state only, not project data/history. A caller that wants persistence must separately make an undoable workspace parameter edit and submit the corresponding runtime change. Graph replacement resets processor state to its supplied prepared values; it does not promise click-free topology changes or DSP-state migration.
 
 ## Preparation, publication and reclamation
 
@@ -46,7 +48,7 @@ flowchart LR
 
 Only one control producer and one serial render consumer are supported. Newer revisions must increase within a session. The producer publishes a fully prepared raw plan through a single atomic exchange. Superseded *pending* plans return to control ownership and are deleted there. The callback swaps at most one pending plan at a block boundary and returns the previous active plan through an eight-slot SPSC queue. If retirement is full, activation waits; it does not wait/spin, leak ownership or delete on the callback. `collectRetired()` reclaims acknowledged plans on the control thread; `publish()` also collects. Up to eight retired plans plus active/pending plans may temporarily coexist.
 
-The 32-slot SPSC gain queue carries revision-scoped, prevalidated indices/values, not pointers into editable graphs. At most 32 events are considered per callback. Messages for an older revision are cancelled and counted; future-revision messages wait for that plan's activation. Queue saturation returns an explicit control error. Reconfiguration and stop never depend on successfully enqueueing an ordinary gain/graph message.
+The 32-slot live parameter and 128-slot scheduled SPSC queues carry revision-scoped, prevalidated indices/values, not pointers into editable graphs. Work is bounded to the admission snapshot (at most 160 events) per nonempty callback. Messages for an older revision are cancelled and counted; future-revision messages wait for activation and scheduled messages delivered after their frame are missed rather than replayed. Queue saturation returns an explicit control error. Both queues merge by frame/acceptance sequence; see [DspModules.md](DspModules.md) for epoch, precedence, horizon and exact in-block timing. Reconfiguration and stop never depend on successfully enqueueing an ordinary parameter/graph message.
 
 Callback atomics for plan pointers, queue indices, flags, stop reasons and 64-bit counters have `is_always_lock_free` compile-time assertions. The callback contains no mutex, logging, UI dispatch, ownership decrement, heap allocation/free or retry-until-success loop. Node/frame/channel work is bounded by the prepared limits. This qualifies the application renderer's implementation, not every internal JUCE/vendor/OS operation, and does not constitute a hard real-time OS guarantee.
 
@@ -66,7 +68,7 @@ Native open validates channel availability and exact rate/layout. The driver may
 
 The native adapter silences when no render target exists or a native fault is latched. Native error/stopped callbacks only set lock-free flags and notify the renderer through its atomic-only interruption method; they do not allocate error strings, log or dispatch UI. Native list invalidation closes a running/opened stream on the control thread. Conservative ASIO PnP invalidation can also stop on an unrelated device-interface change; this favors safety over automatic continuation. Polling closes a faulted stream on the control thread. Restart/reselection is explicit; there is no automatic new output route.
 
-The engine latches silence on wrong layout or a block exceeding prepared capacity. Fault spans up to 65536 frames/32 output channels are cleared with bounded work; a host span beyond those absolute guards is a malformed API violation and cannot be safely traversed. Pointer validity/storage size remain the host's contract. Negative/invalid counts are not used to index memory. Zero-frame callbacks do not advance samples or gain ramps, though a prepared plan/event can activate at that boundary.
+The engine latches silence on wrong layout or a block exceeding prepared capacity. Fault spans up to 65536 frames/32 output channels are cleared with bounded work; a host span beyond those absolute guards is a malformed API violation and cannot be safely traversed. Pointer validity/storage size remain the host's contract. Negative/invalid counts are not used to index memory. Zero-frame callbacks do not advance samples, ramps or parameter events, though a prepared plan can activate at that boundary.
 
 `startOffline()` supplies the same renderer for deterministic tests or a future external host. It opens no hardware and simulates no backend metrics. Its caller must stop/join its render source before control `stop()`/destruction; no renderer-owned mutex can make unsafe concurrent destruction valid.
 

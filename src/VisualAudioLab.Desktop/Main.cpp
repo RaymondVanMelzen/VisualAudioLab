@@ -41,6 +41,7 @@ public:
         });
         setContentOwned(content_, false);
         content_->setInspectorVisible(settings.inspectorVisible);
+        content_->runtime().restoreSetup(settings.audioSetup);
         centreWithSize(settings.windowWidth, settings.windowHeight);
         setVisible(true);
     }
@@ -103,7 +104,7 @@ public:
         if (window_ && settings_)
         {
             const application::Settings value{window_->getWidth(), window_->getHeight(),
-                                               window_->content().inspectorVisible()};
+                                               window_->content().inspectorVisible(), window_->content().runtime().setupPreference()};
             const auto saved = settings_->save(value);
             if (!saved.succeeded)
             {

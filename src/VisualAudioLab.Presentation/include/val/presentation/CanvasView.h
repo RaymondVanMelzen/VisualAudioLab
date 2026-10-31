@@ -84,7 +84,7 @@ private:
     juce::Rectangle<float> marquee_;
     float zoom_{1.0f};
     bool spaceHeld_{};
-    juce::TextButton add_{"Add Node"}, remove_{"Delete"}, fit_{"Fit"}, minus_{"-"}, plus_{"+"};
+    juce::TextButton add_{"Routing Draft"}, remove_{"Delete"}, fit_{"Fit"}, minus_{"-"}, plus_{"+"};
     juce::Label zoomLabel_, help_;
 };
 }

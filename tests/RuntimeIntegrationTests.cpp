@@ -28,21 +28,33 @@ template <typename T> T* control(juce::Component& parent, const juce::String& na
 class UiBackend final : public IAudioBackend
 {
 public:
-    AudioBackendKind kind() const noexcept override { return AudioBackendKind::wasapiShared; }
+    explicit UiBackend(AudioBackendKind backend = AudioBackendKind::wasapiShared) : backend_(backend) {}
+    AudioBackendKind kind() const noexcept override { return backend_; }
     AudioQuery<AudioBackendSnapshot> snapshot() const override { return {inventory, {}}; }
     AudioError setChangeCallback(ChangeCallback value) override { changed = std::move(value); return {}; }
     AudioError refresh() override
     {
         ++scans;
         inventory = {kind(), 1, {}, {{{kind(), 1, 1, "output"}, "Test output (not hardware)", AudioDirection::output, true}}, {}};
+        if (kind() == AudioBackendKind::asio)
+            inventory.devices.front().direction = AudioDirection::duplex;
+        else if (withInput)
+            inventory.devices.push_back({{kind(), 1, 1, "input"}, "Test input (not hardware)", AudioDirection::input, true});
         if (changed) changed(inventory);
         return {};
     }
     AudioError queryCapabilities(AudioDeviceToken, CapabilityCallback completed) override
     {
         ++probes;
-        completed({AudioDeviceCapabilities{{}, {"Left", "Right"}, {48000}, {128}, 128, {}, {}}, {}});
+        if (defer) pending = std::move(completed);
+        else completed(probeError.succeeded() ? AudioQuery<AudioDeviceCapabilities>{capabilities, {}} : AudioQuery<AudioDeviceCapabilities>{{}, probeError});
         return {};
+    }
+    AudioError queryConfigurationCapabilities(std::optional<AudioDeviceToken> input, AudioDeviceToken output,
+        CapabilityCallback completed) override
+    {
+        selectedInput = std::move(input); selectedOutput = output;
+        return queryCapabilities(std::move(output), std::move(completed));
     }
     AudioQuery<AudioStreamFormat> openStream(const AudioStreamRequest& request) override
     {
@@ -59,6 +71,13 @@ public:
     AudioBackendSnapshot inventory;
     IAudioRenderCallback* target{};
     int scans{}, probes{}, opens{}, closes{};
+    AudioBackendKind backend_;
+    bool defer{}, withInput{};
+    CapabilityCallback pending;
+    AudioError probeError;
+    std::optional<AudioDeviceToken> selectedInput;
+    AudioDeviceToken selectedOutput;
+    AudioDeviceCapabilities capabilities{{}, {"Left", "Right"}, {48000}, {128}, 128, {}, {}};
 };
 /** Dispatches one bounded series of GUI/worker phases, with failure propagation and no modal loop nesting. */
 class Phases final : private juce::Timer
@@ -102,6 +121,91 @@ void screenshot(juce::Component& component, juce::String name)
 
 void runRuntimeIntegrationTests()
 {
+    require(supportedAudioBackends(AudioPlatform::windows) == std::vector{AudioBackendKind::asio, AudioBackendKind::wasapiExclusive, AudioBackendKind::wasapiShared}
+            && supportedAudioBackends(AudioPlatform::macOS) == std::vector{AudioBackendKind::coreAudio}
+            && supportedAudioBackends(AudioPlatform::other).empty(), "Backend platform policy excludes foreign APIs without fallback.");
+    {
+        WorkspaceService workspace;
+        VisualizationSession observations;
+        UiBackend* device{};
+        int creations{};
+        auto setupOwner = std::make_unique<RuntimePanel>(workspace, observations, [&](AudioBackendKind kind) -> std::unique_ptr<IAudioBackend>
+        {
+            ++creations;
+            auto backend = std::make_unique<UiBackend>(kind); device = backend.get();
+            backend->withInput = true;
+            backend->capabilities.inputChannels = {"In left", "In right"};
+            return backend;
+        });
+        auto& setup = *setupOwner;
+        auto* api = control<juce::ComboBox>(setup, "Backend");
+#if JUCE_WINDOWS
+        require(api->indexOfItemId(4) < 0 && api->getNumItems() == 4, "Windows UI never offers CoreAudio.");
+        const auto kind = AudioBackendKind::asio;
+        const int id = 1;
+#elif JUCE_MAC
+        require(api->indexOfItemId(1) < 0 && api->indexOfItemId(3) < 0 && api->getNumItems() == 2, "macOS UI offers only CoreAudio and offline.");
+        const auto kind = AudioBackendKind::coreAudio;
+        const int id = 4;
+#else
+        const auto kind = AudioBackendKind::wasapiShared;
+        const int id = 3;
+#endif
+        const AudioSetupPreference preference{kind, "Test output (not hardware)", "Test output (not hardware)", 48000, 128, 2, 2};
+        auto saved = preference;
+        if (kind != AudioBackendKind::asio) saved.inputName = "Test input (not hardware)";
+        setup.restoreSetup(saved);
+        require(creations == 0 && !setup.running() && !setup.ready(), "Restoring setup hints does not create, probe or start hardware.");
+        auto* scan = control<juce::TextButton>(setup, "Scan devices");
+        auto* inspect = control<juce::TextButton>(setup, "Inspect selected devices");
+        auto* input = control<juce::ComboBox>(setup, "Input device");
+        auto* output = control<juce::ComboBox>(setup, "Output device");
+        auto* rate = control<juce::ComboBox>(setup, "Sample rate");
+        auto* buffer = control<juce::ComboBox>(setup, "Buffer frames");
+        auto* outCount = control<juce::ComboBox>(setup, "Output channels");
+        auto* inCount = control<juce::ComboBox>(setup, "Input channels");
+        auto* start = control<juce::TextButton>(setup, "Start");
+        require(!buffer->isEnabled() && !start->isEnabled(), "Uninspected capabilities cannot masquerade as supported controls.");
+        scan->onClick();
+        require(output->getSelectedId() == 1 && input->getSelectedId() == 2 && device->probes == 0,
+                "Explicit scan restores exact saved endpoints without capability probing.");
+        inspect->onClick();
+        require(device->probes == 1 && device->selectedInput && !device->opens
+                && rate->getNumItems() == 1 && buffer->getNumItems() == 1 && inCount->getNumItems() == 3
+                && setup.ready() && !setup.running(), "One combined probe restores revalidated settings, including duplex ASIO, with explicit transport.");
+        if (kind == AudioBackendKind::asio)
+        {
+            require(input->getNumItems() == 2 && *device->selectedInput == device->selectedOutput,
+                    "ASIO exposes None or the same driver, never independent input/output drivers.");
+            input->setSelectedId(1, juce::sendNotificationSync);
+            require(input->getSelectedId() == 1, "Explicit ASIO output-only selection is not overwritten.");
+            input->setSelectedId(2, juce::sendNotificationSync);
+        }
+        device->defer = true;
+        inspect->onClick();
+        require(!rate->isEnabled() && !start->isEnabled() && setup.compactStatus().contains("inspecting"),
+                "Pending probe clears old choices and disables Start.");
+        device->pending({{}, {AudioErrorCode::unavailable, "Injected busy driver; retry Inspect."}});
+        device->pending = {};
+        require(rate->getNumItems() == 0 && !buffer->isEnabled() && inspect->isEnabled()
+                && setup.status().contains("busy driver"), "Failed probe shows actionable error with retry, never stale success.");
+        device->defer = false;
+        device->capabilities.sampleRates.clear(); device->capabilities.bufferFrames.clear();
+        inspect->onClick();
+        require(!rate->isEnabled() && !buffer->isEnabled() && !setup.ready() && setup.status().contains("unreported"),
+                "Unknown rate/period lists stay unknown, not fabricated defaults or host-managed claims.");
+        device->capabilities.sampleRates = {48000}; device->capabilities.bufferFrames = {128};
+        inspect->onClick();
+        scan->onClick();
+        require(output->getSelectedId() == 1 && rate->getNumItems() == 0 && !setup.ready(),
+                "Refresh keeps device-name hints but invalidates capabilities until explicit inspection.");
+        inspect->onClick();
+        require(setup.setupPreference() == saved && setup.ready(), "Reinspection restores machine-local values without silently changing them.");
+        device->inventory.devices.clear(); device->changed(device->inventory);
+        require(!setup.ready() && !output->isEnabled() && setup.status().contains("No output"),
+                "Empty inventories are truthful and actionable.");
+        juce::ignoreUnused(id, outCount);
+    }
     {
         WorkspaceService legacy;
         VisualizationSession observations;
@@ -161,6 +265,7 @@ void runRuntimeIntegrationTests()
     shell.dockWorkspace().canvas().fitGraph();
     shell.dockWorkspace().signalPreview().setTarget(analyzer);
     shell.dockWorkspace().showPanel(PanelId::propertyInspector);
+    screenshot(shell, "desktop-review-workspace.png");
     shell.dockWorkspace().showPanel(PanelId::audioSettings);
     const auto path = std::filesystem::path(directory.getChildFile("script-fx.valab").getFullPathName().toWideCharPointer());
     require(shell.saveProjectTo(path).succeeded, "Integrated executable source/FX/analysis metadata saves through File workflow.");
@@ -264,7 +369,11 @@ void runRuntimeIntegrationTests()
         {
             auto* api = control<juce::ComboBox>(runtime, "Backend");
             require(api, "Runtime exposes a named backend selector.");
+#if JUCE_MAC
+            api->setSelectedId(4, juce::sendNotificationSync);
+#else
             api->setSelectedId(3, juce::sendNotificationSync);
+#endif
             auto* scan = control<juce::TextButton>(runtime, "Scan devices");
             auto* inspect = control<juce::TextButton>(runtime, "Inspect selected devices");
             require(scan && inspect && mock == nullptr, "Backend switching alone does not probe drivers.");
@@ -277,8 +386,24 @@ void runRuntimeIntegrationTests()
             control<juce::ComboBox>(runtime, "Sample rate")->setSelectedId(1, juce::dontSendNotification);
             control<juce::ComboBox>(runtime, "Buffer frames")->setSelectedId(1, juce::dontSendNotification);
             control<juce::ComboBox>(runtime, "Output channels")->setSelectedId(1, juce::dontSendNotification);
+            scan->onClick();
+            inspect->onClick();
+            require(runtime.getWidth() >= 640 && control<juce::ComboBox>(runtime, "Output device")->getWidth() >= 200,
+                    "Opening an initially hidden setup dock sizes controls to its actual area without requiring a window resize: runtime "
+                    + std::to_string(runtime.getWidth()) + ", output control "
+                    + std::to_string(control<juce::ComboBox>(runtime, "Output device")->getWidth()) + ".");
             screenshot(runtime, "desktop-integration-device-settings.png");
+            screenshot(shell, "desktop-review-audio-setup.png");
+            return true;
+        },
+        [&]
+        {
+            require(runtime.ready() && control<juce::ComboBox>(runtime, "Buffer frames")->getNumItems() == 1,
+                    "Refresh/restore/inspection does not queue endpoint onChange callbacks that later erase capabilities.");
             require(runtime.start().succeeded && mock->opens == 1 && mock->target, "Explicit native Start negotiates selected settings and attaches real engine through injected device seam.");
+            control<juce::TextButton>(runtime, "Done")->onClick();
+            require(runtime.running() && !shell.dockWorkspace().layout().placement(PanelId::audioSettings).visible,
+                    "Done hides occasional setup without changing transport or discarding configuration.");
             std::array<float, 128> samples{}; float* destination[]{samples.data()};
             mock->target->process({nullptr, destination, 0, 1, 128});
             require(std::abs(samples[0] - 0.125f) < 0.0001f, "Native render contract consumes the persisted executable graph.");

@@ -19,9 +19,9 @@ struct FakeState
     AudioDeviceCapabilities capabilities{{}, {"Left", "Right"}, {44100, 48000}, {128, 256}, 256, {}, {}};
     std::function<void()> changed;
     AudioError scanError, probeError;
-    int scans{}, probes{};
+    int scans{}, probes{}, pairProbes{};
     bool stopped{}, invalidateDuringProbe{};
-    bool failOpen{}, failStart{};
+    bool failOpen{}, failStart{}, substituteBuffer{};
     IAudioRenderCallback* target{};
     AudioStreamDiagnostics stream;
 };
@@ -45,12 +45,23 @@ public:
         if (!state_->probeError.succeeded()) return {{}, state_->probeError};
         return {state_->capabilities, {}};
     }
+    AudioQuery<AudioDeviceCapabilities> probeConfiguration(const std::optional<DiscoveredAudioDevice>& input,
+                                                          const DiscoveredAudioDevice& output) override
+    {
+        ++state_->pairProbes;
+        require(input && input->direction == AudioDirection::input && output.direction == AudioDirection::output,
+                "Pair probe resolves the actual input/output devices before touching the native seam.");
+        auto capabilities = state_->capabilities;
+        capabilities.inputChannels = {"Input left", "Input right"};
+        capabilities.bufferFrames = {192};
+        return {capabilities, {}};
+    }
     AudioQuery<AudioStreamFormat> open(const std::optional<DiscoveredAudioDevice>&,
         const std::optional<DiscoveredAudioDevice>&, const AudioStreamRequest& request) override
     {
         if (state_->failOpen) return {{}, {AudioErrorCode::unavailable, "Injected open failure."}};
         state_->stream = {true, false, 96, 144, 7};
-        return {AudioStreamFormat{request.sampleRate, request.bufferFrames, request.maxFrames,
+        return {AudioStreamFormat{request.sampleRate, state_->substituteBuffer ? 256 : request.bufferFrames, request.maxFrames,
                                   request.inputChannels, request.outputChannels}, {}};
     }
     AudioError start(IAudioRenderCallback& target) override
@@ -324,10 +335,25 @@ void testStreaming()
     AudioGraph graph{2, {{1, AudioNodeType::input}, {2, AudioNodeType::gain, 0.25f}, {3, AudioNodeType::output}},
                         {{1, 2}, {2, 3}}};
     AudioStreamRequest request;
+    bool pairComplete{};
     AsyncSteps({
         [&] { require(backend.refresh().succeeded(), "Refresh streaming inventory."); return true; },
         [&]
         {
+            const auto snapshot = *backend.snapshot().value;
+            if (snapshot.devices.empty()) return false;
+            require(backend.queryConfigurationCapabilities(snapshot.devices[1].token, snapshot.devices[0].token, [&](auto result)
+            {
+                require(result.value && result.value->inputChannels.size() == 2 && result.value->bufferFrames == std::vector{192},
+                        "Combined JUCE candidates are preserved, not intersected from independently probed endpoint periods.");
+                pairComplete = true;
+            }).succeeded() && !pairComplete, "Pair probe runs asynchronously.");
+            return true;
+        },
+        [&]
+        {
+            if (!pairComplete) return false;
+            require(fake->pairProbes == 1 && fake->probes == 0, "Pair inspection uses one native driver instance.");
             const auto snapshot = *backend.snapshot().value;
             if (snapshot.devices.empty()) return false;
             request = {snapshot.devices[1].token, snapshot.devices[0].token, 48000, 128, 512, 2, 2};
@@ -338,6 +364,10 @@ void testStreaming()
             require(!engine.start(backend, request, graph, 1).succeeded && !fake->stream.open,
                     "Open failure cannot leave a running engine.");
             fake->failOpen = false;
+            fake->substituteBuffer = true;
+            require(!backend.openStream(request).value && !fake->stream.open,
+                    "Driver buffer substitution inside capacity is rejected and closed, not silently accepted.");
+            fake->substituteBuffer = false;
             fake->failStart = true;
             require(!engine.start(backend, request, graph, 1).succeeded && !fake->stream.open && !fake->target,
                     "Failed start closes prepared stream and releases target.");

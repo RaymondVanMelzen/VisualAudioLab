@@ -37,6 +37,14 @@ public:
     [[nodiscard]] virtual application::AudioQuery<AudioDiscoveryInventory> scan() = 0;
     [[nodiscard]] virtual application::AudioQuery<application::AudioDeviceCapabilities>
         probe(const DiscoveredAudioDevice& device) = 0;
+    /** Pair inspection must be implemented by adapters with separate input/output endpoints. */
+    [[nodiscard]] virtual application::AudioQuery<application::AudioDeviceCapabilities> probeConfiguration(
+        const std::optional<DiscoveredAudioDevice>& input, const DiscoveredAudioDevice& output)
+    {
+        if (input && input->key != output.key)
+            return {{}, {application::AudioErrorCode::unavailable, "This source cannot inspect separate endpoint pairs."}};
+        return probe(output);
+    }
     /** Explicit native stream seam. Defaults reject streaming, never synthesize success. */
     [[nodiscard]] virtual application::AudioQuery<application::AudioStreamFormat> open(
         const std::optional<DiscoveredAudioDevice>&, const std::optional<DiscoveredAudioDevice>&,

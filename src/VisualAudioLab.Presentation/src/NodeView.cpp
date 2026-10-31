@@ -36,6 +36,14 @@ void NodeView::paint(juce::Graphics& graphics, const domain::Node& node,
                       rectangle.reduced(10.0f, 4.0f).withHeight(22.0f),
                       juce::Justification::centredLeft);
     graphics.setColour(juce::Colours::lightgrey);
+    const auto field = node.parameters.find("audio.type");
+    const auto* type = field == node.parameters.end() ? nullptr : std::get_if<std::string>(&field->second);
+    const auto role = !type ? "Routing draft (no DSP)" : (*type == "Input" || *type == "Output")
+        ? "Routing utility" : *type == "Analyzer" ? "Analysis module instance" : "Module instance";
+    graphics.setFont(juce::FontOptions(10.5f));
+    graphics.drawText(role, rectangle.withTrimmedTop(32).reduced(10, 0).withHeight(12),
+                      juce::Justification::centredLeft);
+    graphics.setFont(juce::FontOptions(14.0f));
     graphics.drawText("In", rectangle.withTrimmedTop(43).reduced(13, 0).withWidth(45),
                       juce::Justification::centredLeft);
     graphics.drawText("Out", rectangle.withTrimmedTop(43).reduced(13, 0),

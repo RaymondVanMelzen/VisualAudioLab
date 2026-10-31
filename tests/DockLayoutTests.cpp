@@ -20,7 +20,8 @@ int main()
         for (std::size_t index = 0; index < DockLayout::panelCount; ++index)
         {
             const auto id = static_cast<PanelId>(index);
-            require(layout.placement(id).visible, "Every named area starts available.");
+            require(defaults.placement(id).visible == (id != PanelId::audioSettings),
+                    "Audio Setup is occasional and hidden by default; other named areas start visible.");
             for (const auto position : {DockPosition::left, DockPosition::centre,
                                        DockPosition::right, DockPosition::bottom})
             {

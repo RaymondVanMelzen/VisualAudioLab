@@ -38,6 +38,11 @@ void testSettings(const TestDirectory& directory)
     require(store.save(value).succeeded, "Write valid preferences.");
     auto loaded = store.load();
     require(loaded.state == SettingsLoadState::loaded && loaded.value == value, "Preferences round-trip.");
+    Settings audioValue = value;
+    audioValue.audioSetup = AudioSetupPreference{AudioBackendKind::asio, "Test driver", "Test driver", 48000, 128, 2, 2};
+    require(store.save(audioValue).succeeded && store.load().value == audioValue,
+            "Machine-local backend/device-name/rate/buffer/channel hints round-trip without tokens or transport state.");
+    require(store.save(value).succeeded, "Optional audio preferences remain compatible with window-only settings.");
     auto file = directory.file.getChildFile("settings.json");
     const auto original = file.loadFileAsString();
     require(!store.save({1, 1, true}).succeeded && file.loadFileAsString() == original,
@@ -46,7 +51,9 @@ void testSettings(const TestDirectory& directory)
              "{", R"({"version":99})",
              R"({"version":1,"windowWidth":"1200","windowHeight":800,"inspectorVisible":true})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":1})",
-             R"({"version":1,"windowWidth":1200,"windowHeight":1,"inspectorVisible":true})"})
+             R"({"version":1,"windowWidth":1200,"windowHeight":1,"inspectorVisible":true})",
+             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{}})",
+             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":99,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2}})"})
     {
         require(file.replaceWithText(invalid), "Seed invalid settings.");
         require(store.load().state == SettingsLoadState::failed, "Malformed/types/version/ranges fail explicitly.");

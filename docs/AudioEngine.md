@@ -4,7 +4,7 @@
 
 `VisualAudioLab.Audio` is a standard C++20 library depending on Application/Domain and the device-independent Script target. It implements `AudioEngine`, `AudioGraph`, Input/Output, the [DSP module framework](DspModules.md) and verified [VAL Script](ValScript.md) kernels. `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, mixer, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
 
-The desktop now composes the engine and backend through [explicit Audio Settings and transport](DesktopWorkflow.md). Nothing opens or starts audio on startup/load. The user selects endpoints/configuration and starts transport; valid edits can then publish new prepared graphs. Load/patch switch stops transport. Hardware playback is not an implicit side effect of persistence.
+The desktop composes the engine and backend through [occasional Audio Setup and explicit transport](DesktopWorkflow.md). Nothing opens or starts audio on startup/load. The user selects endpoints/configuration and starts transport; valid edits can then publish new prepared graphs. Load/patch switch stops transport. Hardware playback is not an implicit side effect of persistence.
 
 ## Minimal graph semantics
 

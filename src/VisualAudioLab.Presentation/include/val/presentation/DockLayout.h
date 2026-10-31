@@ -49,7 +49,7 @@ public:
 private:
     std::array<PanelPlacement, panelCount> placements_{{
         {DockPosition::centre}, {DockPosition::left}, {DockPosition::left},
-        {DockPosition::right}, {DockPosition::bottom}
+        {DockPosition::right}, {DockPosition::bottom, false}
     }};
 };
 
@@ -62,7 +62,7 @@ private:
         case PanelId::moduleBrowser: return "Module Browser";
         case PanelId::projectExplorer: return "Project Explorer";
         case PanelId::propertyInspector: return "Property Inspector";
-        case PanelId::audioSettings: return "Audio Settings";
+        case PanelId::audioSettings: return "Audio Setup";
     }
     return "Unknown panel";
 }

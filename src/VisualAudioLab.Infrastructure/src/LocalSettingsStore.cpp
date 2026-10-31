@@ -60,6 +60,23 @@ application::SettingsLoadResult LocalSettingsStore::load()
         return loadFailure("Settings have missing or invalid preference types.");
     application::Settings settings{static_cast<int>(width), static_cast<int>(height),
                                     static_cast<bool>(inspector)};
+    if (object->hasProperty("audioSetup"))
+    {
+        auto* audio = object->getProperty("audioSetup").getDynamicObject();
+        if (!audio || !audio->getProperty("backend").isInt()
+            || !audio->getProperty("inputName").isString() || !audio->getProperty("outputName").isString()
+            || !(audio->getProperty("sampleRate").isDouble() || audio->getProperty("sampleRate").isInt())
+            || !audio->getProperty("bufferFrames").isInt() || !audio->getProperty("inputChannels").isInt()
+            || !audio->getProperty("outputChannels").isInt())
+            return loadFailure("Audio setup preferences have missing or invalid types; original preserved.");
+        const auto backend = static_cast<int>(audio->getProperty("backend"));
+        if (backend < 0 || backend > 3) return loadFailure("Audio setup backend is unsupported; original preserved.");
+        settings.audioSetup = application::AudioSetupPreference{
+            static_cast<application::AudioBackendKind>(backend),
+            audio->getProperty("inputName").toString().toStdString(), audio->getProperty("outputName").toString().toStdString(),
+            static_cast<double>(audio->getProperty("sampleRate")), static_cast<int>(audio->getProperty("bufferFrames")),
+            static_cast<int>(audio->getProperty("inputChannels")), static_cast<int>(audio->getProperty("outputChannels"))};
+    }
     const auto validation = application::validateSettings(settings);
     if (!validation.succeeded)
         return loadFailure(validation.error);
@@ -88,6 +105,19 @@ application::Result LocalSettingsStore::save(const application::Settings& settin
     object->setProperty("windowWidth", settings.windowWidth);
     object->setProperty("windowHeight", settings.windowHeight);
     object->setProperty("inspectorVisible", settings.inspectorVisible);
+    if (settings.audioSetup)
+    {
+        auto* audio = new juce::DynamicObject();
+        const auto& setup = *settings.audioSetup;
+        audio->setProperty("backend", static_cast<int>(setup.backend));
+        audio->setProperty("inputName", juce::String::fromUTF8(setup.inputName.c_str()));
+        audio->setProperty("outputName", juce::String::fromUTF8(setup.outputName.c_str()));
+        audio->setProperty("sampleRate", setup.sampleRate);
+        audio->setProperty("bufferFrames", setup.bufferFrames);
+        audio->setProperty("inputChannels", setup.inputChannels);
+        audio->setProperty("outputChannels", setup.outputChannels);
+        object->setProperty("audioSetup", juce::var(audio));
+    }
     const juce::TemporaryFile temporary(file);
     if (!temporary.getFile().replaceWithText(juce::JSON::toString(data), false, false, "\n"))
         return application::Result::failure("Cannot write temporary settings; the original is preserved.");

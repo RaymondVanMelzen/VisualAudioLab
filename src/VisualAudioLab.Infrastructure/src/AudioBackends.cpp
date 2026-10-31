@@ -129,12 +129,20 @@ public:
 
     AudioQuery<AudioDeviceCapabilities> probe(const DiscoveredAudioDevice& item) override
     {
+        return inspectDevice(item.direction != AudioDirection::output ? std::optional(item) : std::nullopt,
+                             item.direction != AudioDirection::input ? std::optional(item) : std::nullopt);
+    }
+    AudioQuery<AudioDeviceCapabilities> probeConfiguration(
+        const std::optional<DiscoveredAudioDevice>& input, const DiscoveredAudioDevice& output) override
+    {
+        return inspectDevice(input, output);
+    }
+    AudioQuery<AudioDeviceCapabilities> inspectDevice(const std::optional<DiscoveredAudioDevice>& input,
+                                                       const std::optional<DiscoveredAudioDevice>& output)
+    {
         if (!type_) return {{}, error_.succeeded() ? failure(AudioErrorCode::stopped, "Discovery stopped.") : error_};
-        const auto name = juce::String::fromUTF8(item.name.c_str());
-        const bool input = item.direction != AudioDirection::output;
-        const bool output = item.direction != AudioDirection::input;
-        std::unique_ptr<juce::AudioIODevice> device(type_->createDevice(output ? name : juce::String{},
-                                                                      input ? name : juce::String{}));
+        const auto name = [](const auto& item) { return item ? juce::String::fromUTF8(item->name.c_str()) : juce::String{}; };
+        std::unique_ptr<juce::AudioIODevice> device(type_->createDevice(name(output), name(input)));
         if (!device)
             return {{}, failure(AudioErrorCode::unavailable, "Device disappeared, is busy, or its driver could not initialize. Refresh and retry.")};
         if (const auto error = device->getLastError(); error.isNotEmpty())
@@ -164,7 +172,7 @@ public:
         if (kind_ == AudioBackendKind::asio)
             result.notes.push_back("JUCE ASIO initialization may allocate dummy buffers and briefly start/stop the driver; capability probing is explicit, never automatic.");
         if (kind_ == AudioBackendKind::wasapiShared)
-            result.notes.push_back("Shared-mode rates/periods reflect JUCE and the Windows mixer, not exclusive hardware guarantees.");
+            result.notes.push_back("Shared-mode rates allow Windows mixer conversion. Buffer frames select the JUCE callback block, not the host-managed hardware period.");
         if (kind_ == AudioBackendKind::wasapiExclusive)
             result.notes.push_back("Exclusive candidates do not guarantee access; Windows policy or another client may reject a future exclusive open.");
         if (result.sampleRates.empty() || result.bufferFrames.empty())
@@ -193,13 +201,6 @@ public:
         AudioStreamFormat format{device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(), request.maxFrames,
                                   device->getActiveInputChannels().countNumberOfSetBits(),
                                   device->getActiveOutputChannels().countNumberOfSetBits()};
-        if (!std::isfinite(format.sampleRate) || format.sampleRate != request.sampleRate
-            || format.bufferFrames < 1 || format.bufferFrames > format.maxFrames
-            || format.inputChannels != request.inputChannels || format.outputChannels != request.outputChannels)
-        {
-            device->close();
-            return {{}, failure(AudioErrorCode::unavailable, "Driver negotiated an unsupported rate/layout/capacity. No implicit resampling or truncation is allowed.")};
-        }
         format_ = format;
         device_ = std::move(device);
         fault_.store(false, std::memory_order_relaxed);
@@ -376,18 +377,18 @@ public:
         return {};
     }
 
-    AudioError query(AudioDeviceToken token, CapabilityCallback callback)
+    AudioError query(AudioDeviceToken token, CapabilityCallback callback, std::optional<AudioDeviceToken> input = {})
     {
         if (const auto error = check(); !error.succeeded()) return error;
         if (!callback) return failure(AudioErrorCode::invalidArgument, "A capability completion callback is required.");
         if (requests_.size() + completed_.size() >= 32)
             return failure(AudioErrorCode::queueFull, "Audio capability request queue is full; wait for pending queries.");
-        requests_.push_back({std::move(token), std::move(callback)});
+        requests_.push_back({std::move(token), std::move(callback), std::move(input)});
         triggerAsyncUpdate();
         return {};
     }
 
-    AudioQuery<AudioDeviceCapabilities> probe(const AudioDeviceToken& token)
+    AudioQuery<AudioDeviceCapabilities> probe(const AudioDeviceToken& token, const std::optional<AudioDeviceToken>& input)
     {
         if (source_->diagnostics().open)
             return {{}, failure(AudioErrorCode::invalidArgument, "Close the stream before probing capabilities; probing may initialize another driver instance.")};
@@ -399,7 +400,21 @@ public:
                                        [&](const auto& device) { return device.key == token.key; });
         if (found == inventory_.devices.end())
             return {{}, failure(AudioErrorCode::staleDevice, "The selected endpoint no longer exists.")};
-        auto result = source_->probe(*found);
+        std::optional<DiscoveredAudioDevice> inputDevice;
+        if (input)
+        {
+            if (input->backend != kind_ || input->instance != instance_ || input->generation != state_.generation)
+                return {{}, failure(AudioErrorCode::staleDevice, "Input device token is stale. Scan and inspect again.")};
+            const auto selected = std::find_if(inventory_.devices.begin(), inventory_.devices.end(),
+                                              [&](const auto& item) { return item.key == input->key; });
+            if (selected == inventory_.devices.end() || selected->direction == AudioDirection::output
+                || found->direction == AudioDirection::input)
+                return {{}, failure(AudioErrorCode::invalidArgument, "Select valid input/output endpoints.")};
+            if (kind_ == AudioBackendKind::asio && selected->key != found->key)
+                return {{}, failure(AudioErrorCode::invalidArgument, "ASIO uses one driver for both directions.")};
+            inputDevice = *selected;
+        }
+        auto result = input ? source_->probeConfiguration(inputDevice, *found) : source_->probe(*found);
         if (invalidated_.load())
             return {{}, failure(AudioErrorCode::staleDevice, "The device changed during its capability query. Refresh and retry.")};
         return result;
@@ -473,6 +488,18 @@ public:
             source_->interruptStream(AudioStreamStop::deviceLost);
             return {{}, failure(AudioErrorCode::staleDevice, "Device changed while opening; refresh and retry.")};
         }
+        if (opened.value)
+        {
+            const auto& format = *opened.value;
+            if (!std::isfinite(format.sampleRate) || format.sampleRate != request.sampleRate
+                || format.bufferFrames != request.bufferFrames || format.bufferFrames > format.maxFrames
+                || format.maxFrames != request.maxFrames || format.inputChannels != request.inputChannels
+                || format.outputChannels != request.outputChannels)
+            {
+                source_->closeStream();
+                return {{}, failure(AudioErrorCode::unavailable, "Driver changed the requested rate, buffer or channels. Stop, inspect again or configure the vendor/OS audio panel; no silent substitution is accepted.")};
+            }
+        }
         return opened;
     }
 
@@ -520,7 +547,7 @@ public:
         {
             auto request = std::move(requests_.front());
             requests_.pop_front();
-            auto result = probe(request.token);
+            auto result = probe(request.token, request.input);
             completed_.push_back({std::move(request.token), std::move(request.callback), std::move(result)});
         }
         if (pendingNotification_ || !completed_.empty() || !requests_.empty() || invalidated_.load() || refresh_ || poll_)
@@ -539,7 +566,7 @@ public:
     AudioDiscoveryInventory inventory_;
     ChangeCallback listener_;
     /** One queued, generation-checked control operation. */
-    struct Request { AudioDeviceToken token; CapabilityCallback callback; };
+    struct Request { AudioDeviceToken token; CapabilityCallback callback; std::optional<AudioDeviceToken> input; };
     /** Driver result waiting for a later client-notification phase. */
     struct Completion { AudioDeviceToken token; CapabilityCallback callback; AudioQuery<AudioDeviceCapabilities> result; };
     std::deque<Request> requests_;
@@ -572,6 +599,9 @@ AudioError JuceAudioBackend::refresh()
 }
 AudioError JuceAudioBackend::queryCapabilities(AudioDeviceToken token, CapabilityCallback callback)
 { return impl_->query(std::move(token), std::move(callback)); }
+AudioError JuceAudioBackend::queryConfigurationCapabilities(std::optional<AudioDeviceToken> input,
+    AudioDeviceToken output, CapabilityCallback callback)
+{ return impl_->query(std::move(output), std::move(callback), std::move(input)); }
 AudioError JuceAudioBackend::shutdown() { return impl_->stop(); }
 AudioQuery<AudioStreamFormat> JuceAudioBackend::openStream(const AudioStreamRequest& request) { return impl_->open(request); }
 AudioError JuceAudioBackend::startStream(IAudioRenderCallback& target)

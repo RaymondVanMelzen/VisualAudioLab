@@ -1,6 +1,6 @@
 # Visual Audio Lab
 
-C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence and tested framework boundaries. No audio devices, audio processing, DSP nodes, scripting, plugin hosting or plugin export are implemented.
+C++20 / JUCE / CMake application framework for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full UI prototype: it contains a dark desktop shell, a dockable workspace, a structural node editor, versioned `.valab` project persistence, native audio discovery abstractions and tested framework boundaries. No application audio streams, DSP nodes, scripting, plugin hosting or plugin export are implemented.
 
 ## Structure and dependencies
 
@@ -8,18 +8,24 @@ C++20 / JUCE / CMake application framework for Windows and macOS. Product and de
 |---|---|
 | `src/VisualAudioLab.Domain` | Standard C++20 workspace and structural graph values with stable node/port/connection identities; no framework dependency. |
 | `src/VisualAudioLab.Application` | Project lifecycle/store contracts, multi-patch graph/workspace commands, shared bounded undo/redo and validated settings lifecycle; Domain only. |
-| `src/VisualAudioLab.Infrastructure` | Versioned JSON project/settings adapters and local rotating text diagnostics; Application plus private JUCE core. |
+| `src/VisualAudioLab.Infrastructure` | Versioned JSON project/settings adapters, local diagnostics and native audio discovery; Application plus private JUCE core/device modules. |
 | `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, project-backed docking layout, spatially indexed canvas and lightweight node/cable views; Application and JUCE GUI. |
 | `src/VisualAudioLab.Desktop` | Native app entry point and explicit ownership/composition. |
 | `modules` | Reserved first-party module integration point; deliberately no DSP or empty processing targets. |
 | `resources` | Embedded shell limitation notice. |
-| `tests` | Application/history/graph, local-adapter, dock-layout and shell/canvas tests registered with CTest; opt-in large-graph benchmark. |
+| `tests` | Application/history/graph, persistence, audio discovery, local-adapter, dock-layout and shell/canvas tests registered with CTest; opt-in large-graph benchmark. |
 | `cmake` | Target-scoped C++20/warnings and dependency policy. |
 | `docs` | Product/design specifications and the implemented [project schema/workflows](docs/ProjectFormat.md). |
 
 No Audio or plugin target is scaffolded before it has a real responsibility. Future processing must remain independent of the desktop/device owner, per the architecture. Production layers do not depend on tests; Presentation does not include concrete persistence/logging adapters.
 
 All classes, including implementation/test helpers, have Doxygen descriptions in source. Public interfaces document ownership and failure semantics. The service layer is single-control-thread unless stated otherwise. The file logger serializes ordinary writes; it is not realtime-safe. Commands own no services: their target must outlive document history, and failed/throwing execute/undo operations must leave it unchanged. Histories default to 128 retained entries; this is a skeleton memory limit, not a product patch limit.
+
+## Audio backend abstraction
+
+Application owns `IAudioBackend`; Infrastructure implements `AsioBackend`, `WasapiExclusiveBackend`, `WasapiSharedBackend` and `CoreAudioBackend` using real JUCE discovery. The message-thread API provides asynchronous inventory/capability notifications, generation-scoped device tokens, channel/rate/buffer candidates, explicit availability errors and hot-plug invalidation. ASIO remains preferred on Windows and CoreAudio on macOS; neither fallback nor device selection is automatic. This library API is not yet wired to the shell's placeholder Audio Settings controls and does not negotiate an application stream.
+
+`VAL_ENABLE_ASIO=ON` uses the ASIO headers bundled in pinned JUCE 8.0.12; review their license and JUCE's terms before distribution. `OFF` reports ASIO disabled explicitly. Native capability probes can initialize hardware; ASIO probes may briefly start/stop its driver inside JUCE, so they are explicit and excluded from unattended tests. See [AudioBackends.md](docs/AudioBackends.md) for identity, threading, cancellation, capability limits, build configuration and qualification boundaries.
 
 ## Build
 
@@ -94,6 +100,6 @@ Local diagnostics are in the adjacent `Logs/shell.log`. Epoch-millisecond timest
 
 ## Validation and distribution limits
 
-CTest exercises history failure/branch/capacity semantics, structural graph edit/undo round trips and validation, canvas gestures/geometry/selection/cancellation, settings validation/error preservation, local-file round trips, schema/type rejection, blocked destinations, log rotation/serialization, docking-model move/visibility/reset invariants, JUCE panel ownership/navigation, disabled audio controls, menu/command registration, supported-size layout bounds and shell rendering. Windows/macOS builds and manual accessibility checks must be qualified on their actual platforms; successful Windows checks do not certify macOS.
+CTest exercises history failure/branch/capacity semantics, structural graph edit/undo round trips and validation, canvas gestures/geometry/selection/cancellation, settings validation/error preservation, local-file round trips, schema/type rejection, blocked destinations, log rotation/serialization, audio discovery/cancellation/hot-plug contracts and native enumeration, docking-model move/visibility/reset invariants, JUCE panel ownership/navigation, disabled audio controls, menu/command registration, supported-size layout bounds and shell rendering. Windows/macOS builds and manual accessibility checks must be qualified on their actual platforms; successful Windows checks do not certify macOS.
 
-JUCE's license, its bundled dependencies and any later SDKs must be reviewed before distribution. The project license remains a product decision; this skeleton does not choose one or assert that all dependencies are permissively licensed. No ASIO SDK/device or plugin modules are linked. The primary future standalone audio paths remain Windows/ASIO and macOS/CoreAudio, not enabled by this structure.
+JUCE's license, its bundled dependencies (including the ASIO headers when enabled) and any later SDKs must be reviewed before distribution. The project license remains a product decision; this skeleton does not choose one or assert that all dependencies are permissively licensed. JUCE device modules now support discovery, not a running audio engine; no plugin modules are linked. Primary standalone preferences remain Windows/ASIO and macOS/CoreAudio, with distinct WASAPI Shared/Exclusive discovery also implemented.

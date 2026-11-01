@@ -49,6 +49,11 @@ add_test(NAME Infrastructure.LocalAdapters COMMAND VisualAudioLab.Infrastructure
 add_executable(VisualAudioLab.AudioBackend.Tests AudioBackendTests.cpp)
 target_link_libraries(VisualAudioLab.AudioBackend.Tests PRIVATE
     VisualAudioLab.Infrastructure VisualAudioLab.Audio juce::juce_events val_juce_options)
+add_dependencies(VisualAudioLab.AudioBackend.Tests VisualAudioLab.AudioDiscovery.Helper)
+add_custom_command(TARGET VisualAudioLab.AudioBackend.Tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:VisualAudioLab.AudioDiscovery.Helper>"
+        "$<TARGET_FILE_DIR:VisualAudioLab.AudioBackend.Tests>/$<TARGET_FILE_NAME:VisualAudioLab.AudioDiscovery.Helper>")
 val_configure_target(VisualAudioLab.AudioBackend.Tests)
 add_test(NAME Audio.BackendContracts COMMAND VisualAudioLab.AudioBackend.Tests)
 set_tests_properties(Audio.BackendContracts PROPERTIES TIMEOUT 45)

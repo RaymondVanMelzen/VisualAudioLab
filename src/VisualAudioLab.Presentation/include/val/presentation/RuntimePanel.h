@@ -10,7 +10,7 @@ namespace val::presentation
 {
 /**
  * Message-thread runtime composition and non-modal device/transport controls.
- * Backend creation is injected by Desktop; discovery/probes/start are explicit user actions.
+ * Backend creation is injected by Desktop; discovery/probes are automatic, Start is explicit.
  * Owns engine before backend shutdown, preserves accepted audio on invalid edits, and retains
  * captures until producers quiesce. Offline preview drives the same engine without any device.
  */
@@ -27,7 +27,7 @@ public:
     [[nodiscard]] application::Result stop();
     /** Explicit offline workflow/test seam; never enumerates or opens hardware. */
     void configureOffline(int channels, double rate = 48000, int frames = 512);
-    /** Restore only hints; no device discovery, inspection or playback on launch. */
+    /** Restore hints and revalidate automatically; never start playback on launch. */
     void restoreSetup(std::optional<application::AudioSetupPreference> preference);
     [[nodiscard]] std::optional<application::AudioSetupPreference> setupPreference() const;
     [[nodiscard]] juce::String compactStatus() const;
@@ -35,7 +35,7 @@ public:
     void schedule(std::uint64_t node, std::uint16_t index, float value, double seconds);
     [[nodiscard]] bool running() const noexcept { return running_; }
     [[nodiscard]] bool ready() const { return !running_ && request().value.has_value(); }
-    [[nodiscard]] int channels() const noexcept { return outputCount_.getSelectedId() > 0 ? outputCount_.getSelectedId() : 2; }
+    [[nodiscard]] int channels() const noexcept;
     [[nodiscard]] juce::String status() const { return lastStatus_; }
     [[nodiscard]] audio::AudioEngine& engine() noexcept { return engine_; }
     std::function<void(juce::String)> onStatus;
@@ -53,6 +53,7 @@ private:
     void populateConfiguration();
     void configurationChanged();
     void updateChannelTooltips();
+    void controlPanel();
     void message(juce::String text);
     void enableControls();
     [[nodiscard]] application::AudioQuery<audio::AudioGraph> compileGraph(bool captures);
@@ -66,6 +67,7 @@ private:
     std::unique_ptr<application::IAudioBackend> backend_;
     audio::AudioEngine engine_;
     std::vector<application::AudioDeviceInfo> inputs_, outputs_;
+    std::vector<std::vector<int>> inputPorts_, outputPorts_;
     std::optional<application::AudioDeviceCapabilities> inputCaps_, outputCaps_;
     std::uint64_t probeSerial_{}, revision_{};
     domain::Graph accepted_;
@@ -74,15 +76,17 @@ private:
     std::map<std::uint64_t, std::shared_ptr<audio::SignalCaptureBuffer>> captures_;
     bool running_{}, offline_{}, probing_{}, scanning_{};
     std::optional<application::AudioSetupPreference> preference_;
+    std::optional<application::AudioSetupPreference> endpointHint_;
     double rate_{48000};
     int block_{512}, width_{2};
     std::array<float, 4096 * 32> offlineOutput_{};
     std::array<float*, 32> offlinePointers_{};
     juce::ComboBox api_, input_, output_, rateChoice_, buffer_, inputCount_, outputCount_;
-    juce::TextButton scan_{"Scan devices"}, inspect_{"Detect rates, buffers & channels"}, start_{"Start"}, stop_{"Stop"}, done_{"Done"};
+    juce::TextButton scan_{"Refresh / Retry"}, panel_{"Control Panel"}, start_{"Start"}, stop_{"Stop"}, done_{"Done"};
+    juce::ToggleButton advanced_{"Advanced ports"};
     std::array<juce::Label, 7> labels_;
     juce::Label notice_, state_;
-    juce::String lastStatus_{"Stopped. Choose an API, scan, select devices, then inspect capabilities. No device opens automatically."};
+    juce::String lastStatus_{"Stopped. Discovering devices; choose endpoints and ports. Start is explicit."};
     juce::String graphWarning_;
     int ticks_{};
 };

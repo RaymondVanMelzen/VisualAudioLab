@@ -73,6 +73,7 @@ public:
     AudioQuery<AudioStreamFormat> openStream(const AudioStreamRequest& request) override
     {
         ++opens;
+        openedRequest = request;
         return {AudioStreamFormat{request.sampleRate, request.bufferFrames, request.maxFrames, request.inputChannels, request.outputChannels}, {}};
     }
     AudioError startStream(IAudioRenderCallback& value) override { target = &value; return {}; }
@@ -80,15 +81,23 @@ public:
     AudioError closeStream() override { ++closes; return {}; }
     AudioQuery<AudioStreamDiagnostics> streamDiagnostics() const override { return {AudioStreamDiagnostics{target != nullptr, target != nullptr, {}, 64, {}}, {}}; }
     AudioError shutdown() override { target = nullptr; changed = {}; return {}; }
+    AudioError showControlPanel(AudioDeviceToken token, ControlPanelCallback completed) override
+    {
+        ++panels; panelToken = std::move(token);
+        completed(panelError);
+        return {};
+    }
     void unplug() { ++inventory.generation; inventory.devices.clear(); if (changed) changed(inventory); }
     ChangeCallback changed;
     AudioBackendSnapshot inventory;
     IAudioRenderCallback* target{};
-    int scans{}, probes{}, opens{}, closes{};
+    int scans{}, probes{}, opens{}, closes{}, panels{};
+    AudioStreamRequest openedRequest;
+    AudioDeviceToken panelToken;
     AudioBackendKind backend_;
     bool defer{}, withInput{};
     CapabilityCallback pending;
-    AudioError probeError, requestError;
+    AudioError probeError, requestError, panelError;
     std::optional<AudioDeviceToken> selectedInput;
     AudioDeviceToken selectedOutput;
     AudioDeviceCapabilities capabilities{{}, {"Left", "Right"}, {48000}, {128}, 128, {}, {}};
@@ -136,7 +145,7 @@ void screenshot(juce::Component& component, juce::String name, juce::Rectangle<i
 
 void runRuntimeIntegrationTests()
 {
-    require(supportedAudioBackends(AudioPlatform::windows) == std::vector{AudioBackendKind::asio, AudioBackendKind::wasapiExclusive, AudioBackendKind::wasapiShared}
+    require(supportedAudioBackends(AudioPlatform::windows) == std::vector{AudioBackendKind::asio, AudioBackendKind::wasapiShared, AudioBackendKind::wasapiExclusive, AudioBackendKind::directSound}
             && supportedAudioBackends(AudioPlatform::macOS) == std::vector{AudioBackendKind::coreAudio}
             && supportedAudioBackends(AudioPlatform::other).empty(), "Backend platform policy excludes foreign APIs without fallback.");
 #if JUCE_WINDOWS
@@ -166,38 +175,37 @@ void runRuntimeIntegrationTests()
         setup.setVisible(true);
         auto* api = control<juce::ComboBox>(setup, "Backend");
 #if JUCE_WINDOWS
-        require(api->indexOfItemId(4) < 0 && api->getNumItems() == 4, "Windows UI never offers CoreAudio.");
+        require(api->indexOfItemId(4) < 0 && api->getNumItems() == 5 && api->indexOfItemId(5) >= 0
+                && api->indexOfItemId(6) >= 0, "Windows UI offers DirectSound, not CoreAudio or fictional MME; offline has a distinct ID.");
 #elif JUCE_MAC
         require(api->indexOfItemId(1) < 0 && api->indexOfItemId(3) < 0 && api->getNumItems() == 2, "macOS UI offers only CoreAudio and offline.");
 #endif
         const AudioSetupPreference preference{kind, "Test output (not hardware)", "Test output (not hardware)", 48000, 128, 2, 2};
         auto saved = preference;
         if (kind != AudioBackendKind::asio) saved.inputName = "Test input (not hardware)";
+        saved.inputChannelIndices = {0, 1}; saved.outputChannelIndices = {0, 1};
+        require(creations == 1 && device->scans == 1 && device->probes == 0 && device->opens == 0,
+                "Construction automatically scans only the selected API; unselected endpoints are not probed or opened.");
         setup.restoreSetup(saved);
-        require(creations == 0 && !setup.running() && !setup.ready(), "Restoring setup hints does not create, probe or start hardware.");
-        auto* scan = control<juce::TextButton>(setup, "Scan devices");
-        auto* inspect = control<juce::TextButton>(setup, "Detect rates, buffers & channels");
+        require(device->scans == 1 && device->probes == 1 && setup.ready() && !setup.running() && device->opens == 0,
+                "Restoring exact device hints automatically scans and revalidates, never starts transport.");
+        auto* scan = control<juce::TextButton>(setup, "Refresh / Retry");
+        require(!control<juce::TextButton>(setup, "Detect rates, buffers & channels"), "Detect is removed entirely.");
         auto* input = control<juce::ComboBox>(setup, "Input device");
         auto* output = control<juce::ComboBox>(setup, "Output device");
         auto* rate = control<juce::ComboBox>(setup, "Sample rate");
         auto* buffer = control<juce::ComboBox>(setup, "Buffer frames");
-        auto* outCount = control<juce::ComboBox>(setup, "Output channels enabled");
-        auto* inCount = control<juce::ComboBox>(setup, "Input channels enabled");
+        auto* outCount = control<juce::ComboBox>(setup, "Output port");
+        auto* inCount = control<juce::ComboBox>(setup, "Input port");
         auto* start = control<juce::TextButton>(setup, "Start");
-        require(!buffer->isEnabled() && !start->isEnabled(), "Uninspected capabilities cannot masquerade as supported controls.");
-        clickButton(*scan);
-        require(output->getSelectedId() == 1 && input->getSelectedId() == 2 && device->probes == 0,
-                "Explicit scan restores exact saved endpoints without capability probing.");
+        auto* panel = control<juce::TextButton>(setup, "Control Panel");
+        require(buffer->isEnabled() && start->isEnabled() && !panel->isEnabled(),
+                "Automatically inspected candidates enable configuration; unreported driver panels remain disabled.");
         output->setSelectedId(0, juce::dontSendNotification);
         output->setSelectedId(1, juce::sendNotificationSync);
         input->setSelectedId(2, juce::sendNotificationSync);
-        require(setup.status().contains("not loaded") && setup.compactStatus().contains("load device options")
-                && buffer->getTextWhenNothingSelected() == "Click Detect above" && !buffer->isEnabled()
-                && inspect->isEnabled() && inspect->getTooltip().contains("Selecting devices does not load"),
-                "Selection shows pre-inspection instruction and an enabled action, not a driver failure or empty supported list.");
-        require(inspect->findColour(juce::TextButton::buttonColourId) == ShellTheme::accent()
-                && inspect->findColour(juce::TextButton::textColourOffId) == ShellTheme::background(),
-                "Detection uses contrasting dark text on the highlighted button.");
+        require(setup.ready() && device->probes >= 2 && device->opens == 0,
+                "Endpoint selection automatically reloads ports; never opens an application stream.");
         juce::Label* state{};
         for (auto* child : setup.getChildren())
             if (child->getName() == "Audio setup state") state = dynamic_cast<juce::Label*>(child);
@@ -205,29 +213,22 @@ void runRuntimeIntegrationTests()
         for (const int width : {640, 800, 1560})
         {
             setup.setSize(width, 300);
-            require(setup.getLocalBounds().contains(inspect->getBounds()) && inspect->getWidth() >= 270
-                    && inspect->getWidth() <= 280 && inspect->getHeight() >= 30 && inspect->isVisible()
-                    && inspect->getRight() < 323 && inspect->getY() >= scan->getBottom()
-                    && inspect->getName() == "Detect rates, buffers & channels"
-                    && setup.getComponentAt(inspect->getBounds().getCentre()) == inspect
-                    && state->getBottom() <= 100 && state->getY() < buffer->getY(),
-                    "Detection fits the screenshot's 323px left crop as a named, hit-testable button on its own row; state precedes choices. "
-                    + inspect->getBounds().toString().toStdString() + "; state: " + state->getBounds().toString().toStdString()
-                    + "; visible: " + std::to_string(inspect->isVisible()) + "; hit: "
-                    + std::to_string(setup.getComponentAt(inspect->getBounds().getCentre()) == inspect));
+            require(setup.getLocalBounds().contains(scan->getBounds()) && setup.getLocalBounds().contains(panel->getBounds())
+                    && state->getY() < buffer->getY() && scan->getWidth() >= 100,
+                    "Compact operation controls and persistent status fit the occasional setup dock.");
         }
         setup.setSize(800, 300);
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-before.png");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-narrow.png", {0, 0, 323, 101});
-        clickButton(*inspect);
-        require(device->probes == 1 && device->selectedInput && !device->opens
-                && rate->getNumItems() == 1 && buffer->getNumItems() == 1 && inCount->getNumItems() == 3
-                && setup.ready() && !setup.running(), "One combined probe restores revalidated settings, including duplex ASIO, with explicit transport.");
-        require(outCount->getItemText(0) == "1 channel: 1: Left"
-                && outCount->getText() == "2 channels: 1: Left, 2: Right"
-                && inCount->getItemText(0) == "0 channels (input disabled)"
-                && inCount->getText() == "2 channels: 1: In left, 2: In right",
-                "Named choices show counts and ordered driver channel identities; saved numeric counts restore independently of labels.");
+        require(device->selectedInput && !device->opens && inCount->getNumItems() == 4,
+                "Combined configuration probe reports the actual pair, including same-driver ASIO.");
+        require(outCount->getItemText(0) == "Mono: 1: Left"
+                && outCount->getText() == "Stereo: 1: Left / 2: Right"
+                && inCount->getItemText(0) == "None (input disabled)"
+                && inCount->getText() == "Stereo: 1: In left / 2: In right",
+                "Basic choices expose single driver channels and contiguous stereo pairs with verbatim names, not first-N counts: "
+                    + outCount->getItemText(0).toStdString() + "; " + outCount->getText().toStdString()
+                    + "; " + inCount->getText().toStdString());
         if (kind == AudioBackendKind::asio)
         {
             require(input->getNumItems() == 2 && *device->selectedInput == device->selectedOutput,
@@ -237,80 +238,161 @@ void runRuntimeIntegrationTests()
             input->setSelectedId(2, juce::sendNotificationSync);
         }
         device->defer = true;
-        clickButton(*inspect);
+        input->setSelectedId(1, juce::sendNotificationSync);
         require(!rate->isEnabled() && !start->isEnabled() && setup.compactStatus().contains("inspecting"),
                 "Pending probe clears old choices and disables Start.");
-        require(state->getText().contains("Loading device options") && !inspect->isEnabled(),
-                "Waiting on the driver is explicit above the controls; duplicate loads are disabled.");
+        require(state->getText().contains("Loading device options") && input->isEnabled() && !scan->isEnabled(),
+                "Waiting is explicit, selections remain cancellable and duplicate refresh is disabled.");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-pending.png");
         const auto pendingProbes = device->probes;
-        clickButton(*inspect);
+        clickButton(*scan);
         require(device->probes == pendingProbes && device->opens == 0 && !setup.running(),
                 "Disabled detection does not queue duplicate vendor calls or start audio while loading.");
-        device->pending({{}, {AudioErrorCode::unavailable, "Injected busy driver; retry Detect."}});
+        device->pending({{}, {AudioErrorCode::unavailable, "Injected busy driver; retry."}});
         device->pending = {};
-        require(rate->getNumItems() == 0 && !buffer->isEnabled() && inspect->isEnabled()
+        require(rate->getNumItems() == 0 && !buffer->isEnabled() && scan->isEnabled()
                 && setup.status().contains("busy driver"), "Failed probe shows actionable error with retry, never stale success.");
         require(state->getText().contains("Device options failed") && state->getTooltip().contains("busy driver"),
                 "Driver errors remain visible above fields with full diagnostic tooltip.");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-failed.png");
         device->defer = false;
         device->requestError = {AudioErrorCode::unavailable, "Injected stale device: scan again."};
-        clickButton(*inspect);
+        clickButton(*scan);
         require(setup.status().contains("request rejected") && setup.status().contains("scan again")
-                && inspect->isEnabled() && !start->isEnabled() && buffer->getNumItems() == 0,
+                && scan->isEnabled() && !start->isEnabled() && buffer->getNumItems() == 0,
                 "Immediate query rejection is distinct from a failed completion and leaves a visible retry action.");
         device->requestError = {};
         device->capabilities.sampleRates.clear(); device->capabilities.bufferFrames.clear();
-        inspect->onClick();
+        scan->onClick();
         require(!rate->isEnabled() && !buffer->isEnabled() && !setup.ready() && setup.status().contains("unreported"),
                 "Unknown rate/period lists stay unknown, not fabricated defaults or host-managed claims.");
         device->capabilities.sampleRates = {48000}; device->capabilities.bufferFrames = {128};
-        inspect->onClick();
         scan->onClick();
-        require(output->getSelectedId() == 1 && rate->getNumItems() == 0 && !setup.ready(),
-                "Refresh keeps device-name hints but invalidates capabilities until explicit inspection.");
-        inspect->onClick();
-        require(setup.setupPreference() == saved && setup.ready(), "Reinspection restores machine-local values without silently changing them.");
+        require(output->getSelectedId() == 1 && rate->getNumItems() == 1 && setup.ready(),
+                "Refresh keeps exact name hints and automatically revalidates capabilities.");
+        require(setup.setupPreference()->inputName.empty() && setup.ready(),
+                "Retry preserves the user's output-only endpoint choice instead of resurrecting saved duplex input.");
+        input->setSelectedId(2, juce::sendNotificationSync);
+        require(setup.setupPreference() == saved && setup.ready(),
+                "Reselecting the saved input automatically restores exact revalidated settings.");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-ready.png");
         device->capabilities.inputChannels = {"Test analog", "Test virtual A", "Test virtual B",
             "Test virtual C", "Test loopback A", "Test loopback B", ""};
         device->capabilities.outputChannels = {"Test main left", "Test main right", "Test virtual out"};
-        clickButton(*inspect);
+        clickButton(*scan);
         outCount->setSelectedId(1, juce::sendNotificationSync);
-        inCount->setSelectedId(8, juce::sendNotificationSync);
+        inCount->setSelectedId(9, juce::sendNotificationSync);
         require(!setup.ready() && !start->isEnabled() && setup.status().contains("must match")
-                && inCount->getText().startsWith("7 channels: 1: Test analog")
-                && inCount->getText().contains("7: name not reported")
-                && inCount->getTooltip().contains("Individual port selection/remapping is not supported")
-                && inCount->getTooltip().contains("Test loopback B"),
-                "Seven inputs means the first seven channels, not input port seven; mismatched widths fail visibly and unnamed metadata stays unknown.");
+                && inCount->getText() == "Stereo: 1: Test analog / 2: Test virtual A",
+                "Mono output and stereo input fail clearly; the engine does not invent width conversion.");
         screenshot(setup, "desktop-channel-counts-" + juce::String(static_cast<int>(kind)) + "-mismatch.png");
-        outCount->setSelectedId(2, juce::sendNotificationSync);
-        inCount->setSelectedId(3, juce::sendNotificationSync);
+        outCount->setSelectedId(5, juce::sendNotificationSync);
+        inCount->setSelectedId(13, juce::sendNotificationSync);
         require(setup.ready() && setup.setupPreference()->inputChannels == 2
                 && setup.setupPreference()->outputChannels == 2 && device->opens == 0
-                && outCount->getText() == "2 channels: 1: Test main left, 2: Test main right",
-                "Count IDs retain exact stream/preference semantics; selecting named channels never opens hardware.");
+                && outCount->getText() == "Stereo: 2: Test main right / 3: Test virtual out"
+                && setup.setupPreference()->inputChannelIndices == std::vector<int>{4, 5}
+                && setup.setupPreference()->outputChannelIndices == std::vector<int>{1, 2},
+                "Later contiguous pairs preserve exact driver identities independently of bus width.");
+        require(workspace.createNode({0, 0}, "Input", {{"audio.type", std::string("Input")}}).succeeded,
+                "Create real input node for the selected port bus.");
+        const auto inputNode = workspace.lastCreatedNode();
+        require(workspace.createNode({180, 0}, "Output", {{"audio.type", std::string("Output")}}).succeeded,
+                "Create real output node for the selected port bus.");
+        require(workspace.connect({inputNode, domain::Port::output}, {workspace.lastCreatedNode(), domain::Port::input}).succeeded,
+                "Wire the actual engine graph before explicit native Start.");
+        const auto started = setup.start();
+        require(started.succeeded && device->opens == 1
+                && device->openedRequest.inputChannelIndices == std::vector<int>{4, 5}
+                && device->openedRequest.outputChannelIndices == std::vector<int>{1, 2},
+                "Only explicit Start opens a stream and forwards the exact selected ports, not first N: " + started.error);
+        require(setup.stop().succeeded, "Explicit Stop quiesces the selected stream.");
         screenshot(setup, "desktop-channel-counts-" + juce::String(static_cast<int>(kind)) + "-ready.png");
         inCount->setSelectedId(1, juce::sendNotificationSync);
         require(setup.ready() && setup.setupPreference()->inputChannels == 0
                 && setup.setupPreference()->inputName.empty()
-                && inCount->getText() == "0 channels (input disabled)",
+                && inCount->getText() == "None (input disabled)",
                 "Zero disables native capture without pretending it selects input port zero.");
+        device->capabilities.hasControlPanel = true;
+        scan->onClick();
+        require(panel->isEnabled(), "Driver-reported Control Panel support enables its action.");
+        clickButton(*panel);
+        require(device->panels == 1 && device->panelToken == device->selectedOutput && !setup.running()
+                && device->opens == 1, "Control Panel targets the chosen driver and revalidates without starting audio.");
+        device->panelError = {AudioErrorCode::unavailable, "Injected driver panel failure"};
+        clickButton(*panel);
+        require(setup.status().contains("panel failure") && !setup.running() && device->opens == 1,
+                "Control Panel failure remains visible without opening audio or silently changing backend.");
+        device->panelError = {};
+        device->defer = true;
+        input->setSelectedId(1, juce::dontSendNotification);
+        input->setSelectedId(2, juce::sendNotificationSync);
+        auto oldCompletion = std::move(device->pending);
+        input->setSelectedId(1, juce::sendNotificationSync);
+        auto newCompletion = std::move(device->pending);
+        oldCompletion({{}, {AudioErrorCode::unavailable, "Obsolete selection error"}});
+        require(setup.compactStatus().contains("inspecting") && !setup.status().contains("Obsolete"),
+                "Late selection results cannot overwrite a newer pending selection.");
+        newCompletion({device->capabilities, {}});
+        require(setup.ready() && !setup.running(), "Latest selection completes without automatic transport.");
+        juce::ToggleButton* advanced{};
+        for (auto* child : setup.getChildren())
+            if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) advanced = toggle;
+        require(advanced && !advanced->getToggleState() && outCount->getNumItems() == 5,
+                "Basic setup contains only mono ports and contiguous stereo pairs.");
+        advanced->setToggleState(true, juce::dontSendNotification); advanced->onClick();
+        outCount->setSelectedId(6, juce::sendNotificationSync);
+        inCount->setSelectedId(1, juce::dontSendNotification);
+        require(setup.ready() && setup.setupPreference()->outputChannelIndices == std::vector<int>{0, 1, 2}
+                && setup.channels() == 3, "Advanced exposes genuine wider contiguous channel groups, not arbitrary mapping.");
+        advanced->setToggleState(false, juce::dontSendNotification); advanced->onClick();
+        require(!setup.ready() && outCount->getSelectedId() == 0,
+                "Hiding an advanced selection never silently substitutes mono or stereo ports.");
         device->inventory.devices.clear(); device->changed(device->inventory);
         require(!setup.ready() && !output->isEnabled() && setup.status().contains("No output"),
                 "Empty inventories are truthful and actionable.");
         setup.setLookAndFeel(nullptr);
         juce::ignoreUnused(outCount);
     }
+    if (!testedBackends.empty())
+    {
+        WorkspaceService workspace;
+        VisualizationSession observations;
+        UiBackend* device{};
+        auto setup = std::make_unique<RuntimePanel>(workspace, observations, [&](AudioBackendKind kind) -> std::unique_ptr<IAudioBackend>
+        {
+            auto backend = std::make_unique<UiBackend>(kind);
+            backend->capabilities.outputChannels = {"Analog 1", "Analog 2", "Loopback 1", "Loopback 2"};
+            device = backend.get();
+            return backend;
+        });
+        auto legacy = AudioSetupPreference{testedBackends.front(), "", "Test output (not hardware)", 48000, 128, 0, 4};
+        setup->restoreSetup(legacy);
+        require(setup->ready() && !setup->running() && device->opens == 0
+                && setup->setupPreference()->outputChannelIndices == std::vector<int>{0, 1, 2, 3},
+                "Restored wider count-only hints explicitly migrate to first-N masks in Advanced, without playback: "
+                    + setup->status().toStdString() + "; port: "
+                    + control<juce::ComboBox>(*setup, "Output port")->getText().toStdString());
+        auto missingPorts = legacy;
+        missingPorts.outputChannels = 2; missingPorts.outputChannelIndices = {8, 9};
+        setup->restoreSetup(missingPorts);
+        require(!setup->ready() && device->opens == 0
+                && control<juce::ComboBox>(*setup, "Output port")->getSelectedId() == 0,
+                "Unavailable saved channel identities remain unselected, never replaced by the first two channels.");
+        missingPorts.outputName = "Missing saved driver";
+        setup->restoreSetup(missingPorts);
+        require(!setup->ready() && device->probes == 0 && device->opens == 0
+                && control<juce::ComboBox>(*setup, "Output device")->getSelectedId() == 0,
+                "Missing device-name hints never select a replacement endpoint or auto-start.");
+    }
     {
         WorkspaceService legacy;
         VisualizationSession observations;
-        RuntimePanel panel(legacy, observations);
+        auto panelOwner = std::make_unique<RuntimePanel>(legacy, observations);
+        auto& panel = *panelOwner;
         panel.configureOffline(1);
-        require(control<juce::ComboBox>(panel, "Output channels enabled")->getText() == "1 channel: preview bus 1"
-                && control<juce::ComboBox>(panel, "Input channels enabled")->getText() == "0 channels (input disabled)",
+        require(control<juce::ComboBox>(panel, "Output port")->getText() == "1 channel: preview bus 1"
+                && control<juce::ComboBox>(panel, "Input port")->getText() == "0 channels (input disabled)",
                 "Offline channel counts refer to a preview bus, never invented hardware labels.");
         require(!legacy.createNode({0, 0}, "Invalid", {{"audio.gain", std::numeric_limits<double>::quiet_NaN()}}).succeeded
                 && legacy.graph().nodes.empty() && !legacy.canUndo(), "Invalid initial metadata never creates a partial module/history edit.");
@@ -335,22 +417,24 @@ void runRuntimeIntegrationTests()
         require(std::abs(samples.back() - 0.5f) < 0.0001f && panel.stop().succeeded, "Undo restores legacy gain in live processing.");
     }
     application::WorkspaceService service;
-    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("val-ui-integration", "", false);
+    const auto directory = juce::File::getCurrentWorkingDirectory().getNonexistentChildFile("val-ui-integration", "", false);
     require(directory.createDirectory().wasOk(), "Create isolated persistence fixture.");
     infrastructure::LocalProjectStore store(std::filesystem::path(directory.getChildFile("recent.json").getFullPathName().toWideCharPointer()));
     application::ProjectSession project(service, store);
     UiBackend* mock{};
     int creations{};
-    MainComponent shell(service, &project, [&](AudioBackendKind) -> std::unique_ptr<IAudioBackend>
+    MainComponent shell(service, &project, [&](AudioBackendKind kind) -> std::unique_ptr<IAudioBackend>
     {
-        ++creations; auto backend = std::make_unique<UiBackend>(); mock = backend.get(); return backend;
+        ++creations; auto backend = std::make_unique<UiBackend>(kind); mock = backend.get(); return backend;
     });
     shell.setSize(1600, 1000);
     juce::DocumentWindow window("Desktop integration validation - no hardware", juce::Colours::black, juce::DocumentWindow::allButtons);
     window.setContentNonOwned(&shell, false); window.centreWithSize(1600, 1000); window.setVisible(true);
-    require(creations == 0, "Opening desktop never constructs/probes/opens a native backend.");
+    require(creations == 1 && mock->scans == 1 && mock->probes == 0 && mock->opens == 0,
+            "Opening desktop automatically enumerates the selected API, without probing unselected endpoints or opening audio.");
     auto& runtime = shell.runtime();
     runtime.configureOffline(1);
+    mock = nullptr;
     shell.insertModule("Script"); const auto script = service.lastCreatedNode();
     shell.insertModule("Gain"); const auto gain = service.lastCreatedNode();
     shell.insertModule("Oscilloscope"); const auto analyzer = service.lastCreatedNode();
@@ -370,7 +454,7 @@ void runRuntimeIntegrationTests()
     shell.dockWorkspace().showPanel(PanelId::audioSettings);
     const auto path = std::filesystem::path(directory.getChildFile("script-fx.valab").getFullPathName().toWideCharPointer());
     require(shell.saveProjectTo(path).succeeded, "Integrated executable source/FX/analysis metadata saves through File workflow.");
-    require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && runtime.running() && creations == 0,
+    require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && runtime.running() && creations == 1,
             "Explicit desktop F5 command starts real offline engine with zero device interaction.");
     std::uint64_t initialRevision{};
     std::uint64_t beforeScheduled{};
@@ -476,34 +560,31 @@ void runRuntimeIntegrationTests()
 #else
             api->setSelectedId(3, juce::sendNotificationSync);
 #endif
-            auto* scan = control<juce::TextButton>(runtime, "Scan devices");
-            auto* inspect = control<juce::TextButton>(runtime, "Detect rates, buffers & channels");
-            require(scan && inspect && mock == nullptr, "Backend switching alone does not probe drivers.");
-            clickButton(*scan);
+            auto* scan = control<juce::TextButton>(runtime, "Refresh / Retry");
+            require(scan && mock, "Backend switching automatically creates and scans the chosen API.");
             require(mock && mock->scans == 1 && mock->probes == 0 && mock->opens == 0, "Scan discovers without capability probing or stream open.");
             control<juce::ComboBox>(runtime, "Output device")->setSelectedId(1, juce::sendNotificationSync);
-            clickButton(*inspect);
-            require(mock->probes == 1 && mock->opens == 0, "Inspect explicitly queries the selected device, not a fake device list.");
+            require(mock->probes == 1 && mock->opens == 0, "Endpoint selection automatically inspects, never opens.");
+            control<juce::ComboBox>(runtime, "Sample rate")->setSelectedId(0, juce::dontSendNotification);
             require(!runtime.start().succeeded && mock->opens == 0, "Unselected sample rate/buffer/channel configuration never silently falls back or opens hardware.");
             control<juce::ComboBox>(runtime, "Sample rate")->setSelectedId(1, juce::dontSendNotification);
             control<juce::ComboBox>(runtime, "Buffer frames")->setSelectedId(1, juce::dontSendNotification);
-            control<juce::ComboBox>(runtime, "Output channels enabled")->setSelectedId(1, juce::dontSendNotification);
+            control<juce::ComboBox>(runtime, "Output port")->setSelectedId(1, juce::dontSendNotification);
             clickButton(*scan);
-            clickButton(*inspect);
             require(runtime.getWidth() >= 640 && control<juce::ComboBox>(runtime, "Output device")->getWidth() >= 200,
                     "Opening an initially hidden setup dock sizes controls to its actual area without requiring a window resize: runtime "
                     + std::to_string(runtime.getWidth()) + ", output control "
                     + std::to_string(control<juce::ComboBox>(runtime, "Output device")->getWidth()) + ".");
             auto* viewport = runtime.findParentComponentOfClass<juce::Viewport>();
-            require(viewport && runtime.isShowing() && inspect->isShowing()
-                    && viewport->getViewArea().contains(inspect->getBounds())
-                    && viewport->getViewArea().contains(juce::Rectangle<int>(8, 72, 276, 26)),
-                    "Opening the real setup dock reveals the entire detection button and the left part of status without resizing or horizontal scrolling: "
+            require(viewport && runtime.isShowing() && scan->isShowing()
+                    && viewport->getViewArea().contains(scan->getBounds())
+                    && viewport->getViewArea().contains(juce::Rectangle<int>(8, 60, 276, 20)),
+                    "Opening the real setup dock reveals operation controls and status without resizing or horizontal scrolling: "
                     + (viewport ? viewport->getViewArea().toString().toStdString() : "no viewport")
                     + "; showing: " + std::to_string(runtime.isShowing()));
-            require(inspect->getAccessibilityHandler()
-                    && inspect->getAccessibilityHandler()->getTitle() == "Detect rates, buffers & channels",
-                    "The visible peer exposes the same detection purpose to accessibility as the button's text and title.");
+            require(scan->getAccessibilityHandler()
+                    && scan->getAccessibilityHandler()->getTitle() == "Refresh / Retry",
+                    "The visible peer exposes the optional retry action to accessibility.");
             screenshot(*viewport, "desktop-options-real-dock.png");
             screenshot(runtime, "desktop-integration-device-settings.png");
             screenshot(shell, "desktop-review-audio-setup.png");

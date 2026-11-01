@@ -65,13 +65,13 @@ The callback uses a monotonic nanosecond clock (`steady_clock` in production). C
 
 `IAudioBackend` now exposes explicit `openStream`, `startStream`, `stopStream`, `closeStream` and `streamDiagnostics` methods using standard Application values and a borrowed `IAudioRenderCallback`.
 
-1. Enumerate and select current tokens for input/output. Specify rate, desired buffer frames, maximum callback frames and channel counts; no default stream is opened implicitly.
+1. Enumerate and select current tokens for input/output. Specify rate, desired buffer frames, maximum callback frames, channel widths and ascending, unique driver-channel index vectors matching those widths; no default stream is opened implicitly.
 2. `AudioEngine::start()` opens the native stream **without** an application render callback, receives actual negotiated format and prepares a graph for it.
 3. If graph preparation fails, the opened device is closed. Only after preparation succeeds does explicit start attach the render target. Start failure stops/closes and reclaims the prepared graph.
 4. Changes publish complete plans or bounded gain messages. A rate/layout/capacity change requires explicit stop/reprepare/restart, not callback allocation or conversion.
 5. `stop()` first disables rendering, then stops/quiesces callbacks and closes the device before reclaiming plans/nodes. Native shutdown follows the same order. No native handle or borrowed callback target outlives quiescence.
 
-Native open validates channel availability and exact rate/layout. The driver may negotiate a different nominal period if it remains within the explicitly declared capacity; the actual period is returned. Unsupported negotiation fails instead of silently resampling/truncating. ASIO input/output must select the same driver. Capability probing is rejected while a stream is open, avoiding a second temporary driver initialization.
+Native open validates channel availability and exact rate, period, widths and active channel masks. Driver substitution fails instead of silently resampling/truncating or selecting the first N channels. ASIO input/output must select the same driver. Capability probing is rejected while a stream is open, avoiding a second temporary driver initialization. The engine still requires zero input channels or the same input/output width; Phase 1 port selection does not add mono-to-stereo routing.
 
 The native adapter silences when no render target exists or a native fault is latched. Native error/stopped callbacks only set lock-free flags and notify the renderer through its atomic-only interruption method; they do not allocate error strings, log or dispatch UI. Native list invalidation closes a running/opened stream on the control thread. Conservative ASIO PnP invalidation can also stop on an unrelated device-interface change; this favors safety over automatic continuation. Polling closes a faulted stream on the control thread. Restart/reselection is explicit; there is no automatic new output route.
 

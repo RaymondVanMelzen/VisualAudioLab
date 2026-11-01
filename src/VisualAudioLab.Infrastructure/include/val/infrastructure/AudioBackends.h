@@ -4,6 +4,14 @@
 
 namespace val::infrastructure
 {
+/** Adapter-local process seam for deterministic isolation tests; not user preferences. */
+struct AudioDiscoveryHelperOptions
+{
+    std::string executable, workingDirectory;
+    std::vector<std::string> arguments;
+    int timeoutMilliseconds{15000};
+};
+
 /** Shared JUCE message-thread scheduling, tokens, cancellation and native discovery adapter. */
 class JuceAudioBackend : public application::IAudioBackend
 {
@@ -25,10 +33,12 @@ public:
     [[nodiscard]] application::AudioError closeStream() override;
     [[nodiscard]] application::AudioQuery<application::AudioStreamDiagnostics> streamDiagnostics() const override;
     [[nodiscard]] application::AudioError shutdown() override;
+    [[nodiscard]] application::AudioError showControlPanel(application::AudioDeviceToken, ControlPanelCallback) override;
 
 protected:
     /** Null discovery selects the real platform source; non-null injects an isolated test source. */
-    JuceAudioBackend(application::AudioBackendKind kind, std::unique_ptr<IAudioDeviceDiscovery> discovery);
+    JuceAudioBackend(application::AudioBackendKind kind, std::unique_ptr<IAudioDeviceDiscovery> discovery,
+                    AudioDiscoveryHelperOptions helper = {});
 
 private:
     class Impl;
@@ -53,7 +63,7 @@ public:
 class WasapiSharedBackend final : public JuceAudioBackend
 {
 public:
-    explicit WasapiSharedBackend(std::unique_ptr<IAudioDeviceDiscovery> discovery = {});
+    explicit WasapiSharedBackend(std::unique_ptr<IAudioDeviceDiscovery> discovery = {}, AudioDiscoveryHelperOptions helper = {});
 };
 
 /** Native macOS CoreAudio discovery; explicitly unsupported on other platforms. */
@@ -62,6 +72,15 @@ class CoreAudioBackend final : public JuceAudioBackend
 public:
     explicit CoreAudioBackend(std::unique_ptr<IAudioDeviceDiscovery> discovery = {});
 };
+
+class DirectSoundBackend final : public JuceAudioBackend
+{
+public:
+    explicit DirectSoundBackend(std::unique_ptr<IAudioDeviceDiscovery> discovery = {});
+};
+
+/** Private desktop helper protocol. Runs native discovery on the helper's JUCE message thread. */
+[[nodiscard]] std::string runAudioDiscoveryHelper(const std::string& request);
 
 /** Preferred API only: ASIO on Windows, CoreAudio on macOS, with no automatic fallback/device choice. */
 [[nodiscard]] std::unique_ptr<application::IAudioBackend> createPreferredAudioBackend();

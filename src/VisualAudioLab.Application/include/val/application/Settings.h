@@ -13,6 +13,7 @@ struct AudioSetupPreference final
     std::string inputName, outputName;
     double sampleRate{};
     int bufferFrames{}, inputChannels{}, outputChannels{};
+    std::vector<int> inputChannelIndices, outputChannelIndices;
     bool operator==(const AudioSetupPreference&) const = default;
 };
 
@@ -46,7 +47,7 @@ struct SettingsLoadResult final
     if (settings.audioSetup)
     {
         const auto& audio = *settings.audioSetup;
-        if (audio.backend < AudioBackendKind::asio || audio.backend > AudioBackendKind::coreAudio
+        if (audio.backend < AudioBackendKind::asio || audio.backend > AudioBackendKind::directSound
             || audio.outputName.empty() || audio.outputName.size() > 4096 || audio.inputName.size() > 4096
             || !std::isfinite(audio.sampleRate) || audio.sampleRate < 8000 || audio.sampleRate > 384000
             || audio.bufferFrames < 1 || audio.bufferFrames > 4096 || audio.inputChannels < 0
@@ -55,6 +56,9 @@ struct SettingsLoadResult final
             || (audio.inputChannels > 0) != !audio.inputName.empty()
             || (audio.backend == AudioBackendKind::asio && !audio.inputName.empty() && audio.inputName != audio.outputName))
             return Result::failure("Audio setup preferences have invalid backend, device names, rate, buffer or channel counts.");
+        if ((!audio.inputChannelIndices.empty() && !validAudioChannelSelection(audio.inputChannelIndices, audio.inputChannels))
+            || (!audio.outputChannelIndices.empty() && !validAudioChannelSelection(audio.outputChannelIndices, audio.outputChannels)))
+            return Result::failure("Audio setup channel identities must be ordered, unique and match the saved width.");
     }
     return Result::success();
 }

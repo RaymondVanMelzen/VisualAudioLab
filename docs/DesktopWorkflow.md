@@ -1,8 +1,8 @@
 # Desktop audio workflow
 
 The desktop composes the existing backend, audio engine, DSP, VAL Script and
-visualization services. It does not start audio or initialize a native backend
-on launch. Project editing and offline preview do not require an audio device.
+visualization services. Device enumeration starts automatically; playback never
+starts automatically. Project editing and offline preview do not require an audio device.
 
 ## Configure a native device
 
@@ -11,35 +11,36 @@ in a new/reset workspace; **Done** hides it again without changing transport.
 The non-modal dock is scrollable when small. The compact strip continues to show
 stopped/setup-required, scanning, inspecting, ready or running state.
 
-1. Windows offers **ASIO**, **WASAPI Exclusive** and **WASAPI Shared**; macOS
+1. Windows offers **ASIO**, **WASAPI Shared**, **WASAPI Exclusive** and **DirectSound**; macOS
    offers **CoreAudio**. Offline preview is separate. Foreign APIs are not
    offered. Windows defaults to ASIO; macOS defaults to CoreAudio, without fallback.
-2. Click **Scan devices** to enumerate the selected backend. Choose an output
+   JUCE supports DirectSound, not a separate MME backend, so MME is not advertised.
+2. Construction and backend selection automatically enumerate devices. Choose an output
    device and either an input device or **None (output only)**. ASIO selects
    one driver; input is either that same driver or None, not a second driver.
    WASAPI selects separate Windows capture/render endpoints.
-3. Click the highlighted **Detect rates, buffers & channels** button on its own
-   row directly below **Scan devices**. Disabled fields saying **Click Detect
-   above** are not buttons: the options have not been queried yet. Status above
-   the fields distinguishes not-loaded, loading, failed and ready states; hover
-   it for the full diagnostic. Detection queries the selected configuration
-   in one JUCE device instance. This is
-   deliberately separate from enumeration: initializing a
-   driver can affect hardware, and ASIO inspection may briefly start/stop it.
-   Discovery is queued with loading feedback before invoking JUCE; an individual
-   vendor call may still temporarily block the message thread and cannot safely
-   be forcibly cancelled. Detection does not start playback. Loading capabilities
-   automatically on launch is a policy some JUCE apps choose, not a way to obtain
-   driver capabilities without runtime initialization.
-4. Select the reported sample rate, buffer frames and **Output channels enabled**.
-   **Input channels enabled** must be **0 channels (input disabled)** or match
-   the output count. These choices are counts, **not individual port numbers**:
-   `2 channels: 1: <driver name>, 2: <driver name>` enables the first two channels
-   in driver-reported order. `7 channels` enables channels 1 through 7, not just
-   channel 7. The choice and its tooltip show the enabled names verbatim;
+3. Endpoint selection automatically loads channel names, rates and buffer choices.
+   There is no Detect button. **Refresh / Retry** is an optional recovery action.
+   Status above the fields distinguishes loading, failed and ready states; hover
+   it for the full diagnostic. Inspection uses one temporary JUCE device for the
+   actual endpoint pair. Initializing a driver can affect hardware: ASIO inspection
+   may briefly start/stop its driver even though no application stream is opened.
+   Native enumeration/inspection run in a separate helper process with its own
+   JUCE message thread and event loop. The desktop remains responsive; a crashed
+   helper fails visibly, and a hung inspection is terminated after 15 seconds.
+   Changing endpoints discards obsolete results; changing backend cancels its helper.
+4. Select reported sample rate, buffer frames, **Input port** and **Output port**.
+   Basic port choices select a specific mono driver channel or a contiguous stereo
+   pair, for example `Stereo: 5: Virtual L / 6: Virtual R`. The actual zero-based
+   indices `[4, 5]` are passed to native open; they do not mean the first two channels.
+   Input must be **None (input disabled)** or match output width. Mono-to-stereo
+   engine routing is not implemented.
+   **Advanced ports** exposes wider contiguous groups, up to 32 channels.
+   It does not invent arbitrary remapping or physical/virtual classification.
+   The choice and its tooltip show the selected names verbatim;
    an empty name is explicitly marked **name not reported**.
-   Individual port selection, arbitrary channel masks and remapping are not
-   supported by the current engine. Channel names may describe physical,
+   Arbitrary noncontiguous selections are preserved in saved/request contracts,
+   but are not an editable UI feature in Phase 1. Channel names may describe physical,
    virtual or loopback channels; JUCE's name list does not classify them.
    Check the vendor mixer/routing panel rather than assuming every reported
    channel is a physical socket. Offline choices describe the preview bus only.
@@ -54,21 +55,31 @@ stopped/setup-required, scanning, inspecting, ready or running state.
 5. Build a valid patch, check output levels, then explicitly click **Start**
    or press **F5**. There is no master limiter. **Stop** / **Shift+F5** closes
    the stream before configuration changes. Open verifies rate, buffer and
-   channel counts; a driver substitution fails visibly rather than silently
+   exact channel masks as well as counts; a driver substitution fails visibly rather than silently
    changing the requested settings.
 
 Unavailable drivers, stale devices, unsupported configurations and stream
 errors are shown in the panel/status bar. No silent fallback occurs. Device
 inventory changes stop transport and invalidate capabilities. Exact unambiguous
 device-name matches can be restored, but missing/ambiguous devices are never
-replaced. Scan and Detect remain explicit, followed by explicit Start.
+replaced. Discovery and capability revalidation are automatic; Start remains explicit.
+**Control Panel** is enabled only when the driver reports support. It runs in the
+isolated helper, closes after a five-minute timeout if the vendor panel hangs,
+and automatically refreshes capabilities afterwards without starting transport.
+Explicit stream open/start/stop remain on the desktop JUCE control thread:
+those user-requested vendor operations are not made crash-proof or time-bounded by
+the discovery helper. Physical driver qualification remains necessary.
 
-Validated backend/device names, rate, buffer and channel counts persist in
+Validated backend/device names, rate, buffer, widths and exact channel indices persist in
 machine-local `settings.json` using the existing preference lifecycle. They
-are hints, not device identities: launch loads them without opening hardware,
-Scan resolves fresh tokens, and Detect revalidates saved choices. Tokens and
+are hints, not stable hardware identities: launch resolves fresh tokens and
+automatically revalidates saved choices, which may initialize hardware but never
+start application playback. Tokens and
 transport state are never persisted. Old window-only preferences remain valid;
 malformed preferences preserve their original file and disable automatic writes.
+Legacy count-only settings explicitly migrate to first-N index vectors. CoreAudio
+keeps its existing numerical value 3; DirectSound is appended as 4, and the UI's
+offline-preview item moves from ID 5 to 6 (offline is not a persisted backend).
 
 ## Try DSP without opening hardware
 

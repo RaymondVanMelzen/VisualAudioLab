@@ -170,16 +170,16 @@ GeneratorMeterReadout VisualizationSession::generatorMeters(std::uint64_t id) co
     const auto found = std::find_if(sources_.begin(), sources_.end(),
         [id](const auto& source) { return source.id == id; });
     if (found == sources_.end() || found->state == ObservationState::removed)
-        return {"Unavailable · no admitted generator capture; route to Main Output"};
+        return {juce::String::fromUTF8("Unavailable · no admitted generator capture; route to Main Output")};
     if (found->error.isNotEmpty())
-        return {"Unavailable · " + found->error};
+        return {juce::String::fromUTF8("Unavailable · ") + found->error};
     if (!found->latest)
         return {found->state == ObservationState::processing ? "Waiting for samples" : "Stopped"};
     if (juce::Time::getMillisecondCounterHiRes() - found->received > 500.0)
-        return {"Stale · generator capture has not updated"};
+        return {juce::String::fromUTF8("Stale · generator capture has not updated")};
 
     GeneratorMeterReadout result;
-    result.state = "Live · generator output · sample peak 50 ms · RMS 300 ms";
+    result.state = juce::String::fromUTF8("Live · generator output · sample peak 50 ms · RMS 300 ms");
     const auto& data = *found->latest;
     if (data.peakValid)
     {

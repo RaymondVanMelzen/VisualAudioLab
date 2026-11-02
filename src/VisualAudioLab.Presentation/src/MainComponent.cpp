@@ -42,7 +42,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     editor_->onReadGeneratorMeters = [this](auto node)
     {
         return runtime_->running() ? dockWorkspace_.visualizations().generatorMeters(node)
-                                   : GeneratorMeterReadout{"Stopped · Start transport to measure"};
+                                   : GeneratorMeterReadout{juce::String::fromUTF8("Stopped · Start transport to measure")};
     };
     inspectorTabs_.addTab("Properties / Script", ShellTheme::surface(), editor_.get(), false);
     inspectorTabs_.addTab("Signal", ShellTheme::surface(), &dockWorkspace_.signalPreview(), false);
@@ -333,6 +333,8 @@ void MainComponent::updateGeneratorDisplay()
         "Sawtooth (aliased)", "White noise", "Pink noise", "DC"};
     static constexpr const char* curves[]{"linear", "logarithmic", "curved exponential"};
     static constexpr const char* transports[]{"free run", "one-shot", "loop"};
+    const auto dot = juce::String::fromUTF8(" · ");
+    const auto arrow = juce::String::fromUTF8(" → ");
 
     if (*type == "Signal Generator")
     {
@@ -340,51 +342,56 @@ void MainComponent::updateGeneratorDisplay()
         const auto mode = static_cast<int>(number("mode", 0));
         const auto level = number("levelDb", -60);
         if (mode == 0)
-            info.summary = "Signal Generator · " + waveform + " · "
-                + juce::String(number("frequencyHz", 440), 2) + " Hz · "
+            info.summary = juce::String("Signal Generator") + dot + waveform + dot
+                + juce::String(number("frequencyHz", 440), 2) + " Hz" + dot
                 + juce::String(level, 1) + " dBFS peak";
         else
         {
             const auto musical = mode == 2;
             const auto curve = choice(curves, std::size(curves), number("sweepCurve", 1));
-            info.summary = "Signal Generator · " + (musical ? juce::String("Musical sweep")
-                                                                : juce::String(curve + " sweep"))
-                + " · " + juce::String(number("startFrequencyHz", 20), 1) + " → "
-                + juce::String(number("endFrequencyHz", 20000), 1) + " Hz · "
-                + juce::String(number("durationSeconds", 5), 2) + " s · "
+            info.summary = juce::String("Signal Generator") + dot
+                + (musical ? juce::String("Musical sweep") : juce::String(curve + " sweep"))
+                + dot + juce::String(number("startFrequencyHz", 20), 1) + arrow
+                + juce::String(number("endFrequencyHz", 20000), 1) + " Hz" + dot
+                + juce::String(number("durationSeconds", 5), 2) + " s" + dot
                 + choice(transports, std::size(transports), number("transport", 0))
-                + " · " + juce::String(level, 1) + " dBFS peak";
+                + dot + juce::String(level, 1) + " dBFS peak";
             info.durationSeconds = number("durationSeconds", 5);
             info.transport = static_cast<int>(number("transport", 0));
         }
     }
     else if (*type == "Chirp Generator")
     {
-        info.summary = "Chirp Generator · " + choice(curves, std::size(curves), number("sweepCurve", 1))
-            + " · " + juce::String(number("startFrequencyHz", 20), 1) + " → "
-            + juce::String(number("endFrequencyHz", 20000), 1) + " Hz · "
-            + juce::String(number("durationSeconds", 5), 2) + " s · "
+        info.summary = juce::String("Chirp Generator") + dot
+            + choice(curves, std::size(curves), number("sweepCurve", 1))
+            + dot + juce::String(number("startFrequencyHz", 20), 1) + arrow
+            + juce::String(number("endFrequencyHz", 20000), 1) + " Hz" + dot
+            + juce::String(number("durationSeconds", 5), 2) + " s" + dot
             + choice(transports, std::size(transports), number("transport", 1))
-            + " · " + juce::String(number("levelDb", -60), 1) + " dBFS peak";
+            + dot + juce::String(number("levelDb", -60), 1) + " dBFS peak";
         info.durationSeconds = number("durationSeconds", 5);
         info.transport = static_cast<int>(number("transport", 1));
     }
     else if (*type == "Noise Generator")
-        info.summary = "Noise Generator · " + juce::String(number("color", 0) == 1 ? "Pink" : "White")
-            + " · " + juce::String(number("levelDbRms", -60), 1) + " dBFS peak reference";
+        info.summary = juce::String("Noise Generator") + dot
+            + juce::String(number("color", 0) == 1 ? "Pink" : "White")
+            + dot + juce::String(number("levelDbRms", -60), 1) + " dBFS peak reference";
     else if (*type == "Burst Generator")
-        info.summary = "Burst Generator · " + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
-            + juce::String(number("durationSeconds", 0.1) * 1000, 0) + " ms · "
+        info.summary = juce::String("Burst Generator") + dot
+            + juce::String(number("frequencyHz", 1000), 1) + " Hz" + dot
+            + juce::String(number("durationSeconds", 0.1) * 1000, 0) + " ms" + dot
             + juce::String(number("levelDb", -60), 1) + " dBFS peak";
     else if (*type == "Click Generator")
-        info.summary = "Click Generator · " + juce::String(number("bpm", 120), 1) + " BPM · "
-            + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
+        info.summary = juce::String("Click Generator") + dot
+            + juce::String(number("bpm", 120), 1) + " BPM" + dot
+            + juce::String(number("frequencyHz", 1000), 1) + " Hz" + dot
             + juce::String(number("levelDb", -60), 1) + " dBFS peak";
     else if (*type == "Impulse Generator")
-        info.summary = "Impulse Generator · one-sample peak · "
+        info.summary = juce::String("Impulse Generator") + dot + "one-sample peak" + dot
             + juce::String(number("levelDb", -60), 1) + " dBFS";
     else if (*type == "DC Generator")
-        info.summary = "DC Generator · exact " + juce::String(number("value", 0), 4) + " / ±1.0";
+        info.summary = juce::String("DC Generator") + dot + "exact "
+            + juce::String(number("value", 0), 4) + " / " + juce::String::fromUTF8("±1.0");
     dockWorkspace_.signalPreview().setGeneratorContext(std::move(info));
 }
 

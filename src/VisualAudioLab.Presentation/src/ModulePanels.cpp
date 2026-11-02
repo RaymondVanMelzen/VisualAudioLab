@@ -276,7 +276,8 @@ private:
             list_.selectRow(found == filtered_.end() ? 0 : static_cast<int>(found - filtered_.begin()));
         insert_.setEnabled(!filtered_.empty());
         const auto category = category_.getText();
-        status_.setText(category + " · " + juce::String(getNumRows()) + (getNumRows() == 1 ? " result" : " results"),
+        status_.setText(category + juce::String::fromUTF8(" · ") + juce::String(getNumRows())
+                            + (getNumRows() == 1 ? " result" : " results"),
                         juce::dontSendNotification);
     }
     void insert()
@@ -321,9 +322,9 @@ public:
         area = area.reduced(10.0f, 9.0f);
         g.setColour(ShellTheme::textMuted());
         g.setFont(Typography::font(TextRole::meterScale));
-        g.drawText(mode_ == 1 ? "TARGET FREQUENCY VS TIME · PREVIEW"
-                              : mode_ == 2 ? "MUSICAL SWEEP PREVIEW · SHAPE ONLY"
-                                           : "WAVEFORM PREVIEW · SHAPE ONLY",
+        g.drawText(juce::String::fromUTF8(mode_ == 1 ? "TARGET FREQUENCY VS TIME · PREVIEW"
+                                                     : mode_ == 2 ? "MUSICAL SWEEP PREVIEW · SHAPE ONLY"
+                                                                  : "WAVEFORM PREVIEW · SHAPE ONLY"),
                    area.removeFromTop(17.0f), juce::Justification::centredLeft);
         const auto plot = area.reduced(2.0f, 4.0f);
         g.setColour(ShellTheme::border());
@@ -585,7 +586,7 @@ public:
         generatorScale_.addItemList({"Chromatic", "Major", "Natural minor", "Major pentatonic",
                                      "Minor pentatonic", "Custom"}, 1);
         generatorCurve_.addItemList({"Linear", "Logarithmic", "Exponential"}, 1);
-        generatorCalibration_.addItem("Reference tone · 1 kHz sine", 1);
+        generatorCalibration_.addItem(juce::String::fromUTF8("Reference tone · 1 kHz sine"), 1);
         generatorCalibration_.addItem("Pink-noise reference", 2);
         generatorGoal_.setTitle("Signal goal");
         generatorWaveform_.setTitle("Waveform");
@@ -616,7 +617,7 @@ public:
         generatorStartLabel_.setText("Start Frequency", juce::dontSendNotification);
         generatorEndLabel_.setText("End Frequency", juce::dontSendNotification);
         generatorDurationLabel_.setText("Sweep Time", juce::dontSendNotification);
-        generatorLevelLabel_.setText("Output Level · target peak", juce::dontSendNotification);
+        generatorLevelLabel_.setText(juce::String::fromUTF8("Output Level · target peak"), juce::dontSendNotification);
         generatorNoiseLabel_.setText("Noise Color", juce::dontSendNotification);
         generatorScaleLabel_.setText("Scale", juce::dontSendNotification);
         generatorRootLabel_.setText("Root MIDI Note", juce::dontSendNotification);
@@ -698,8 +699,8 @@ public:
                                   "Editing those values still uses the normal validated project and runtime paths.", false);
         developerDetails_.setReadOnly(true);
         developerDetails_.setMultiLine(true, true);
-        generatorPeak_.setText("Sample Peak  —  waiting", juce::dontSendNotification);
-        generatorRms_.setText("Measured RMS  —  waiting", juce::dontSendNotification);
+        generatorPeak_.setText(juce::String::fromUTF8("Sample Peak  —  waiting"), juce::dontSendNotification);
+        generatorRms_.setText(juce::String::fromUTF8("Measured RMS  —  waiting"), juce::dontSendNotification);
         generatorMeterState_.setText("Waiting for generator samples", juce::dontSendNotification);
         generatorSafety_.setText("Connect to Main Output in the canvas. Start is explicit. dBFS is digital, not voltage or SPL.",
                                  juce::dontSendNotification);
@@ -849,16 +850,19 @@ public:
         const auto meter = owner_.onReadGeneratorMeters(selected_);
         const auto* node = current();
         const auto muted = node && taskValue(*node, "audio.param.muted", 0) >= 0.5;
-        generatorMeterState_.setText(juce::String(muted ? "Muted · " : "") + meter.state,
+        const auto prefix = muted ? juce::String::fromUTF8("Muted · ") : juce::String{};
+        generatorMeterState_.setText(prefix + meter.state,
                                      juce::dontSendNotification);
         if (type_ == "Noise Generator")
-            generatorMeterState_.setText(juce::String(muted ? "Muted · " : "") + meter.state
-                                             + " · RMS is primary; noise peaks vary",
+            generatorMeterState_.setText(prefix + meter.state
+                                             + juce::String::fromUTF8(" · RMS is primary; noise peaks vary"),
                                          juce::dontSendNotification);
         generatorPeak_.setText("Sample Peak  " + (meter.samplePeakValid
-            ? juce::String(meter.samplePeakDbfs, 1) + " dBFS" : juce::String("—")), juce::dontSendNotification);
+            ? juce::String(meter.samplePeakDbfs, 1) + " dBFS"
+            : juce::String::fromUTF8("—")), juce::dontSendNotification);
         generatorRms_.setText("Measured RMS  " + (meter.rmsValid
-            ? juce::String(meter.rmsDbfs, 1) + " dBFS" : juce::String("—")), juce::dontSendNotification);
+            ? juce::String(meter.rmsDbfs, 1) + " dBFS"
+            : juce::String::fromUTF8("—")), juce::dontSendNotification);
         generatorMeter_.setLevels(meter.samplePeakDbfs, meter.samplePeakValid,
                                   meter.rmsDbfs, meter.rmsValid);
     }
@@ -911,16 +915,16 @@ public:
     }
     void updateTaskDisclosures()
     {
-        advancedToggle_.setButtonText(advancedExpanded_ ? "▾ Advanced" : "▸ Advanced");
-        automationToggle_.setButtonText(automationExpanded_ ? "▾ Automation" : "▸ Automation");
-        developerToggle_.setButtonText(developerExpanded_ ? "▾ Developer" : "▸ Developer");
+        advancedToggle_.setButtonText(juce::String::fromUTF8(advancedExpanded_ ? "▾ Advanced" : "▸ Advanced"));
+        automationToggle_.setButtonText(juce::String::fromUTF8(automationExpanded_ ? "▾ Automation" : "▸ Automation"));
+        developerToggle_.setButtonText(juce::String::fromUTF8(developerExpanded_ ? "▾ Developer" : "▸ Developer"));
         advancedToggle_.setToggleState(advancedExpanded_, juce::dontSendNotification);
         automationToggle_.setToggleState(automationExpanded_, juce::dontSendNotification);
         developerToggle_.setToggleState(developerExpanded_, juce::dontSendNotification);
         if (processor_)
         {
             juce::String details = "Node " + juce::String(static_cast<juce::int64>(selected_))
-                + " · audio.type = " + type_ + "\n";
+                + juce::String::fromUTF8(" · audio.type = ") + type_ + "\n";
             for (const auto& spec : processor_->parameters())
                 details += juce::String(spec.name) + " [" + juce::String(spec.minimum)
                     + ", " + juce::String(spec.maximum) + "]\n";

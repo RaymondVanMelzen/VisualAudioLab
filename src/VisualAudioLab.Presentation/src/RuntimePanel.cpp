@@ -491,7 +491,8 @@ juce::String RuntimePanel::endpointReadiness(domain::GraphId id) const
     if (endpoint == workspace_.graph().endpoints.end()) return "Unavailable";
     if (!endpoint->second.enabled) return "Disabled";
     if (endpoint->second.channelNames.empty()) return "Unassigned";
-    if (offline_) return "Offline preview · " + juce::String(endpoint->second.layoutChannels) + " channels";
+    if (offline_) return juce::String::fromUTF8("Offline preview · ")
+        + juce::String(endpoint->second.layoutChannels) + " channels";
     const auto& caps = endpoint->second.role == domain::EndpointRole::hardwareInput ? inputCaps_ : outputCaps_;
     if (!caps) return "Device not ready";
     const auto& available = endpoint->second.role == domain::EndpointRole::hardwareInput
@@ -505,16 +506,16 @@ juce::String RuntimePanel::endpointReadiness(domain::GraphId id) const
         if (stored)
         {
             if (stored->size() != endpoint->second.channelNames.size())
-                return "Missing · reassign channels";
+                return juce::String::fromUTF8("Missing · reassign channels");
             const auto index = (*stored)[channel];
             if (index < 0 || index >= static_cast<int>(available.size())
                 || available[static_cast<std::size_t>(index)] != endpoint->second.channelNames[channel])
-                return "Missing · channel identity changed";
+                return juce::String::fromUTF8("Missing · channel identity changed");
         }
         else if (std::count(available.begin(), available.end(), endpoint->second.channelNames[channel]) != 1)
-            return "Missing or ambiguous · reassign";
+            return juce::String::fromUTF8("Missing or ambiguous · reassign");
     }
-    return "Ready · " + juce::String(endpoint->second.layoutChannels) + " ch";
+    return juce::String::fromUTF8("Ready · ") + juce::String(endpoint->second.layoutChannels) + " ch";
 }
 juce::String RuntimePanel::compactStatus() const
 {

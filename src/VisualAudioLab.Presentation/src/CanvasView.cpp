@@ -421,7 +421,8 @@ void CanvasView::paintEndpointRails(juce::Graphics& graphics)
                 juce::StringArray names;
                 for (const auto& channel : hardware->second.channelNames)
                     names.add(juce::String::fromUTF8(channel.c_str()));
-                channelSummary = names.isEmpty() ? "Unassigned · " + juce::String(hardware->second.layoutChannels) + " ch"
+                channelSummary = names.isEmpty() ? juce::String::fromUTF8("Unassigned · ")
+                    + juce::String(hardware->second.layoutChannels) + " ch"
                                                   : names.joinIntoString(" / ");
                 readiness = endpointStatus ? endpointStatus(id) : "Device status unavailable";
                 if (!hardware->second.enabled) readiness = "Disabled";
@@ -1144,10 +1145,11 @@ void CanvasView::endpointMenu(domain::GraphId id)
     juce::PopupMenu menu, mono, stereo, advanced;
     for (int i = 0; i < static_cast<int>(channels.size()); ++i)
     {
-        const auto label = juce::String(i + 1) + " · " + juce::String::fromUTF8(channels[static_cast<std::size_t>(i)].c_str());
+        const auto label = juce::String(i + 1) + juce::String::fromUTF8(" · ")
+            + juce::String::fromUTF8(channels[static_cast<std::size_t>(i)].c_str());
         mono.addItem(10000 + i, label, true, selectedChannels.size() == 1 && selected(i));
         if (i + 1 < static_cast<int>(channels.size()))
-            stereo.addItem(20000 + i, label + " + " + juce::String(i + 2) + " · "
+            stereo.addItem(20000 + i, label + " + " + juce::String(i + 2) + juce::String::fromUTF8(" · ")
                 + juce::String::fromUTF8(channels[static_cast<std::size_t>(i + 1)].c_str()),
                 true, selectedChannels.size() == 2 && selected(i) && selected(i + 1));
         advanced.addItem(30000 + i, label, true, selected(i));
@@ -1155,7 +1157,7 @@ void CanvasView::endpointMenu(domain::GraphId id)
     menu.addSectionHeader(juce::String::fromUTF8(endpoint.name.c_str()));
     menu.addSubMenu("Mono channel", mono);
     menu.addSubMenu("Adjacent stereo pair", stereo);
-    menu.addSubMenu("Advanced · choose any channels", advanced);
+    menu.addSubMenu(juce::String::fromUTF8("Advanced · choose any channels"), advanced);
     menu.addItem(1, "Unassign channels", true, endpoint.channelNames.empty());
     if (channels.empty())
         menu.addItem(6, "Select and inspect a device in Audio Setup first", false);

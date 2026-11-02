@@ -2,6 +2,7 @@
 
 #include "CanvasScene.h"
 #include <val/application/WorkspaceService.h>
+#include <cmath>
 #include <functional>
 #include <optional>
 
@@ -13,7 +14,7 @@ namespace val::presentation
  * CommandHistory. Selection and viewport are local navigation state. Gestures preview outside
  * the model and commit once on release; Escape/focus loss cancels without a history entry.
  */
-class CanvasView final : public juce::Component
+class CanvasView final : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     explicit CanvasView(application::WorkspaceService& workspace);
@@ -28,6 +29,8 @@ public:
     bool keyStateChanged(bool isKeyDown) override;
     void modifierKeysChanged(const juce::ModifierKeys& modifiers) override;
     void focusLost(FocusChangeType) override;
+    bool isInterestedInDragSource(const SourceDetails& details) override;
+    void itemDropped(const SourceDetails& details) override;
 
     /** Rebuilds view caches after an external undo/redo or accepted service operation. */
     void synchronise();
@@ -48,11 +51,22 @@ public:
     [[nodiscard]] std::optional<domain::Endpoint> portAt(juce::Point<float> screenPoint) const;
     [[nodiscard]] domain::GraphId connectionAt(juce::Point<float> screenPoint) const;
     [[nodiscard]] juce::Rectangle<int> viewport() const;
-    [[nodiscard]] application::PatchViewport navigation() const { return {zoom_, offset_.x, offset_.y}; }
+    /** Persist only the precision retained by the float-based canvas transform. */
+    [[nodiscard]] application::PatchViewport navigation() const
+    {
+        const auto stableZoom = [](float value)
+        {
+            return std::round(static_cast<double>(value) * 1000000.0) / 1000000.0;
+        };
+        return {stableZoom(zoom_), std::round(static_cast<double>(offset_.x)),
+                std::round(static_cast<double>(offset_.y))};
+    }
     void restoreNavigation(application::PatchViewport value);
     /** A project/patch transition clears object-local focus and selection, not just stale IDs. */
     void resetForProject();
     std::function<void(const application::Result&)> onEdit;
+    std::function<void(std::string, juce::Point<float>)> onModuleDropped;
+    std::function<void(juce::String)> onModuleDropRejected;
     /** Single selected node, connected source endpoint, or zero for absent/ambiguous targets. */
     std::function<void(domain::GraphId)> onObservationTarget;
     /** Optional shared observation rendering; never owns a processor, timer or analysis worker. */

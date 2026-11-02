@@ -130,6 +130,8 @@ void runModulePanelIntegrationTests()
 
     auto& search = textControl(catalog, "Search modules");
     auto& list = control<juce::ListBox>(catalog, [](const auto&) { return true; });
+    auto& category = control<juce::ComboBox>(catalog,
+        [](const auto& item) { return item.getTitle() == "Module category"; });
     auto& diagnostics = textControl(editor, "Module editor diagnostics");
     std::vector<std::function<void()>> steps;
     const auto add = [&](std::function<void()> step) { steps.push_back(std::move(step)); };
@@ -143,8 +145,23 @@ void runModulePanelIntegrationTests()
 
     add([&]
     {
-        require(list.getListBoxModel()->getNumRows() == 14 && list.getSelectedRow() >= 0,
-                "The actual catalog initially exposes fourteen selectable built-in modules.");
+        require(list.getListBoxModel()->getNumRows() == 15 && list.getSelectedRow() >= 0
+                    && category.getNumItems() == 5,
+                "The actual catalog exposes fifteen modules and only categories with shipped entries.");
+        category.setSelectedId(2, juce::sendNotificationSync);
+        require(list.getListBoxModel()->getNumRows() == 7,
+                "Effects category contains the seven implemented effects.");
+        category.setSelectedId(4, juce::sendNotificationSync);
+        require(list.getListBoxModel()->getNumRows() == 2,
+                "Routing category contains only the Input and Output utilities.");
+        category.setSelectedId(3, juce::sendNotificationSync);
+        require(list.getListBoxModel()->getNumRows() == 5,
+                "Analysis contains the four measurement tools and the guitar tuner.");
+        category.setSelectedId(5, juce::sendNotificationSync);
+        require(list.getListBoxModel()->getNumRows() == 1
+                    && list.getListBoxModel()->getTooltipForRow(0).contains("User-authored"),
+                "Custom DSP category identifies Script as the one shipped user-authored module.");
+        category.setSelectedId(1, juce::sendNotificationSync);
         search.setText("sPeCtRuM");
     });
     add([&]
@@ -182,9 +199,9 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        const std::array<std::string, 14> names{
+        const std::array<std::string, 15> names{
             "Input", "Output", "Gain", "EQ", "Delay", "Compressor", "Distortion",
-            "Chorus", "Reverb", "Oscilloscope", "Spectrum Analyzer", "Peak Meter", "RMS Meter", "Script"};
+            "Chorus", "Reverb", "Oscilloscope", "Spectrum Analyzer", "Peak Meter", "RMS Meter", "Guitar Tuner", "Script"};
         require(list.getListBoxModel()->getNumRows() == static_cast<int>(names.size()), "Clearing search restores every module.");
         catalog.onInsert = [&, names](std::string type)
         {
@@ -194,11 +211,11 @@ void runModulePanelIntegrationTests()
             inserted.push_back(std::move(type));
         };
     });
-    for (int row = 0; row < 14; ++row)
+    for (int row = 0; row < 15; ++row)
         add([&, row] { list.selectRow(row); button(catalog, "Insert selected module").triggerClick(); });
     add([&]
     {
-        require(inserted.size() == 16 && catalogMatched,
+        require(inserted.size() == 17 && catalogMatched,
                 "Every actual catalog row can be selected and emits its module type through the insertion button.");
         catalog.onInsert = {};
         require(workspace.createNode({10, 20}, "EQ under test",

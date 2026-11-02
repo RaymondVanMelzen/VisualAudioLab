@@ -155,6 +155,17 @@ void runRuntimeIntegrationTests()
 #else
     const std::vector<AudioBackendKind> testedBackends{};
 #endif
+    {
+        WorkspaceService workspace;
+        VisualizationSession observations;
+        RuntimePanel runtime(workspace, observations);
+        runtime.configureOffline(1);
+        require(workspace.createNode({0, 0}, "Output", {{"audio.type", std::string("Output")}}).succeeded,
+                "Create a valid output-only graph with no generator.");
+        require(runtime.start().succeeded && runtime.status().contains("may render silence"),
+                "An output-only graph can run explicitly, but the UI warns when no zero-input Script reaches Output.");
+        require(runtime.stop().succeeded, "Stop the no-source output-only preview explicitly.");
+    }
     for (const auto kind : testedBackends)
     {
         WorkspaceService workspace;
@@ -451,9 +462,9 @@ void runRuntimeIntegrationTests()
     shell.dockWorkspace().signalPreview().setTarget(analyzer);
     shell.dockWorkspace().showPanel(PanelId::propertyInspector);
     screenshot(shell, "desktop-review-workspace.png");
-    shell.dockWorkspace().showPanel(PanelId::audioSettings);
     const auto path = std::filesystem::path(directory.getChildFile("script-fx.valab").getFullPathName().toWideCharPointer());
-    require(shell.saveProjectTo(path).succeeded, "Integrated executable source/FX/analysis metadata saves through File workflow.");
+    const auto saved = shell.saveProjectTo(path);
+    require(saved.succeeded, "Integrated executable source/FX/analysis metadata saves through File workflow: " + saved.error);
     require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && runtime.running() && creations == 1,
             "Explicit desktop F5 command starts real offline engine with zero device interaction.");
     std::uint64_t initialRevision{};
@@ -552,7 +563,21 @@ void runRuntimeIntegrationTests()
         },
         [&]
         {
-            shell.dockWorkspace().showPanel(PanelId::audioSettings);
+            juce::Array<juce::CommandID> ids;
+            shell.getAllCommands(ids);
+            auto setupCommand = juce::CommandID{};
+            for (const auto id : ids)
+            {
+                juce::ApplicationCommandInfo info(id);
+                shell.getCommandInfo(id, info);
+                if (info.shortName == "Audio Setup") setupCommand = id;
+            }
+            require(setupCommand != 0
+                    && shell.perform(juce::ApplicationCommandTarget::InvocationInfo(setupCommand)),
+                    "Audio-menu Audio Setup opens the dedicated device dialog.");
+            auto* setupWindow = runtime.findParentComponentOfClass<juce::DocumentWindow>();
+            require(setupWindow && setupWindow->getName() == "Audio Setup" && setupWindow->isVisible(),
+                    "Runtime controls are hosted in the visible Audio Setup dialog.");
             auto* api = control<juce::ComboBox>(runtime, "Backend");
             require(api, "Runtime exposes a named backend selector.");
 #if JUCE_MAC
@@ -572,20 +597,14 @@ void runRuntimeIntegrationTests()
             control<juce::ComboBox>(runtime, "Output port")->setSelectedId(1, juce::dontSendNotification);
             clickButton(*scan);
             require(runtime.getWidth() >= 640 && control<juce::ComboBox>(runtime, "Output device")->getWidth() >= 200,
-                    "Opening an initially hidden setup dock sizes controls to its actual area without requiring a window resize: runtime "
-                    + std::to_string(runtime.getWidth()) + ", output control "
-                    + std::to_string(control<juce::ComboBox>(runtime, "Output device")->getWidth()) + ".");
-            auto* viewport = runtime.findParentComponentOfClass<juce::Viewport>();
-            require(viewport && runtime.isShowing() && scan->isShowing()
-                    && viewport->getViewArea().contains(scan->getBounds())
-                    && viewport->getViewArea().contains(juce::Rectangle<int>(8, 60, 276, 20)),
-                    "Opening the real setup dock reveals operation controls and status without resizing or horizontal scrolling: "
-                    + (viewport ? viewport->getViewArea().toString().toStdString() : "no viewport")
-                    + "; showing: " + std::to_string(runtime.isShowing()));
+                    "The resizable setup dialog gives device controls usable width.");
+            require(runtime.isShowing() && scan->isShowing()
+                    && runtime.getLocalBounds().contains(scan->getBounds()),
+                    "The dialog exposes operation controls without horizontal scrolling.");
             require(scan->getAccessibilityHandler()
                     && scan->getAccessibilityHandler()->getTitle() == "Refresh / Retry",
                     "The visible peer exposes the optional retry action to accessibility.");
-            screenshot(*viewport, "desktop-options-real-dock.png");
+            screenshot(*setupWindow, "desktop-audio-setup-dialog.png");
             screenshot(runtime, "desktop-integration-device-settings.png");
             screenshot(shell, "desktop-review-audio-setup.png");
             return true;
@@ -595,9 +614,12 @@ void runRuntimeIntegrationTests()
             require(runtime.ready() && control<juce::ComboBox>(runtime, "Buffer frames")->getNumItems() == 1,
                     "Refresh/restore/inspection does not queue endpoint onChange callbacks that later erase capabilities.");
             require(runtime.start().succeeded && mock->opens == 1 && mock->target, "Explicit native Start negotiates selected settings and attaches real engine through injected device seam.");
+            require(mock->openedRequest.inputChannels == 0,
+                    "The native output-only Script graph opens with input disabled; an input endpoint is not required.");
+            auto* setupWindow = runtime.findParentComponentOfClass<juce::DocumentWindow>();
             control<juce::TextButton>(runtime, "Done")->onClick();
-            require(runtime.running() && !shell.dockWorkspace().layout().placement(PanelId::audioSettings).visible,
-                    "Done hides occasional setup without changing transport or discarding configuration.");
+            require(runtime.running() && setupWindow && !setupWindow->isVisible(),
+                    "Done hides the setup dialog without changing transport or discarding configuration.");
             std::array<float, 128> samples{}; float* destination[]{samples.data()};
             mock->target->process({nullptr, destination, 0, 1, 128});
             require(std::abs(samples[0] - 0.125f) < 0.0001f, "Native render contract consumes the persisted executable graph.");

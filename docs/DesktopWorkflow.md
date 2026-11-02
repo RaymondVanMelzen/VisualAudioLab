@@ -6,10 +6,17 @@ starts automatically. Project editing and offline preview do not require an audi
 
 ## Configure a native device
 
-Open **Audio > Audio Setup** (also on the toolbar or View menu). Setup is hidden
-in a new/reset workspace; **Done** hides it again without changing transport.
-The non-modal dock is scrollable when small. The compact strip continues to show
-stopped/setup-required, scanning, inspecting, ready or running state.
+Open **Audio > Audio Setup** to show the dedicated resizable device dialog.
+This is the only Audio Setup entry; it is not a permanent workspace panel, and
+there is no toolbar button or View-menu item. Close the window or choose
+**Done** to hide it without changing transport. The main shell retains compact,
+truthful stopped/setup-required, scanning, ready or running status.
+
+The main workspace uses fixed Module Browser, Patch Canvas and Property
+Inspector regions. The canvas cannot be collapsed. The side panels collapse
+in place using their header controls and reopen from the small edge controls;
+they cannot be dragged, floated or docked elsewhere. Legacy saved dock
+positions are ignored while panel visibility is retained.
 
 1. Windows offers **ASIO**, **WASAPI Shared**, **WASAPI Exclusive** and **DirectSound**; macOS
    offers **CoreAudio**. Offline preview is separate. Foreign APIs are not
@@ -87,15 +94,30 @@ Choose **Offline preview (no hardware)**. It offers a 48 kHz, 512-frame preview
 with selectable output bus width. Select one channel before inserting a mono
 script example.
 
-Use the **Module Browser** search and **Insert selected module**, or
-double-click/press Enter on a selected result. Available modules are Input,
-Output, Gain, EQ, Delay, Compressor, Distortion, Chorus, Reverb, Oscilloscope,
-Spectrum Analyzer, Peak Meter, RMS Meter and Script. Each insertion is one undoable edit with its runtime identity already attached.
+Use the **Module Browser** category filter and search to find a shipped entry.
+Categories are **Effects**, **Analysis**, **Routing utilities**, and **Custom
+DSP**; unavailable/future modules are not listed as empty categories. Insert
+the selected result with the button, double-click, or Enter, or drag it onto
+the Patch Canvas to place it at the pointer. Each insertion is one undoable
+edit with its runtime identity already attached. Dragging outside the canvas
+area is rejected with a visible status message. Insertion never auto-wires:
+connect ports explicitly. Input/Output belong to routing utilities, not the
+effect taxonomy.
 A **module** is a reusable audio function; a placed **node** is its instance
 with its own saved parameters/source and runtime state. Input/Output are
 explicit **routing utilities**, not effects. Analyzer modules observe audio
 while passing it through unchanged. The catalog, canvas roles and inspector
 use these distinctions; reusable patch packaging is not newly implemented.
+
+An external input device is optional: choose **None (output only)** to run
+without capture. The graph still needs its explicit Output routing utility.
+For a generated signal today, use a zero-input Script connected to Output; the
+inserted pass-through Script is not itself a generator, and a disconnected or
+input-dependent graph can render silence. Starting such an output-only graph
+shows a warning when no zero-input Script feeds Output because it may render
+silence. A product oscillator
+module is planned but is not shipped. No input, hardware stream, or playback
+starts implicitly.
 
 For a device-free example:
 
@@ -122,9 +144,16 @@ buffers. A UI timer advances one block per tick, not a hardware-rate clock:
 automation delays are **audio sample time**, not wall-clock preview time.
 Offline callback timing is synthetic, not a real-device performance measurement.
 
-Input reads the configured input bus; Output writes the output bus. Four
-analyzer catalog entries are pass-through Analyzer nodes with distinct initial
-display choices, not four independent audio analysis pipelines.
+Input reads the configured input bus; Output writes the output bus. The
+Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter and Guitar Tuner catalog
+entries are pass-through Analyzer nodes with distinct initial display choices,
+not independent audio processing pipelines. The Guitar Tuner uses the selected
+node's measured signal and reports chromatic note/octave, cents sharp/flat,
+in-tune state, confidence and silence/uncertain feedback against A4=440 Hz.
+Connect it inline with one guitar signal and select the node to open its tuner
+view. It is monophonic; chords, string identification and alternate tunings are
+not implemented. Its analysis is synthetic-test qualified, not physically
+qualified against every pickup, device or acoustic environment.
 
 ## Parameters, bypass and automation
 
@@ -194,10 +223,11 @@ all runtime nodes must contribute to that Output. Structural graphs can be much
 larger than the runtime limit of 256 nodes/edges.
 
 Selecting a captured node follows it in **Signal**. Selecting an analyzer also
-chooses its initial display. The four tabs share the calibrated scope/spectrum/
-sample-peak/raw-RMS products. **Signal Inspector** opens a non-modal four-plot
-monitor pinned to the current target; its source selector and Pin/Freeze controls
-remain independent. Embedded canvas sparks use the same sources.
+chooses its initial display. The five tabs share calibrated scope, spectrum,
+sample-peak, raw-RMS and pitch products. **Signal Inspector** opens a non-modal
+five-plot monitor pinned to the current target; its source selector and
+Pin/Freeze controls remain independent. Embedded canvas sparks use the same
+sources.
 
 Refresh controls are 1-30 Hz for inspector/monitor and 1-15 Hz for embedded views;
 hidden/offscreen views release demand. Capture admission is bounded to at most
@@ -218,5 +248,6 @@ and [ValScript.md](ValScript.md) for language/resource limits.
 
 Native hardware timing, audible processing and macOS device operation require
 platform/hardware qualification; offline and injected-device GUI tests do not
-establish them. Plugin hosting/export, MIDI, persistent automation lanes, an
-expanded language and modern drag-docking remain outside this integration.
+establish them. Plugin hosting/export, MIDI, persistent automation lanes and
+an expanded language remain outside this integration. Panel docking and
+re-docking are not supported.

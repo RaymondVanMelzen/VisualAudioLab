@@ -13,7 +13,7 @@ class ShellToolbar final : public juce::Component
 public:
     ShellToolbar(juce::ApplicationCommandManager& commands, juce::CommandID rename,
                  juce::CommandID undo, juce::CommandID redo,
-                 juce::CommandID audioSettings, juce::CommandID resetLayout);
+                 juce::CommandID resetLayout);
     void resized() override;
     [[nodiscard]] juce::String workspaceName() const { return workspaceName_.getText(); }
     void setWorkspaceName(const juce::String& name) { workspaceName_.setText(name, false); }
@@ -21,7 +21,7 @@ public:
 private:
     juce::TextEditor workspaceName_;
     juce::TextButton rename_{"Rename workspace"}, undo_{"Undo"}, redo_{"Redo"};
-    juce::TextButton audioSettings_{"Audio Setup"}, resetLayout_{"Reset Layout"};
+    juce::TextButton resetLayout_{"Reset Panels"};
 };
 
 /** Persistent status and capability disclosure, independent of any audio-engine state. */

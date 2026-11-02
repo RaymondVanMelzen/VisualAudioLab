@@ -119,8 +119,9 @@ private:
             auto digits = token.substr(0, token.find_first_of("eE"));
             digits.erase(std::remove_if(digits.begin(), digits.end(), [](char c) { return c == '.' || c == '-'; }), digits.end());
             const auto first = digits.find_first_not_of('0'), last = digits.find_last_not_of('0');
-            check(first == std::string::npos || last - first + 1 <= 17,
-                  "Decimal exceeds supported 17-digit precision; original preserved.");
+            if (first != std::string::npos && last - first + 1 > 17)
+                throw SchemaError("Decimal exceeds supported 17-digit precision ("
+                                  + token + "); original preserved.");
             const auto parsed = juce::JSON::fromString(juce::String(token));
             check(std::isfinite(static_cast<double>(parsed)), "Non-finite JSON number is unsupported.");
             check(first == std::string::npos || static_cast<double>(parsed) != 0,
@@ -438,8 +439,17 @@ application::Result LocalProjectStore::encode(application::ProjectFile& file)
     if (encoded.size() > maximumBytes)
         return Result::failure("Encoded project exceeds 64 MiB. Original preserved.");
     const auto verified = decode(encoded);
-    if (!verified.file || verified.file->state != file.state)
-        return Result::failure("Project cannot be represented losslessly by this schema. Original preserved.");
+    if (!verified.file)
+        return Result::failure("Encoded project failed its round-trip validation: " + verified.error + ". Original preserved.");
+    if (verified.file->state != file.state)
+    {
+        if (verified.file->state.layout != file.state.layout)
+            return Result::failure("Project layout cannot be represented losslessly by this schema. Original preserved.");
+        if (verified.file->state.workspace != file.state.workspace
+            || verified.file->state.activePatch != file.state.activePatch)
+            return Result::failure("Project identity cannot be represented losslessly by this schema. Original preserved.");
+        return Result::failure("Project graph cannot be represented losslessly by this schema. Original preserved.");
+    }
     file.source.swap(encoded);
     return Result::success();
 }

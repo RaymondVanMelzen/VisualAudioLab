@@ -43,8 +43,7 @@ void runProjectPresentationTests()
         require(service.createNode({10, 20}).succeeded, "Create persistable UI graph.");
         shell.dockWorkspace().canvas().synchronise();
         shell.dockWorkspace().canvas().panBy({120, -40});
-        shell.dockWorkspace().movePanel(presentation::PanelId::projectExplorer, presentation::DockPosition::right);
-        shell.dockWorkspace().setPanelVisible(presentation::PanelId::audioSettings, false);
+        shell.dockWorkspace().setPanelVisible(presentation::PanelId::moduleBrowser, false);
         require(shell.saveProjectTo(path / "ui.valab").succeeded, "Save As UI endpoint writes actual project.");
         const auto saved = service.project();
         require(service.createNode({70, 90}).succeeded, "Edit after saving.");
@@ -58,9 +57,9 @@ void runProjectPresentationTests()
         shell.dockWorkspace().resetLayout();
         require(shell.loadProjectFrom(path / "ui.valab").succeeded
                 && service.graph().nodes.size() == 2
-                && shell.dockWorkspace().projectLayout().docks == saved.layout.docks
-                && !shell.dockWorkspace().layout().placement(presentation::PanelId::audioSettings).visible,
-                "UI load restores graph and dock layout.");
+                && !shell.dockWorkspace().layout().placement(presentation::PanelId::moduleBrowser).visible
+                && shell.dockWorkspace().layout().placement(presentation::PanelId::patchCanvas).visible,
+                "UI load restores fixed panel visibility while keeping the canvas visible.");
         const auto viewport = shell.dockWorkspace().canvas().navigation();
         require(viewport == saved.patches.at(1).viewport, "UI load restores patch viewport, not selection.");
         shell.getMenuForIndex(0, {});

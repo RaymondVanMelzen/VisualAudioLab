@@ -45,6 +45,7 @@ bool AnalysisResults::latest(SignalAnalysis& result) noexcept
 static_assert(std::atomic<unsigned>::is_always_lock_free);
 struct AnalyzerEngine::State
 {
+    static constexpr std::size_t pitchWindowSize = 2048;
     std::shared_ptr<SignalCaptureBuffer> capture;
     AnalyzerProfile profile;
     std::array<std::vector<float>, 2> history;
@@ -60,8 +61,11 @@ struct AnalyzerEngine::State
     std::array<double, 2> squares{}, sums{};
     std::array<float, 2> held{}, displayed{};
     std::array<std::uint64_t, 2> holdUntil{};
+    std::array<double, pitchWindowSize> pitchSamples{};
+    std::array<double, pitchWindowSize / 2 + 1> pitchDifference{};
     double sumWindow{}, windowSquares{}, maxMs{};
     float holdDecay{}, displayDecay{};
+    std::size_t pitchFramesSinceUpdate{};
     bool continuity{}, averaged{};
 
     State(std::shared_ptr<SignalCaptureBuffer> buffer, AnalyzerProfile settings)
@@ -97,10 +101,14 @@ struct AnalyzerEngine::State
     void reset()
     {
         ++segment;
-        count = position = hop = 0;
+        count = position = hop = pitchFramesSinceUpdate = 0;
         squares = {}; sums = {}; held = {}; displayed = {}; holdUntil = {};
         averaged = false;
-        current.spectrumValid = current.rmsValid = current.peakValid = current.nonFinite = false;
+        current.spectrumValid = current.rmsValid = current.peakValid = current.pitchReady = current.pitchValid
+            = current.pitchSilence = current.nonFinite = false;
+        current.pitchHz = 0;
+        current.pitchConfidence = current.pitchRms = 0;
+        current.pitchChannel = 0;
         current.scopeFrames = 0;
         current.overRange = {};
         current.dominantHz = {};
@@ -109,6 +117,113 @@ struct AnalyzerEngine::State
     {
         const auto size = history[channel].size();
         return history[channel][(position + size - distance) % size];
+    }
+    void estimatePitch()
+    {
+        const auto stride = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(capture->sampleRate() / 24000.0)));
+        const auto windowFrames = pitchWindowSize * stride;
+        const auto effectiveRate = capture->sampleRate() / static_cast<double>(stride);
+        const auto minimumLag = std::max<std::size_t>(2, static_cast<std::size_t>(std::ceil(effectiveRate / 1000.0)));
+        const auto maximumLag = std::min(pitchWindowSize / 2, static_cast<std::size_t>(effectiveRate / 60.0));
+        if (maximumLag <= minimumLag || count < windowFrames)
+            return;
+
+        current.pitchReady = true;
+        current.pitchValid = false;
+        current.pitchSilence = true;
+        current.pitchHz = 0;
+        current.pitchConfidence = 0;
+        current.pitchRms = 0;
+        current.pitchChannel = 0;
+        constexpr double silenceRms = 0.001;
+        constexpr double minimumConfidence = 0.80;
+        double strongestRms = 0;
+        float strongestConfidence = 0;
+        double strongestHz = 0;
+        int strongestChannel = 0;
+        for (int channel = 0; channel < capture->channels(); ++channel)
+        {
+            double mean = 0;
+            for (std::size_t i = 0; i < pitchWindowSize; ++i)
+            {
+                const auto firstDistance = windowFrames - i * stride;
+                double sample = 0;
+                for (std::size_t offset = 0; offset < stride; ++offset)
+                    sample += past(channel, firstDistance - offset);
+                pitchSamples[i] = sample / static_cast<double>(stride);
+                mean += pitchSamples[i];
+            }
+            mean /= static_cast<double>(pitchWindowSize);
+            double squareSum = 0;
+            for (auto& sample : pitchSamples)
+            {
+                sample -= mean;
+                squareSum += sample * sample;
+            }
+            const auto rms = std::sqrt(squareSum / static_cast<double>(pitchWindowSize));
+            if (rms > strongestRms)
+            {
+                strongestRms = rms;
+                strongestChannel = channel;
+            }
+            if (rms < silenceRms)
+                continue;
+
+            pitchDifference[0] = 0;
+            for (std::size_t lag = 1; lag <= maximumLag; ++lag)
+            {
+                double difference = 0;
+                for (std::size_t i = 0; i < pitchWindowSize - lag; ++i)
+                {
+                    const auto delta = pitchSamples[i] - pitchSamples[i + lag];
+                    difference += delta * delta;
+                }
+                pitchDifference[lag] = difference;
+            }
+            double cumulative = 0;
+            for (std::size_t lag = 1; lag <= maximumLag; ++lag)
+            {
+                const auto difference = pitchDifference[lag];
+                cumulative += difference;
+                pitchDifference[lag] = cumulative > 1.0e-18
+                    ? difference * static_cast<double>(lag) / cumulative : 1.0;
+            }
+
+            auto candidate = minimumLag;
+            while (candidate <= maximumLag && pitchDifference[candidate] >= 0.20)
+                ++candidate;
+            if (candidate <= maximumLag)
+            {
+                while (candidate < maximumLag && pitchDifference[candidate + 1] < pitchDifference[candidate])
+                    ++candidate;
+            }
+            else
+            {
+                candidate = minimumLag;
+                for (auto lag = minimumLag + 1; lag <= maximumLag; ++lag)
+                    if (pitchDifference[lag] < pitchDifference[candidate])
+                        candidate = lag;
+            }
+            const auto confidence = static_cast<float>(std::clamp(1.0 - pitchDifference[candidate], 0.0, 1.0));
+            const auto left = candidate > minimumLag ? pitchDifference[candidate - 1] : pitchDifference[candidate];
+            const auto right = candidate < maximumLag ? pitchDifference[candidate + 1] : pitchDifference[candidate];
+            const auto denominator = left - 2.0 * pitchDifference[candidate] + right;
+            const auto offset = std::abs(denominator) > 1.0e-12
+                ? std::clamp(0.5 * (left - right) / denominator, -0.5, 0.5) : 0.0;
+            const auto frequency = effectiveRate / (static_cast<double>(candidate) + offset);
+            if (confidence > strongestConfidence)
+            {
+                strongestConfidence = confidence;
+                strongestHz = frequency;
+                strongestChannel = channel;
+            }
+        }
+        current.pitchRms = static_cast<float>(strongestRms);
+        current.pitchChannel = strongestChannel;
+        current.pitchSilence = strongestRms < silenceRms;
+        current.pitchConfidence = strongestConfidence;
+        current.pitchHz = strongestHz;
+        current.pitchValid = strongestConfidence >= minimumConfidence;
     }
     void transform()
     {
@@ -197,6 +312,13 @@ struct AnalyzerEngine::State
             }
             position = (position + 1) % history[0].size();
             ++count; ++hop;
+            if (profile.guitarTuner && count >= pitchWindowSize
+                && ++pitchFramesSinceUpdate >= std::max<std::size_t>(1, static_cast<std::size_t>(
+                    std::ceil(capture->sampleRate() / 24000.0)) * (pitchWindowSize / 2)))
+            {
+                estimatePitch();
+                pitchFramesSinceUpdate = 0;
+            }
             if (count >= static_cast<std::uint64_t>(profile.fftSize)
                 && (hop >= static_cast<std::size_t>(profile.fftSize / 2)))
             {

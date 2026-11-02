@@ -12,21 +12,23 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     banner_.setText("Explicit Start routes audio. Offline preview uses no device. Invalid edits keep last accepted audio; Stop is always available.",
                    juce::dontSendNotification);
     banner_.setColour(juce::Label::textColourId, juce::Colours::lightgoldenrodyellow);
-    banner_.setTooltip("Choose modules, connect a valid graph, select audio settings and start explicitly.");
+    banner_.setTooltip("Choose modules, connect a valid graph, configure Audio Setup from the Audio menu, then Start explicitly.");
 
     runtime_ = std::make_unique<RuntimePanel>(workspace_, dockWorkspace_.visualizations(), std::move(backends));
     runtime_->onStatus = [this](juce::String value)
     {
-        banner_.setText(runtime_->compactStatus() + " | Audio Setup to configure; Start / Stop are explicit.",
+        banner_.setText(runtime_->compactStatus() + " | Audio menu: Audio Setup; Start / Stop are explicit.",
                         juce::dontSendNotification);
         banner_.setTooltip(value);
         showStatus(value); commands_.commandStatusChanged();
     };
     runtime_->onStarted = [this] { dockWorkspace_.canvas().synchronise(); };
-    runtime_->onDismissSetup = [this] { dockWorkspace_.setPanelVisible(PanelId::audioSettings, false); };
-    runtime_->setSize(640, 300);
-    audioView_.setViewedComponent(runtime_.get(), false);
-    dockWorkspace_.setPanelContent(PanelId::audioSettings, audioView_);
+    runtime_->onDismissSetup = [this]
+    {
+        if (audioSetupWindow_)
+            audioSetupWindow_->setVisible(false);
+    };
+    runtime_->setSize(720, 440);
     catalog_ = std::make_unique<ModuleCatalog>();
     catalog_->onInsert = [this](std::string type) { insertModule(std::move(type)); };
     dockWorkspace_.setPanelContent(PanelId::moduleBrowser, *catalog_);
@@ -47,10 +49,20 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
                 if (const auto* name = std::get_if<std::string>(&kind->second))
                 {
                     const auto display = *name == "Spectrum Analyzer" ? VisualizationKind::spectrum
-                        : *name == "Peak Meter" ? VisualizationKind::peak : *name == "RMS Meter" ? VisualizationKind::rms : VisualizationKind::oscilloscope;
+                        : *name == "Peak Meter" ? VisualizationKind::peak
+                        : *name == "RMS Meter" ? VisualizationKind::rms
+                        : *name == "Guitar Tuner" ? VisualizationKind::guitarTuner : VisualizationKind::oscilloscope;
                     dockWorkspace_.signalPreview().showKind(display);
                     inspectorTabs_.setCurrentTabIndex(1);
                 }
+    };
+    dockWorkspace_.canvas().onModuleDropped = [this](std::string type, juce::Point<float> position)
+    {
+        insertModule(std::move(type), position);
+    };
+    dockWorkspace_.canvas().onModuleDropRejected = [this](juce::String message)
+    {
+        showStatus(message);
     };
     for (auto* component : std::initializer_list<juce::Component*>{
              &menu_, &toolbar_, &banner_, &status_, &dockWorkspace_, &patches_, &addPatch_, &startAudio_, &stopAudio_})
@@ -98,8 +110,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
             updateProjectChrome();
         runtime_->synchronize();
     };
-    banner_.setText(runtime_->compactStatus() + " | Audio Setup to configure; Start / Stop are explicit.", juce::dontSendNotification);
-    showStatus("Ready. Modules are reusable audio functions; placed nodes are instances. Configure Audio Setup, then Start explicitly.");
+    banner_.setText(runtime_->compactStatus() + " | Audio menu: Audio Setup; Start / Stop are explicit.", juce::dontSendNotification);
+    showStatus("Ready. Modules are reusable audio functions; placed nodes are instances. Configure from Audio > Audio Setup, then Start explicitly.");
     refresh();
     if (project_ && !project_->warning().empty())
         showStatus(juce::String::fromUTF8(project_->warning().c_str()));
@@ -107,14 +119,37 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
 MainComponent::~MainComponent()
 {
-    audioView_.setViewedComponent(nullptr, false);
+    audioSetupWindow_.reset();
     dockWorkspace_.canvas().onObservationTarget = nullptr;
+    dockWorkspace_.canvas().onModuleDropped = nullptr;
+    dockWorkspace_.canvas().onModuleDropRejected = nullptr;
     inspectorTabs_.clearTabs();
     removeKeyListener(commands_.getKeyMappings());
     menu_.setModel(nullptr);
     dockWorkspace_.onLayoutChanged = nullptr;
     dockWorkspace_.canvas().onEdit = nullptr;
     setLookAndFeel(nullptr);
+}
+
+MainComponent::AudioSetupWindow::AudioSetupWindow(RuntimePanel& runtime)
+    : juce::DocumentWindow("Audio Setup", juce::Colour(0xff141a23), juce::DocumentWindow::closeButton)
+{
+    setUsingNativeTitleBar(true);
+    setContentNonOwned(&runtime, false);
+    setResizable(true, true);
+    setResizeLimits(640, 380, 1100, 900);
+    centreWithSize(720, 440);
+}
+
+void MainComponent::showAudioSetup()
+{
+    if (!audioSetupWindow_)
+    {
+        audioSetupWindow_ = std::make_unique<AudioSetupWindow>(*runtime_);
+        audioSetupWindow_->setLookAndFeel(&theme_);
+    }
+    audioSetupWindow_->setVisible(true);
+    audioSetupWindow_->toFront(true);
 }
 
 void MainComponent::paint(juce::Graphics& graphics)
@@ -127,12 +162,14 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
     perform(InvocationInfo(key.getModifiers().isShiftDown() ? stopTransport : startTransport));
     return true;
 }
-void MainComponent::insertModule(std::string type)
+void MainComponent::insertModule(std::string type, std::optional<juce::Point<float>> placement)
 {
-    const auto position = dockWorkspace_.canvas().toPatch(dockWorkspace_.canvas().viewport().getCentre().toFloat());
+    const auto screenPosition = placement.value_or(dockWorkspace_.canvas().viewport().getCentre().toFloat());
+    const auto position = dockWorkspace_.canvas().toPatch(screenPosition);
     std::map<std::string, domain::Parameter> values;
     std::string name = type;
-    if (type == "Oscilloscope" || type == "Spectrum Analyzer" || type == "Peak Meter" || type == "RMS Meter")
+    if (type == "Oscilloscope" || type == "Spectrum Analyzer" || type == "Peak Meter"
+        || type == "RMS Meter" || type == "Guitar Tuner")
     {
         values["visualization.kind"] = type;
         type = "Analyzer";
@@ -217,7 +254,7 @@ void MainComponent::report(const application::Result& result)
 void MainComponent::getAllCommands(juce::Array<juce::CommandID>& result)
 {
     result.addArray({rename, undo, redo, toggleInspector, resetLayout,
-                     showCanvas, showModules, showExplorer, showProperties, showAudioSettings, quit,
+                     showModules, showProperties, showAudioSettings, quit,
                      saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport});
 }
 
@@ -260,12 +297,10 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
             info.setInfo("Show Property Inspector", "Show properties, script editor and signal inspection", "View", 0);
             info.setTicked(inspectorVisible());
             break;
-        case resetLayout: info.setInfo("Reset Layout", "Restore shell panels", "View", 0); break;
-        case showCanvas: info.setInfo("Patch Canvas", "Focus the patch editor", "View", 0); break;
+        case resetLayout: info.setInfo("Reset Panels", "Restore the fixed workspace panels", "View", 0); break;
         case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
-        case showExplorer: info.setInfo("Project Explorer", "Show project navigation guidance", "View", 0); break;
         case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
-        case showAudioSettings: info.setInfo("Audio Setup", "Occasional device setup; hide when finished. Transport stays explicit.", "View", 0); break;
+        case showAudioSettings: info.setInfo("Audio Setup", "Configure audio devices and capabilities. Playback remains explicit.", "Audio", 0); break;
         case quit:
             info.setInfo("Quit", "Close Visual Audio Lab", "File", 0);
             info.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
@@ -296,11 +331,9 @@ bool MainComponent::perform(const InvocationInfo& invocation)
         case redo: captureProjectView(); report(workspace_.redo()); return true;
         case toggleInspector: setInspectorVisible(!inspectorVisible()); return true;
         case resetLayout: dockWorkspace_.resetLayout(); return true;
-        case showCanvas: dockWorkspace_.showPanel(PanelId::patchCanvas); return true;
         case showModules: dockWorkspace_.showPanel(PanelId::moduleBrowser); return true;
-        case showExplorer: dockWorkspace_.showPanel(PanelId::projectExplorer); return true;
         case showProperties: dockWorkspace_.showPanel(PanelId::propertyInspector); return true;
-        case showAudioSettings: dockWorkspace_.showPanel(PanelId::audioSettings); return true;
+        case showAudioSettings: showAudioSetup(); return true;
         case saveProject: chooseSave(false); return true;
         case saveProjectAs: chooseSave(true); return true;
         case loadProject: chooseLoad(); return true;
@@ -356,7 +389,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
     }
     else if (index == 2)
     {
-        for (auto id : {showCanvas, showModules, showExplorer, showProperties, showAudioSettings})
+        for (auto id : {showModules, showProperties})
             menu.addCommandItem(&commands_, id);
         menu.addSeparator();
         menu.addCommandItem(&commands_, toggleInspector);

@@ -1,5 +1,6 @@
 #include <val/presentation/DockWorkspace.h>
 #include <val/presentation/ShellTheme.h>
+#include <val/presentation/Typography.h>
 
 namespace val::presentation
 {
@@ -8,6 +9,7 @@ WorkspacePanel::WorkspacePanel(PanelId panel, std::function<void()> collapseRequ
 {
     setName(panelName(panel));
     heading_.setText(panelName(panel), juce::dontSendNotification);
+    heading_.setFont(Typography::font(TextRole::panelTitle));
     heading_.setJustificationType(juce::Justification::centredLeft);
     collapse_.setTitle("Collapse " + juce::String(panelName(panel)));
     collapse_.setTooltip("Collapse " + juce::String(panelName(panel)));

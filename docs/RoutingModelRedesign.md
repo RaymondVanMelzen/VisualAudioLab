@@ -1,7 +1,10 @@
 # Routing Model Redesign: Fixed Sources and Destinations
 
-**Status:** architecture and UX design only. No implementation is implied or
-shipped by this document.
+**Status:** target architecture and UX design. The first executable shared-bus
+layer now supports explicit Sum, multiple roots, fan-out and legal inert nodes;
+see [implementation boundary and remaining dependency order](plans/07-TypographyAndRoutingImplementation.md).
+Fixed system-owned endpoints, independent typed buses/ports, layout adapters and
+multiple destinations below are not shipped by that layer.
 
 ## 1. Review of the current model
 

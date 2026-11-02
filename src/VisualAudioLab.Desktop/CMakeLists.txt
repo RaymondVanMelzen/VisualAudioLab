@@ -12,3 +12,9 @@ add_custom_command(TARGET VisualAudioLab.Desktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:VisualAudioLab.AudioDiscovery.Helper>"
         "$<TARGET_FILE_DIR:VisualAudioLab.Desktop>/$<TARGET_FILE_NAME:VisualAudioLab.AudioDiscovery.Helper>")
+add_custom_command(TARGET VisualAudioLab.Desktop POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:VisualAudioLab.Desktop>/licenses"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${PROJECT_SOURCE_DIR}/resources/fonts/Inter-OFL.txt"
+        "${PROJECT_SOURCE_DIR}/resources/fonts/JetBrainsMono-OFL.txt"
+        "$<TARGET_FILE_DIR:VisualAudioLab.Desktop>/licenses")

@@ -7,6 +7,13 @@ namespace val::audio
 /** Source compatibility for the original engine API; AudioNode is the single processor hierarchy. */
 using AudioProcessorNode = AudioNode;
 
+/** Unity routing utility; PreparedAudioGraph explicitly accumulates its upstream buses. */
+class SumNode final : public AudioProcessorNode
+{
+private:
+    float sample(int, float input) noexcept override { return input; }
+};
+
 /** Copies corresponding hardware input channels; absent/null inputs yield silence. */
 class InputNode final : public AudioProcessorNode
 {

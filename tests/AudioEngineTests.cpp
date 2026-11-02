@@ -156,7 +156,7 @@ void testValidation()
     graph = chain(); graph.connections.push_back({1, 3}); require(reject(graph), "Reject implicit fan-in.");
     graph = chain(); graph.connections[0].source = 99; require(reject(graph), "Reject corrupt references.");
     graph = chain(); graph.connections.push_back({3, 1}); require(reject(graph), "Reject invalid Input/Output port directions.");
-    graph = chain(); graph.nodes.push_back({4, AudioNodeType::gain}); require(reject(graph), "Reject disconnected unused nodes.");
+    graph = chain(); graph.nodes.push_back({4, AudioNodeType::gain}); require(!reject(graph), "Disconnected unused nodes are legal and inert.");
     graph = chain(); graph.channels = 1; require(reject(graph), "No implicit mono/stereo conversion.");
     graph = chain(); graph.nodes[1].gain = std::numeric_limits<float>::infinity(); require(reject(graph), "Reject nonfinite gain.");
     graph = chain(); graph.connections = {{2, 2}, {2, 3}}; require(reject(graph), "Reject self-feedback.");
@@ -183,6 +183,66 @@ void testValidation()
             "Explicit stable-ID structural mapping prepares a real runtime graph.");
     structural.nodes.at(2).parameters["audio.type"] = std::string("Plugin");
     require(!AudioGraph::fromStructural(structural, 2).value, "No unrequested plugin processing.");
+}
+
+void testExplicitRouting()
+{
+    AudioEngine engine;
+    Buffers buffers;
+    AudioGraph graph;
+    graph.nodes = {{1, AudioNodeType::input}, {2, AudioNodeType::gain, 0.5f},
+                   {3, AudioNodeType::gain, 0.25f}, {4, AudioNodeType::sum},
+                   {5, AudioNodeType::output}, {6, AudioNodeType::dcGenerator}};
+    graph.connections = {{1, 2}, {1, 3}, {2, 4}, {3, 4}, {4, 5}};
+    const auto inactiveCapture = std::make_shared<SignalCaptureBuffer>(6, 48000, 2);
+    inactiveCapture->setEnabled(true);
+    graph.nodes[5].capture = inactiveCapture;
+    const auto sumCapture = std::make_shared<SignalCaptureBuffer>(4, 48000, 2);
+    sumCapture->setEnabled(true);
+    graph.nodes[3].capture = sumCapture;
+    require(engine.startOffline(format(), graph, 1).succeeded, "Fan-out branches reunite only at explicit Sum.");
+    render(engine, buffers.span(128));
+    require(buffers.outLeft[0] == 0.375f && buffers.outRight[127] == -0.1875f,
+            "Sum adds corresponding channels with unity coefficients, without implicit averaging.");
+    require(inactiveCapture->capturedFrames() == 0 && sumCapture->capturedFrames() == 128,
+            "Inactive branches do not publish observations; Sum participates in ordinary bounded capture.");
+    require(sumCapture->acquire() != nullptr, "Sum capture is readable.");
+    sumCapture->release();
+    auto active = graph.outputDependencies();
+    require(active == std::vector<std::uint64_t>({1, 2, 3, 4, 5}), "Unrouted generator is excluded from output dependencies.");
+    graph.connections.push_back({2, 4});
+    require(!engine.publish(graph, 2).succeeded, "Duplicate cables cannot double a signal, even at Sum.");
+    graph.connections.pop_back();
+    graph.nodes[3].bypassed = true;
+    require(!engine.publish(graph, 2).succeeded, "Sum cannot be bypassed to select an arbitrary upstream source.");
+    graph.nodes[3].bypassed = false;
+    graph.connections = {{1, 5}};
+    require(engine.publish(graph, 2).succeeded, "Direct source-to-destination plus inert processor islands is valid.");
+    render(engine, buffers.span(17));
+    require(buffers.outLeft[0] == 0.5f && buffers.outRight[16] == -0.25f, "Direct route preserves channels.");
+    auto inactiveCycle = graph;
+    inactiveCycle.nodes.push_back({7, AudioNodeType::gain});
+    inactiveCycle.connections.push_back({2, 7});
+    inactiveCycle.connections.push_back({7, 2});
+    require(!engine.publish(inactiveCycle, 3).succeeded, "Cycles are rejected even in inactive islands.");
+    require(engine.stop().succeeded, "Stop routing plan.");
+    graph.nodes = {{1, AudioNodeType::dcGenerator}, {2, AudioNodeType::dcGenerator},
+                   {3, AudioNodeType::sum}, {4, AudioNodeType::output}};
+    graph.nodes[0].parameters = {{std::uint16_t{0}, 0.25f}};
+    graph.nodes[1].parameters = {{std::uint16_t{0}, -0.125f}};
+    graph.connections = {{1, 3}, {2, 3}, {3, 4}};
+    auto noInput = format(); noInput.inputChannels = 0;
+    require(engine.startOffline(noInput, graph, 1).succeeded, "Multiple independent zero-input roots feed the main destination.");
+    auto span = buffers.span(128); span.inputs = nullptr; span.inputChannels = 0;
+    render(engine, span);
+    require(buffers.outLeft[127] == 0.125f && buffers.outRight[0] == 0.125f, "Independent roots are each evaluated before Sum.");
+    require(engine.setParameter(1, 1, 0, 0.5f, ParameterAction::base).succeeded,
+            "Multiple-root route accepts sample-time parameter changes.");
+    render(engine, span);
+    graph.connections = {{1, 3}, {2, 3}, {3, 4}, {3, 2}};
+    require(!engine.publish(graph, 2).succeeded, "Sources reject incoming edges.");
+    graph.nodes.push_back({5, AudioNodeType::output});
+    require(!engine.publish(graph, 2).succeeded, "Multiple destinations are explicitly deferred, not last-writer-wins.");
 }
 
 thread_local std::uint64_t ticks{};
@@ -255,5 +315,5 @@ void testStress()
 
 int main()
 {
-    return runTests([] { testValidation(); testProcessing(); testTelemetry(); testStress(); });
+    return runTests([] { testValidation(); testExplicitRouting(); testProcessing(); testTelemetry(); testStress(); });
 }

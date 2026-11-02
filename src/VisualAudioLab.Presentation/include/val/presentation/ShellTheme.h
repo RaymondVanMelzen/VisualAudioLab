@@ -9,6 +9,18 @@ class ShellTheme final : public juce::LookAndFeel_V4
 {
 public:
     ShellTheme();
+    juce::Font getTextButtonFont(juce::TextButton&, int) override;
+    juce::Font getComboBoxFont(juce::ComboBox&) override;
+    juce::Font getLabelFont(juce::Label&) override;
+    juce::Font getPopupMenuFont() override;
+    juce::Font getMenuBarFont(juce::MenuBarComponent&, int, const juce::String&) override;
+    juce::Font getAlertWindowTitleFont() override;
+    juce::Font getAlertWindowMessageFont() override;
+    juce::Font getAlertWindowFont() override;
+    juce::Font getSliderPopupFont(juce::Slider&) override;
+    juce::Font getTabButtonFont(juce::TabBarButton&, float) override;
+    juce::Label* createSliderTextBox(juce::Slider&) override;
+    void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool, bool) override;
     void drawButtonBackground(juce::Graphics& graphics, juce::Button& button,
                               const juce::Colour& backgroundColour,
                               bool highlighted, bool down) override;

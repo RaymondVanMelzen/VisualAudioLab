@@ -1,4 +1,5 @@
 #include <val/application/WorkspaceService.h>
+#include <val/domain/Routing.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -81,6 +82,7 @@ Result validateProject(const ProjectState& state)
         std::unordered_map<domain::GraphId, std::size_t> incoming;
         std::unordered_map<domain::GraphId, std::vector<domain::GraphId>> outgoing;
         std::set<domain::GraphId> occupied;
+        std::set<std::pair<domain::GraphId, domain::GraphId>> edges;
         for (const auto& [nodeId, node] : graph.nodes)
         {
             if (!validId(nodeId) || node.id != nodeId || !label(node.name)
@@ -99,7 +101,9 @@ Result validateProject(const ProjectState& state)
             if (!validId(wireId) || wire.id != wireId || wire.source.port != domain::Port::output
                 || wire.destination.port != domain::Port::input || wire.source.node == wire.destination.node
                 || !graph.nodes.contains(wire.source.node) || !graph.nodes.contains(wire.destination.node)
-                || !occupied.insert(wire.destination.node).second)
+                || !edges.emplace(wire.source.node, wire.destination.node).second
+                || (!occupied.insert(wire.destination.node).second
+                    && !domain::isSumPort(graph.nodes.at(wire.destination.node))))
                 return Result::failure("Connection has invalid/duplicate identities, endpoints or an occupied input.");
             ++incoming.at(wire.destination.node);
             outgoing[wire.source.node].push_back(wire.destination.node);

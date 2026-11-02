@@ -1,6 +1,8 @@
 #include <val/presentation/CanvasView.h>
 #include <val/presentation/ModuleCatalogItems.h>
 #include <val/presentation/ShellTheme.h>
+#include <val/presentation/Typography.h>
+#include <val/domain/Routing.h>
 #include <cmath>
 
 namespace val::presentation
@@ -147,7 +149,7 @@ void CanvasView::paint(juce::Graphics& graphics)
         if (NodeView::bounds(point).expanded(12.0f / zoom_).intersects(visible))
         {
             NodeView::paint(graphics, workspace_.graph().nodes.at(id), point,
-                            selected_.contains(id), focusedNode_ == id && hasKeyboardFocus(true), zoom_ >= 0.35f);
+                            selected_.contains(id), focusedNode_ == id && hasKeyboardFocus(true), zoom_);
             if (paintObservation && zoom_ >= 0.75f)
                 paintObservation(graphics, id, NodeView::bounds(point).reduced(58, 0).withTrimmedTop(36).withHeight(36));
         }
@@ -169,6 +171,7 @@ void CanvasView::paint(juce::Graphics& graphics)
     }
     if (workspace_.graph().nodes.empty())
     {
+        graphics.setFont(Typography::ui(Typography::canvasHeight(12, zoom_, 12)));
         graphics.setColour(ShellTheme::textSecondary());
         graphics.drawFittedText("Place module instances from Module Browser.\nRouting Draft (N) creates a structural utility, not an audio function.\n"
                                 "No DSP or audio processing.",
@@ -331,7 +334,9 @@ std::optional<domain::Endpoint> CanvasView::portAt(juce::Point<float> screen) co
                                            tolerance * 2, tolerance * 2});
     for (auto it = candidates.rbegin(); it != candidates.rend(); ++it)
         for (const auto direction : {domain::Port::input, domain::Port::output})
-            if (NodeView::port(position(*it), direction).getDistanceFrom(point) <= tolerance)
+            if ((direction == domain::Port::input ? domain::hasInputPort(workspace_.graph().nodes.at(*it))
+                                                  : domain::hasOutputPort(workspace_.graph().nodes.at(*it)))
+                && NodeView::port(position(*it), direction).getDistanceFrom(point) <= tolerance)
                 return domain::Endpoint{*it, direction};
     return std::nullopt;
 }

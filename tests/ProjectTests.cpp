@@ -257,5 +257,28 @@ int main()
     {
         const ProjectDirectory directory;
         testProjects(directory);
+        val::application::WorkspaceService workspace;
+        const auto create = [&](const char* type)
+        {
+            require(workspace.createNode({0, 0}, type, {{"audio.type", std::string(type)}}).succeeded, "Create routing persistence fixture.");
+            return workspace.lastCreatedNode();
+        };
+        const auto a = create("Input"), b = create("DC Generator"), sum = create("Sum"), output = create("Output");
+        using val::domain::Port;
+        require(workspace.connect({a, Port::output}, {sum, Port::input}).succeeded
+                && workspace.connect({b, Port::output}, {sum, Port::input}).succeeded
+                && workspace.connect({sum, Port::output}, {output, Port::input}).succeeded, "Persist explicit source fan-in.");
+        val::application::ProjectFile file{workspace.project(), {}};
+        using val::infrastructure::LocalProjectStore;
+        require(LocalProjectStore::encode(file).succeeded, "Sum uses the existing version-1 scalar/edge schema.");
+        require(parsed(file.source)["requiredFeatures"][0] == juce::var("audio.explicit-sum.v1"),
+                "Feature gate prevents older readers from editing Sum semantics.");
+        const auto decoded = LocalProjectStore::decode(file.source);
+        require(decoded.file && decoded.file->state == file.state, "Sum roundtrip preserves every original ID, edge and scalar.");
+        require(!workspace.setParameter(sum, "audio.type", std::string("Gain")).succeeded,
+                "Changing a connected Sum into an effect cannot introduce implicit mixing.");
+        val::application::ProjectFile invalid{workspace.project(), {}};
+        invalid.state.patches.at(invalid.state.activePatch).graph.nodes.at(sum).parameters["audio.type"] = std::string("Gain");
+        require(!LocalProjectStore::encode(invalid).succeeded, "Persistence rejects implicit effect fan-in.");
     });
 }

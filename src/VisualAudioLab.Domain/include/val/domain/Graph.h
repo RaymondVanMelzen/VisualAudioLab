@@ -40,7 +40,7 @@ struct Node final
     bool operator==(const Node&) const = default;
 };
 
-/** One directed output-to-input wire; input fan-in is forbidden, output fan-out allowed. */
+/** One directed wire; only explicit Sum inputs accept fan-in, outputs allow fan-out. */
 struct Connection final
 {
     GraphId id{};

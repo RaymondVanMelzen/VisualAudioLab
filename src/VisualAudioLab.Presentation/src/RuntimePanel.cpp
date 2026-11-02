@@ -1,5 +1,6 @@
 #include <val/presentation/RuntimePanel.h>
 #include <val/presentation/ShellTheme.h>
+#include <val/presentation/Typography.h>
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -40,32 +41,19 @@ bool contentEqual(const domain::Graph& left, const domain::Graph& right)
 }
 bool hasZeroInputSourceOnOutput(const audio::AudioGraph& graph)
 {
-    auto current = std::uint64_t{};
+    const auto dependencies = graph.outputDependencies();
     for (const auto& node : graph.nodes)
-        if (node.type == audio::AudioNodeType::output)
-        {
-            current = node.id;
-            break;
-        }
-    for (std::size_t visited = 0; current != 0 && visited < graph.nodes.size(); ++visited)
     {
-        const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(),
-            [current](const auto& candidate) { return candidate.id == current; });
-        if (node == graph.nodes.end()) return false;
-        const auto generated = node->type == audio::AudioNodeType::signalGenerator
-            || node->type == audio::AudioNodeType::impulseGenerator
-            || node->type == audio::AudioNodeType::clickGenerator
-            || node->type == audio::AudioNodeType::burstGenerator
-            || node->type == audio::AudioNodeType::chirpGenerator
-            || node->type == audio::AudioNodeType::noiseGenerator
-            || node->type == audio::AudioNodeType::dcGenerator
-            || (node->type == audio::AudioNodeType::script && node->script && node->script->inputs().empty());
-        if (generated)
+        const auto generated = node.type == audio::AudioNodeType::signalGenerator
+            || node.type == audio::AudioNodeType::impulseGenerator
+            || node.type == audio::AudioNodeType::clickGenerator
+            || node.type == audio::AudioNodeType::burstGenerator
+            || node.type == audio::AudioNodeType::chirpGenerator
+            || node.type == audio::AudioNodeType::noiseGenerator
+            || node.type == audio::AudioNodeType::dcGenerator
+            || (node.type == audio::AudioNodeType::script && node.script && node.script->inputs().empty());
+        if (generated && std::binary_search(dependencies.begin(), dependencies.end(), node.id))
             return true;
-        const auto incoming = std::find_if(graph.connections.begin(), graph.connections.end(),
-            [current](const auto& connection) { return connection.destination == current; });
-        if (incoming == graph.connections.end()) return false;
-        current = incoming->source;
     }
     return false;
 }
@@ -103,8 +91,8 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
     notice_.setText("Check output levels before Start; no master limiter. Automatic inspection may initialize hardware "
                     "(ASIO may briefly start/stop its driver). Ports use exact driver channel identities. "
                     "Input must be disabled or match output width. No automatic playback or fallback.", juce::dontSendNotification);
-    notice_.setFont(juce::FontOptions(13.0f));
-    state_.setText(lastStatus_, juce::dontSendNotification); state_.setFont(juce::FontOptions(13.0f));
+    notice_.setFont(Typography::ui(13));
+    state_.setText(lastStatus_, juce::dontSendNotification); state_.setFont(Typography::ui(13));
     state_.setMinimumHorizontalScale(1.0f);
     state_.setName("Audio setup state");
     state_.setJustificationType(juce::Justification::topLeft);
@@ -606,11 +594,13 @@ Result RuntimePanel::attachCaptures(audio::AudioGraph& graph, std::vector<std::u
     const int captureChannels = std::min(2, width_);
     const int limit = std::min(8, static_cast<int>(768000 / (rate_ * captureChannels)));
     std::vector<std::uint64_t> observed;
+    const auto dependencies = graph.outputDependencies();
     for (const auto& node : graph.nodes) if (node.type == audio::AudioNodeType::analyzer) observed.push_back(node.id);
     for (const auto& node : graph.nodes)
         if (node.type != audio::AudioNodeType::input && node.type != audio::AudioNodeType::analyzer) observed.push_back(node.id);
     for (auto id : observed)
     {
+        if (!std::binary_search(dependencies.begin(), dependencies.end(), id)) continue;
         if (captures_.contains(id) || static_cast<int>(captures_.size()) >= limit) continue;
         auto capture = std::make_shared<audio::SignalCaptureBuffer>(id, rate_, captureChannels);
         auto profile = audio::AnalyzerProfile{};
@@ -808,9 +798,13 @@ void RuntimePanel::timerCallback()
         return;
     }
     if (value.activeRevision == revision_)
+    {
+        const auto dependencies = acceptedAudio_.outputDependencies();
         for (auto it = captures_.begin(); it != captures_.end();)
-            if (!accepted_.nodes.contains(it->first)) { visualizations_.remove(it->first); it = captures_.erase(it); }
+            if (!accepted_.nodes.contains(it->first) || !std::binary_search(dependencies.begin(), dependencies.end(), it->first))
+            { visualizations_.remove(it->first); it = captures_.erase(it); }
             else ++it;
+    }
     if (++ticks_ % 15 != 0) return;
     for (const auto& node : acceptedAudio_.nodes)
         if (node.type == audio::AudioNodeType::script)
@@ -826,12 +820,12 @@ void RuntimePanel::timerCallback()
                 return;
             }
         }
-    const auto latency = value.reportedOutputLatencySeconds ? juce::String(*value.reportedOutputLatencySeconds * 1000, 2) + " ms reported out"
+    const auto latency = value.reportedOutputLatencySeconds ? Typography::quantity(*value.reportedOutputLatencySeconds * 1000, 1, "ms") + " reported out"
                                                             : juce::String("latency unavailable");
-    const auto inputLatency = value.reportedInputLatencySeconds ? juce::String(*value.reportedInputLatencySeconds * 1000, 2) + " ms in"
+    const auto inputLatency = value.reportedInputLatencySeconds ? Typography::quantity(*value.reportedInputLatencySeconds * 1000, 1, "ms") + " in"
                                                                : juce::String("input latency unavailable");
-    message((graphWarning_.isEmpty() ? juce::String{} : graphWarning_ + " | ") + (offline_ ? "Offline" : api_.getText() + " | " + output_.getText()) + " | " + juce::String(rate_, 0) + " Hz | "
-        + juce::String(block_) + " frames | " + latency + ", " + inputLatency + " | DSP " + juce::String(value.lastCallbackLoad * 100, 1)
+    message((graphWarning_.isEmpty() ? juce::String{} : graphWarning_ + " | ") + (offline_ ? "Offline" : api_.getText() + " | " + output_.getText()) + " | " + Typography::sampleRate(rate_) + " | "
+        + juce::String(block_) + " samples | " + latency + ", " + inputLatency + " | DSP " + Typography::number(value.lastCallbackLoad * 100, 1)
         + "% | CPU unavailable | xruns " + (value.backendXruns ? juce::String(*value.backendXruns) : juce::String("unavailable"))
         + " | callback " + juce::String(static_cast<double>(value.callbackNanoseconds) / 1000, 1) + " us"
         + " | misses " + juce::String(value.deadlineMisses) + " | events missed/cancelled " + juce::String(value.missedEvents)

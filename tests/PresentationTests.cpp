@@ -67,9 +67,16 @@ void runProjectPresentationTests();
 void runVisualizationPresentationTests();
 void runRuntimeIntegrationTests();
 void runModulePanelIntegrationTests();
+void runTypographyTests(const char* directory);
 
 int main(int argc, char** argv)
 {
+    if (argc == 3 && std::string_view(argv[1]) == "--typography-evidence")
+        return runTests([&]
+        {
+            const juce::ScopedJuceInitialiser_GUI initialise;
+            runTypographyTests(argv[2]);
+        });
     if (argc == 2)
         return runTests([&]
         {
@@ -86,6 +93,8 @@ int main(int argc, char** argv)
                 runRuntimeIntegrationTests();
             else if (std::string_view(argv[1]) == "--module-panels")
                 runModulePanelIntegrationTests();
+            else if (std::string_view(argv[1]) == "--typography")
+                runTypographyTests(nullptr);
             else
                 throw std::runtime_error("Unknown presentation test selector.");
         });

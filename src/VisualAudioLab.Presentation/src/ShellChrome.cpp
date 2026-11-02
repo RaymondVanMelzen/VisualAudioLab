@@ -1,5 +1,6 @@
 #include <val/presentation/ShellChrome.h>
 #include <val/presentation/ShellTheme.h>
+#include <val/presentation/Typography.h>
 
 namespace val::presentation
 {
@@ -9,6 +10,7 @@ ShellToolbar::ShellToolbar(juce::ApplicationCommandManager& commands, juce::Comm
 {
     setName("Application toolbar");
     workspaceName_.setTitle("Temporary workspace name");
+    workspaceName_.setFont(Typography::font(TextRole::applicationTitle));
     workspaceName_.setDescription("Project name. Rename applies an undoable edit; File saves the project.");
     rename_.setCommandToTrigger(&commands, rename, true);
     undo_.setCommandToTrigger(&commands, undo, true);
@@ -33,6 +35,8 @@ ShellStatusBar::ShellStatusBar()
 {
     setName("Application status bar");
     message_.setTitle("Application status");
+    message_.setFont(Typography::font(TextRole::status));
+    capability_.setFont(Typography::font(TextRole::status));
     capability_.setText("Explicit transport | No auto playback", juce::dontSendNotification);
     capability_.setColour(juce::Label::textColourId, ShellTheme::textSecondary());
     capability_.setJustificationType(juce::Justification::centredRight);

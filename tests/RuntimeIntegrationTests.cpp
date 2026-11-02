@@ -2,6 +2,8 @@
 #include <val/presentation/MainComponent.h>
 #include <val/infrastructure/LocalProjectStore.h>
 #include <val/application/ProjectSession.h>
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace
@@ -9,6 +11,24 @@ namespace
 using namespace val;
 using namespace val::application;
 using namespace val::presentation;
+
+double contrastRatio(juce::Colour first, juce::Colour second)
+{
+    const auto luminance = [](juce::Colour colour)
+    {
+        const auto linear = [](std::uint8_t channel)
+        {
+            const auto value = static_cast<double>(channel) / 255.0;
+            return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
+        };
+        return 0.2126 * linear(colour.getRed())
+             + 0.7152 * linear(colour.getGreen())
+             + 0.0722 * linear(colour.getBlue());
+    };
+    const auto brighter = std::max(luminance(first), luminance(second));
+    const auto darker = std::min(luminance(first), luminance(second));
+    return (brighter + 0.05) / (darker + 0.05);
+}
 
 /** Finds a real named UI control without private access or operating a native device. */
 template <typename T> T* control(juce::Component& parent, const juce::String& name)
@@ -145,6 +165,37 @@ void screenshot(juce::Component& component, juce::String name, juce::Rectangle<i
 
 void runRuntimeIntegrationTests()
 {
+    const auto panelSurface = ShellTheme::surface();
+    const auto raised = ShellTheme::raised();
+    require(ShellTheme::background() == juce::Colour(0xff1b1d20)
+                && panelSurface == juce::Colour(0xff262a2d)
+                && ShellTheme::audio() == juce::Colour(0xff00c2d1)
+                && ShellTheme::midi() == juce::Colour(0xffcc5eff)
+                && ShellTheme::control() == juce::Colour(0xffe4793a)
+                && ShellTheme::analyzer() == juce::Colour(0xff9ddc4a)
+                && ShellTheme::selected() == juce::Colour(0xfff39a57)
+                && ShellTheme::warning() == juce::Colour(0xffd7a93f)
+                && ShellTheme::error() == juce::Colour(0xffd45353),
+            "The centralized theme preserves the user-approved palette.");
+    require(contrastRatio(ShellTheme::textPrimary(), panelSurface) >= 4.5
+                && contrastRatio(ShellTheme::textSecondary(), raised) >= 4.5
+                && contrastRatio(ShellTheme::textMuted(), raised) >= 4.5
+                && contrastRatio(ShellTheme::midi(), panelSurface) >= 4.5
+                && contrastRatio(ShellTheme::errorText(), panelSurface) >= 4.5
+                && contrastRatio(ShellTheme::border(), raised) >= 3.0
+                && contrastRatio(ShellTheme::focus(), panelSurface) >= 3.0
+                && contrastRatio(ShellTheme::selected(), panelSurface) >= 3.0
+                && contrastRatio(ShellTheme::audio(), panelSurface) >= 3.0
+                && contrastRatio(ShellTheme::analyzer(), panelSurface) >= 3.0
+                && contrastRatio(ShellTheme::warning(), panelSurface) >= 3.0,
+            "Normal text, MIDI, error copy and necessary raised-surface borders meet their contrast targets.");
+    require(contrastRatio(ShellTheme::error(), panelSurface) < 4.5,
+            "The supplied red remains an icon/accent, not normal panel text.");
+    for (const auto accent : {ShellTheme::audio(), ShellTheme::midi(), ShellTheme::control(),
+                              ShellTheme::analyzer(), ShellTheme::selected(), ShellTheme::warning(),
+                              ShellTheme::error()})
+        require(contrastRatio(ShellTheme::onAccent(), accent) >= 4.5,
+                "Dark text on each opaque accent fill meets normal-text contrast.");
     require(supportedAudioBackends(AudioPlatform::windows) == std::vector{AudioBackendKind::asio, AudioBackendKind::wasapiShared, AudioBackendKind::wasapiExclusive, AudioBackendKind::directSound}
             && supportedAudioBackends(AudioPlatform::macOS) == std::vector{AudioBackendKind::coreAudio}
             && supportedAudioBackends(AudioPlatform::other).empty(), "Backend platform policy excludes foreign APIs without fallback.");

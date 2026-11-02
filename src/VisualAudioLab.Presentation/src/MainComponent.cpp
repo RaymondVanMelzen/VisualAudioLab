@@ -11,7 +11,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     setWantsKeyboardFocus(true);
     banner_.setText("Explicit Start routes audio. Offline preview uses no device. Invalid edits keep last accepted audio; Stop is always available.",
                    juce::dontSendNotification);
-    banner_.setColour(juce::Label::textColourId, juce::Colours::lightgoldenrodyellow);
+    banner_.setColour(juce::Label::textColourId, ShellTheme::textSecondary());
     banner_.setTooltip("Choose modules, connect a valid graph, configure Audio Setup from the Audio menu, then Start explicitly.");
 
     runtime_ = std::make_unique<RuntimePanel>(workspace_, dockWorkspace_.visualizations(), std::move(backends));
@@ -132,7 +132,7 @@ MainComponent::~MainComponent()
 }
 
 MainComponent::AudioSetupWindow::AudioSetupWindow(RuntimePanel& runtime)
-    : juce::DocumentWindow("Audio Setup", juce::Colour(0xff141a23), juce::DocumentWindow::closeButton)
+    : juce::DocumentWindow("Audio Setup", ShellTheme::background(), juce::DocumentWindow::closeButton)
 {
     setUsingNativeTitleBar(true);
     setContentNonOwned(&runtime, false);
@@ -253,7 +253,7 @@ void MainComponent::report(const application::Result& result)
 
 void MainComponent::getAllCommands(juce::Array<juce::CommandID>& result)
 {
-    result.addArray({rename, undo, redo, toggleInspector, resetLayout,
+    result.addArray({rename, undo, redo, toggleInspector, toggleReducedEffects, resetLayout,
                      showModules, showProperties, showAudioSettings, quit,
                      saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport});
 }
@@ -297,6 +297,10 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
             info.setInfo("Show Property Inspector", "Show properties, script editor and signal inspection", "View", 0);
             info.setTicked(inspectorVisible());
             break;
+        case toggleReducedEffects:
+            info.setInfo("Reduced effects (no glow)", "Disable decorative selection glow while keeping crisp state outlines", "View", 0);
+            info.setTicked(!ShellTheme::glowEnabled());
+            break;
         case resetLayout: info.setInfo("Reset Panels", "Restore the fixed workspace panels", "View", 0); break;
         case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
         case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
@@ -330,6 +334,11 @@ bool MainComponent::perform(const InvocationInfo& invocation)
         case undo: captureProjectView(); report(workspace_.undo()); return true;
         case redo: captureProjectView(); report(workspace_.redo()); return true;
         case toggleInspector: setInspectorVisible(!inspectorVisible()); return true;
+        case toggleReducedEffects:
+            ShellTheme::setGlowEnabled(!ShellTheme::glowEnabled());
+            dockWorkspace_.canvas().repaint();
+            menuItemsChanged();
+            return true;
         case resetLayout: dockWorkspace_.resetLayout(); return true;
         case showModules: dockWorkspace_.showPanel(PanelId::moduleBrowser); return true;
         case showProperties: dockWorkspace_.showPanel(PanelId::propertyInspector); return true;
@@ -393,6 +402,7 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
             menu.addCommandItem(&commands_, id);
         menu.addSeparator();
         menu.addCommandItem(&commands_, toggleInspector);
+        menu.addCommandItem(&commands_, toggleReducedEffects);
         menu.addCommandItem(&commands_, resetLayout);
     }
     else if (index == 3)

@@ -97,7 +97,7 @@ public:
     explicit Impl(ModuleCatalog& owner) : owner_(owner)
     {
         search_.setTitle("Search modules");
-        search_.setTextToShowWhenEmpty("Search modules...", juce::Colours::grey);
+        search_.setTextToShowWhenEmpty("Search modules...", ShellTheme::textMuted());
         search_.onTextChange = [this] { filter(); };
         search_.onReturnKey = [this] { insert(); };
         category_.setTitle("Module category");
@@ -142,8 +142,13 @@ private:
     void paintListBoxItem(int row, juce::Graphics& graphics, int width, int height, bool selected) override
     {
         if (row < 0 || row >= getNumRows()) return;
-        if (selected) graphics.fillAll(ShellTheme::accent().withAlpha(0.25f));
-        graphics.setColour(juce::Colours::white);
+        if (selected)
+        {
+            graphics.fillAll(ShellTheme::raised());
+            graphics.setColour(ShellTheme::selected());
+            graphics.fillRect(0, 0, 3, height);
+        }
+        graphics.setColour(ShellTheme::textPrimary());
         const auto& entry = *filtered_[static_cast<std::size_t>(row)];
         const auto categoryIndex = static_cast<std::size_t>(entry.category);
         const auto label = juce::String(entry.name.data(), static_cast<int>(entry.name.size()))

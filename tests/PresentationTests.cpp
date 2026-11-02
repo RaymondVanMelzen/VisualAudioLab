@@ -93,6 +93,7 @@ int main(int argc, char** argv)
     {
         const juce::ScopedJuceInitialiser_GUI initialise;
         using namespace val::presentation;
+        ShellTheme::setGlowEnabled(true);
         val::application::WorkspaceService service;
         MainComponent shell(service);
         shell.setSize(1000, 700);
@@ -107,7 +108,7 @@ int main(int argc, char** argv)
 
         juce::Array<juce::CommandID> commands;
         shell.getAllCommands(commands);
-        require(commands.size() == 15, "Shell registers fixed-panel, project and explicit transport commands.");
+        require(commands.size() == 16, "Shell registers fixed-panel, project, effects and explicit transport commands.");
         auto commandId = [&](const juce::String& name)
         {
             for (const auto id : commands)
@@ -121,6 +122,15 @@ int main(int argc, char** argv)
         };
         require(menuContains(shell.getMenuForIndex(3, "Audio"), "Audio Setup"),
                 "Audio menu contains the sole Audio Setup entry.");
+        require(menuContains(shell.getMenuForIndex(2, "View"), "Reduced effects (no glow)"),
+                "View menu exposes a discoverable reduced-effects mode.");
+        const auto reducedEffects = commandId("Reduced effects (no glow)");
+        require(shell.perform(juce::ApplicationCommandTarget::InvocationInfo(reducedEffects))
+                    && !ShellTheme::glowEnabled(),
+                "Reduced effects disables decorative glow without changing the crisp canvas state.");
+        require(shell.perform(juce::ApplicationCommandTarget::InvocationInfo(reducedEffects))
+                    && ShellTheme::glowEnabled(),
+                "Reduced effects can be switched off again.");
         require(!menuContains(shell.getMenuForIndex(2, "View"), "Audio Setup"),
                 "View menu does not duplicate Audio Setup.");
         require(findButton(shell, "Audio Setup") == nullptr,

@@ -34,7 +34,7 @@ ShellStatusBar::ShellStatusBar()
     setName("Application status bar");
     message_.setTitle("Application status");
     capability_.setText("Explicit transport | No auto playback", juce::dontSendNotification);
-    capability_.setColour(juce::Label::textColourId, ShellTheme::accent());
+    capability_.setColour(juce::Label::textColourId, ShellTheme::textSecondary());
     capability_.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(message_);
     addAndMakeVisible(capability_);

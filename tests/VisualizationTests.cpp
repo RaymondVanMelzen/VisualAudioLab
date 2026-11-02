@@ -133,6 +133,57 @@ void calibration()
             && near(longBlock.result.displayedPeak[0], shortBlock.result.displayedPeak[0], 0.000001),
             "Hold/ballistics inspect every worker-side sample, retaining impulses even when a host packet exceeds the peak window.");
 }
+void guitarTuner()
+{
+    AnalyzerProfile profile; profile.guitarTuner = true;
+    for (const auto frequency : {82.4069, 110.0, 146.832, 195.998, 246.942, 329.628})
+    {
+        AnalysisFixture fixture(48000, 1, profile);
+        fixture.feed(12000, [=](std::uint64_t frame, int)
+        {
+            return static_cast<float>(0.6 * std::sin(2 * std::numbers::pi * frequency * static_cast<double>(frame) / 48000));
+        });
+        require(fixture.result.pitchReady && fixture.result.pitchValid && !fixture.result.pitchSilence
+                    && fixture.result.pitchConfidence >= 0.80f
+                    && std::abs(fixture.result.pitchHz - frequency) < 0.25,
+                "The worker estimates each standard open-guitar string with a stable pitch result.");
+    }
+
+    constexpr double lowE = 82.4069;
+    const auto sharpE = lowE * std::pow(2.0, 25.0 / 1200.0);
+    AnalysisFixture cents(48000, 1, profile);
+    cents.feed(12000, [=](std::uint64_t frame, int)
+    {
+        const auto phase = 2 * std::numbers::pi * static_cast<double>(frame) / 48000;
+        return static_cast<float>(0.25 * std::sin(phase * sharpE) + 0.65 * std::sin(phase * 2 * sharpE)
+                                  + 0.2 * std::sin(phase * 3 * sharpE));
+    });
+    require(cents.result.pitchValid && std::abs(cents.result.pitchHz - sharpE) < 0.3,
+            "A strong harmonic series retains the fundamental rather than reporting its second harmonic.");
+
+    AnalysisFixture silent(48000, 1, profile);
+    silent.feed(12000, [](auto, int) { return 0.0f; });
+    require(silent.result.pitchReady && silent.result.pitchSilence && !silent.result.pitchValid,
+            "Measured silence is reported distinctly from a missing analysis window.");
+
+    AnalysisFixture noise(48000, 1, profile);
+    std::uint32_t random = 0x12345678;
+    noise.feed(12000, [&random](auto, int)
+    {
+        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+        return static_cast<float>(static_cast<std::int32_t>(random) / 2147483648.0 * 0.2);
+    });
+    require(noise.result.pitchReady && !noise.result.pitchValid && noise.result.pitchConfidence < 0.80f,
+            "Noise is presented as an uncertain signal rather than a confident note.");
+
+    AnalysisFixture highRate(96000, 1, profile);
+    highRate.feed(24000, [](std::uint64_t frame, int)
+    {
+        return static_cast<float>(0.7 * std::sin(2 * std::numbers::pi * 329.628 * static_cast<double>(frame) / 96000));
+    });
+    require(highRate.result.pitchValid && std::abs(highRate.result.pitchHz - 329.628) < 0.3,
+            "Pitch estimation adapts its bounded decimation at a 96 kHz sample rate.");
+}
 void continuityAndAdmission()
 {
     AnalysisFixture fixture;
@@ -332,6 +383,6 @@ int main(int argc, char** argv)
     return runTests([&]
     {
         if (argc == 2 && std::string_view(argv[1]) == "--stress") { stress(); return; }
-        calibration(); continuityAndAdmission(); concurrentTransport(); graphCapture();
+        calibration(); guitarTuner(); continuityAndAdmission(); concurrentTransport(); graphCapture();
     });
 }

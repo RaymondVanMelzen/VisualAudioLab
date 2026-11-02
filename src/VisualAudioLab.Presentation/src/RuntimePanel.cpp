@@ -38,6 +38,29 @@ bool contentEqual(const domain::Graph& left, const domain::Graph& right)
     }
     return true;
 }
+bool hasZeroInputSourceOnOutput(const audio::AudioGraph& graph)
+{
+    auto current = std::uint64_t{};
+    for (const auto& node : graph.nodes)
+        if (node.type == audio::AudioNodeType::output)
+        {
+            current = node.id;
+            break;
+        }
+    for (std::size_t visited = 0; current != 0 && visited < graph.nodes.size(); ++visited)
+    {
+        const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(),
+            [current](const auto& candidate) { return candidate.id == current; });
+        if (node == graph.nodes.end()) return false;
+        if (node->type == audio::AudioNodeType::script && node->script && node->script->inputs().empty())
+            return true;
+        const auto incoming = std::find_if(graph.connections.begin(), graph.connections.end(),
+            [current](const auto& connection) { return connection.destination == current; });
+        if (incoming == graph.connections.end()) return false;
+        current = incoming->source;
+    }
+    return false;
+}
 }
 RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& visualizations, BackendFactory factory)
     : workspace_(workspace), visualizations_(visualizations), factory_(std::move(factory))
@@ -94,7 +117,14 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
         box->onChange = [this] { configurationChanged(); };
     start_.onClick = [this] { const auto result = start(); if (!result.succeeded) message(text(result.error)); };
     stop_.onClick = [this] { const auto result = stop(); if (!result.succeeded) message(text(result.error)); };
-    done_.onClick = [this] { if (onDismissSetup) onDismissSetup(); };
+    done_.onClick = [this]
+    {
+        message("Audio Setup closed. Transport unchanged.");
+        if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+            window->setVisible(false);
+        else if (onDismissSetup)
+            onDismissSetup();
+    };
     clearConfiguration("Choose endpoints");
     labels_[1].setText(api_.getSelectedId() == 1 ? "ASIO input" : "Input device", juce::dontSendNotification);
     labels_[2].setText(api_.getSelectedId() == 1 ? "ASIO driver" : "Output device", juce::dontSendNotification);
@@ -127,7 +157,7 @@ void RuntimePanel::resized()
     advanced_.setBounds(bounds.removeFromTop(26).removeFromLeft(160).reduced(2));
     state_.setBounds(bounds.removeFromTop(30).reduced(2));
     juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_};
-    // Two compact columns fit the occasional setup dock.
+    // Two compact columns fit the resizable Audio Setup dialog.
     for (int i = 0; i < 7; ++i)
     {
         const int row = i / 2, col = i % 2, column = bounds.getWidth() / 2;
@@ -575,7 +605,12 @@ Result RuntimePanel::attachCaptures(audio::AudioGraph& graph, std::vector<std::u
     {
         if (captures_.contains(id) || static_cast<int>(captures_.size()) >= limit) continue;
         auto capture = std::make_shared<audio::SignalCaptureBuffer>(id, rate_, captureChannels);
-        const auto registered = visualizations_.add(capture, text(workspace_.graph().nodes.at(id).name));
+        auto profile = audio::AnalyzerProfile{};
+        const auto& parameters = workspace_.graph().nodes.at(id).parameters;
+        if (const auto kind = parameters.find("visualization.kind"); kind != parameters.end())
+            if (const auto* name = std::get_if<std::string>(&kind->second))
+                profile.guitarTuner = *name == "Guitar Tuner";
+        const auto registered = visualizations_.add(capture, text(workspace_.graph().nodes.at(id).name), profile);
         if (!registered.succeeded) return registered;
         captures_.emplace(id, std::move(capture)); added.push_back(id);
         visualizations_.setState(id, ObservationState::processing);
@@ -596,6 +631,7 @@ Result RuntimePanel::start()
     auto compiled = compileGraph(false);
     if (!compiled.value) return Result::failure(compiled.error.message);
     if (compiled.value->nodes.empty()) return Result::failure("Patch is empty. Insert and connect modules (for example Script -> Output).");
+    const bool outputOnlyWithoutGenerator = config.inputChannels == 0 && !hasZeroInputSourceOnOutput(*compiled.value);
     const AudioStreamFormat format{rate_, block_, config.maxFrames, config.inputChannels, width_};
     const auto validated = audio::PreparedAudioGraph::prepare(*compiled.value, format, 1);
     if (!validated.value) return Result::failure(validated.error.message);
@@ -614,7 +650,9 @@ Result RuntimePanel::start()
     accepted_ = workspace_.graph(); acceptedAudio_ = *compiled.value;
     for (int i = 0; i < width_; ++i) offlinePointers_[i] = offlineOutput_.data() + i * block_;
     for (const auto& [id, capture] : captures_) { juce::ignoreUnused(capture); visualizations_.setState(id, ObservationState::processing); }
-    message(offline_ ? "Offline preview running (no hardware, not realtime scheduling)." : "Audio running. Stop before changing device configuration.");
+    message(outputOnlyWithoutGenerator
+        ? "Audio running with input disabled, but no zero-input Script generator feeds Output; this patch may render silence. Connect a generator or enable input. No oscillator module is shipped."
+        : offline_ ? "Offline preview running (no hardware, not realtime scheduling)." : "Audio running. Stop before changing device configuration.");
     if (onStarted) onStarted();
     enableControls(); return Result::success();
 }

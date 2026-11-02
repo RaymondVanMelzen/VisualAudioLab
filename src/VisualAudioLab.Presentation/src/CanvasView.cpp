@@ -1,4 +1,5 @@
 #include <val/presentation/CanvasView.h>
+#include <val/presentation/ModuleCatalogItems.h>
 #include <val/presentation/ShellTheme.h>
 #include <cmath>
 
@@ -29,6 +30,25 @@ CanvasView::CanvasView(application::WorkspaceService& workspace) : workspace_(wo
 }
 
 CanvasView::~CanvasView() = default;
+
+bool CanvasView::isInterestedInDragSource(const SourceDetails& details)
+{
+    return isModuleCatalogType(details.description.toString().toStdString());
+}
+
+void CanvasView::itemDropped(const SourceDetails& details)
+{
+    if (!isInterestedInDragSource(details))
+        return;
+    if (!viewport().contains(details.localPosition))
+    {
+        if (onModuleDropRejected)
+            onModuleDropRejected("Drop the module inside the Patch Canvas area; nothing was inserted.");
+        return;
+    }
+    if (onModuleDropped)
+        onModuleDropped(details.description.toString().toStdString(), details.localPosition.toFloat());
+}
 
 void CanvasView::restoreNavigation(application::PatchViewport value)
 {

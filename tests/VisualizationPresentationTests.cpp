@@ -2,6 +2,7 @@
 #include <val/presentation/MainComponent.h>
 #include <val/audio/AudioEngine.h>
 #include <chrono>
+#include <cmath>
 #include <numbers>
 #include <thread>
 
@@ -34,7 +35,9 @@ void runVisualizationPresentationTests()
     auto& session = shell.dockWorkspace().visualizations();
     auto& inspector = shell.dockWorkspace().signalPreview();
     auto capture = std::make_shared<SignalCaptureBuffer>(7, 48000, 2);
-    require(session.add(capture, "Gain output - offline calibration fixture").succeeded, "Register real graph observation source.");
+    AnalyzerProfile tunerProfile; tunerProfile.guitarTuner = true;
+    require(session.add(capture, "Gain output - offline calibration fixture", tunerProfile).succeeded,
+            "Register real graph observation source with worker-side tuner analysis.");
     inspector.setTarget(7);
     inspector.setPinned(true);
     inspector.followSelection(99);
@@ -46,6 +49,41 @@ void runVisualizationPresentationTests()
     require(!inspector.plot(VisualizationKind::spectrum).setRefreshHz(31).succeeded
             && inspector.plot(VisualizationKind::spectrum).setRefreshHz(15).succeeded,
             "Each view validates its refresh ceiling.");
+    auto tunerResult = std::make_shared<SignalAnalysis>();
+    tunerResult->pitchReady = tunerResult->pitchValid = true;
+    tunerResult->pitchHz = 82.4069;
+    tunerResult->pitchConfidence = 0.98f;
+    inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Live", 1.0e20, false);
+    require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("E2")
+                && inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("In tune")
+                && inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("440 Hz")
+                && inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("Channel 1"),
+            "Accessible tuner description includes the note, in-tune state and reference tuning.");
+    tunerResult->pitchHz = 82.4069 * std::pow(2.0, 25.0 / 1200.0);
+    inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Live", 1.0e20 + 100, false);
+    require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("+25.0 cents")
+                && inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("sharp")
+                && inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("Tune toward center"),
+            "Tuner identifies sharp/flat deviation and direction toward the center.");
+    tunerResult->pitchHz = 82.4069 * std::pow(2.0, -25.0 / 1200.0);
+    inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Live", 1.0e20 + 120, false);
+    require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("-25.0 cents flat"),
+            "Tuner labels flat deviation as clearly as sharp deviation.");
+    inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Stale - no new samples", 1.0e20 + 150, true);
+    require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("not live")
+                && !inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("Tune toward center"),
+            "Stale readings retain provenance but never claim a current tuning state.");
+    tunerResult->pitchSilence = true;
+    tunerResult->pitchValid = false;
+    inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Live", 1.0e20 + 200, false);
+    require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("No signal"),
+            "Accessible tuner distinguishes measured silence.");
+    tunerResult->pitchSilence = false;
+    tunerResult->pitchHz = 0;
+    tunerResult->pitchConfidence = 0.2f;
+    inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Live", 1.0e20 + 300, false);
+    require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("No stable note"),
+            "Accessible tuner reports uncertain/noisy input without inventing a note.");
     shell.dockWorkspace().showPanel(PanelId::propertyInspector);
     juce::TabbedComponent* inspectorTabs{};
     for (auto* child : shell.dockWorkspace().panel(PanelId::propertyInspector).getChildren())
@@ -85,8 +123,13 @@ void runVisualizationPresentationTests()
     VisualizationTestWindow detailsWindow(detail);
     detail.setTarget(7); detail.setPinned(true);
     std::this_thread::sleep_for(std::chrono::milliseconds(60)); session.refresh();
+    require(detail.plot(VisualizationKind::guitarTuner).getDescription().contains("A4 reference 440 Hz")
+                && detail.plot(VisualizationKind::guitarTuner).getDescription().contains("Confidence")
+                && detail.plot(VisualizationKind::guitarTuner).getDescription().contains("Channel 1"),
+            "Real visualization session routes its tuner profile to the shared worker's measured result: "
+                + detail.plot(VisualizationKind::guitarTuner).getDescription().toStdString());
     auto snapshot = detail.createComponentSnapshot(detail.getLocalBounds(), true, 1.0f, juce::SoftwareImageType{});
-    require(snapshot.isValid(), "Actual calibrated JUCE scope/spectrum/peak/RMS widgets render.");
+    require(snapshot.isValid(), "Actual calibrated JUCE scope/spectrum/meters and guitar tuner render.");
     const auto path = juce::SystemStats::getEnvironmentVariable("VAL_VISUALIZATION_SCREENSHOT", {});
     if (path.isNotEmpty())
     {
@@ -159,7 +202,7 @@ void runVisualizationPresentationTests()
               << " observation_bytes=" << diagnostics.memoryBytes << '\n';
     double plotMax = 0;
     for (const auto& host : hosts)
-        for (int kind = 0; kind < 4; ++kind)
+        for (int kind = 0; kind < 5; ++kind)
             plotMax = std::max(plotMax, host->plot(static_cast<VisualizationKind>(kind)).maxPaintMilliseconds());
     std::cout << "individual_plot_max_ms=" << plotMax << " worker_jobs=" << diagnostics.jobs
               << " worker_max_ms=" << diagnostics.maxJobMilliseconds << " capture_drops=" << capture->drops() << '\n';

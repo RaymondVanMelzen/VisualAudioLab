@@ -1,4 +1,5 @@
 #include <val/presentation/ModulePanels.h>
+#include <val/presentation/ModuleCatalogItems.h>
 #include <val/audio/AudioGraph.h>
 #include <val/audio/ScriptNode.h>
 #include <val/presentation/ShellTheme.h>
@@ -14,10 +15,6 @@ namespace val::presentation
 {
 namespace
 {
-constexpr std::array<const char*, 14> catalogTypes{
-    "Input", "Output", "Gain", "EQ", "Delay", "Compressor", "Distortion", "Chorus",
-    "Reverb", "Oscilloscope", "Spectrum Analyzer", "Peak Meter", "RMS Meter", "Script"};
-
 constexpr const char* passThrough = R"(NODE PassThrough AT AUDIO;
 INPUT InSample: REAL;
 OUTPUT OutSample: REAL;
@@ -103,21 +100,30 @@ public:
         search_.setTextToShowWhenEmpty("Search modules...", juce::Colours::grey);
         search_.onTextChange = [this] { filter(); };
         search_.onReturnKey = [this] { insert(); };
+        category_.setTitle("Module category");
+        for (std::size_t index = 0; index < moduleCategoryNames.size(); ++index)
+            category_.addItem(juce::String(moduleCategoryNames[index].data(),
+                                          static_cast<int>(moduleCategoryNames[index].size())),
+                              static_cast<int>(index) + 1);
+        category_.setSelectedId(1, juce::dontSendNotification);
+        category_.onChange = [this] { filter(); };
         list_.setModel(this);
         list_.setName("Available modules");
         list_.setRowHeight(30);
+        list_.addMouseListener(this, true);
         insert_.onClick = [this] { insert(); };
-        help_.setText("Modules are reusable audio functions.\nPlace a node to create an instance.\nInput / Output are routing utilities.", juce::dontSendNotification);
+        help_.setText("Modules are reusable audio functions; placed nodes are instances.\nInput / Output are routing utilities.", juce::dontSendNotification);
         help_.setFont(juce::FontOptions(11.0f));
-        for (auto* child : std::initializer_list<juce::Component*>{&search_, &list_, &insert_, &status_, &help_})
+        for (auto* child : std::initializer_list<juce::Component*>{&search_, &category_, &list_, &insert_, &status_, &help_})
             addAndMakeVisible(child);
         filter();
     }
-    ~Impl() override { list_.setModel(nullptr); }
+    ~Impl() override { list_.removeMouseListener(this); list_.setModel(nullptr); }
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(8);
-        help_.setBounds(bounds.removeFromTop(52));
+        help_.setBounds(bounds.removeFromTop(42));
+        category_.setBounds(bounds.removeFromTop(28));
         search_.setBounds(bounds.removeFromTop(30));
         bounds.removeFromTop(6);
         insert_.setBounds(bounds.removeFromBottom(30));
@@ -126,49 +132,98 @@ public:
     }
 private:
     int getNumRows() override { return static_cast<int>(filtered_.size()); }
+    juce::String getTooltipForRow(int row) override
+    {
+        return row >= 0 && row < getNumRows()
+            ? juce::String(filtered_[static_cast<std::size_t>(row)]->description.data(),
+                           static_cast<int>(filtered_[static_cast<std::size_t>(row)]->description.size()))
+            : juce::String{};
+    }
     void paintListBoxItem(int row, juce::Graphics& graphics, int width, int height, bool selected) override
     {
         if (row < 0 || row >= getNumRows()) return;
         if (selected) graphics.fillAll(ShellTheme::accent().withAlpha(0.25f));
         graphics.setColour(juce::Colours::white);
-        const auto& type = filtered_[static_cast<std::size_t>(row)];
-        graphics.drawText(type + ((type == "Input" || type == "Output") ? " (routing)" : ""), 8, 0, width - 16, height,
+        const auto& entry = *filtered_[static_cast<std::size_t>(row)];
+        const auto categoryIndex = static_cast<std::size_t>(entry.category);
+        const auto label = juce::String(entry.name.data(), static_cast<int>(entry.name.size()))
+            + "  |  " + juce::String(moduleCategoryNames[categoryIndex].data(),
+                                     static_cast<int>(moduleCategoryNames[categoryIndex].size()));
+        graphics.drawText(label, 8, 0, width - 16, height,
                           juce::Justification::centredLeft);
     }
     void selectedRowsChanged(int row) override { insert_.setEnabled(row >= 0 && row < getNumRows()); }
     void listBoxItemDoubleClicked(int, const juce::MouseEvent&) override { insert(); }
     void returnKeyPressed(int) override { insert(); }
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        const auto relative = event.getEventRelativeTo(&list_).position.toInt();
+        dragRow_ = list_.getRowContainingPosition(relative.x, relative.y);
+        dragStarted_ = false;
+    }
+    void mouseDrag(const juce::MouseEvent& event) override
+    {
+        if (dragRow_ < 0 || dragRow_ >= getNumRows() || dragStarted_ || event.getDistanceFromDragStart() < 5)
+            return;
+        auto* container = juce::DragAndDropContainer::findParentDragContainerFor(&list_);
+        if (!container)
+        {
+            status_.setText("Drag insertion is unavailable in this window.", juce::dontSendNotification);
+            return;
+        }
+        const auto& entry = *filtered_[static_cast<std::size_t>(dragRow_)];
+        const juce::String type(entry.name.data(), static_cast<int>(entry.name.size()));
+        container->startDragging(type, &list_, juce::ScaledImage{}, false, nullptr, &event.source);
+        dragStarted_ = true;
+        status_.setText("Dragging " + type + " to the Patch Canvas.", juce::dontSendNotification);
+    }
+    void mouseUp(const juce::MouseEvent&) override { dragRow_ = -1; dragStarted_ = false; }
     void filter()
     {
         const auto previous = list_.getSelectedRow();
         const auto selected = previous >= 0 && previous < getNumRows()
-            ? filtered_[static_cast<std::size_t>(previous)] : juce::String{};
+            ? filtered_[static_cast<std::size_t>(previous)]->name : std::string_view{};
         filtered_.clear();
-        for (const auto* type : catalogTypes)
-            if (juce::String(type).containsIgnoreCase(search_.getText().trim())) filtered_.emplace_back(type);
+        const auto categoryId = category_.getSelectedId() - 1;
+        const auto selectedCategory = categoryId >= 0 && categoryId < static_cast<int>(moduleCategoryNames.size())
+            ? static_cast<ModuleCategory>(categoryId) : ModuleCategory::all;
+        const auto query = search_.getText().trim();
+        for (const auto& entry : moduleCatalog)
+        {
+            const auto name = juce::String(entry.name.data(), static_cast<int>(entry.name.size()));
+            if ((selectedCategory == ModuleCategory::all || entry.category == selectedCategory)
+                && name.containsIgnoreCase(query))
+                filtered_.push_back(&entry);
+        }
         list_.updateContent();
         list_.deselectAllRows();
-        const auto found = std::find(filtered_.begin(), filtered_.end(), selected);
+        const auto found = std::find_if(filtered_.begin(), filtered_.end(),
+            [selected](const auto* entry) { return entry->name == selected; });
         if (!filtered_.empty())
             list_.selectRow(found == filtered_.end() ? 0 : static_cast<int>(found - filtered_.begin()));
         insert_.setEnabled(!filtered_.empty());
-        status_.setText(juce::String(getNumRows()) + " modules / routing utilities", juce::dontSendNotification);
+        const auto category = category_.getText();
+        status_.setText(category + " · " + juce::String(getNumRows()) + (getNumRows() == 1 ? " result" : " results"),
+                        juce::dontSendNotification);
     }
     void insert()
     {
         const auto row = list_.getSelectedRow();
         if (row < 0 || row >= getNumRows()) return;
-        const auto type = filtered_[static_cast<std::size_t>(row)].toStdString();
+        const auto type = std::string(filtered_[static_cast<std::size_t>(row)]->name);
         auto callback = owner_.onInsert;
         if (callback) callback(type);
         else status_.setText("Insertion is not connected.", juce::dontSendNotification);
     }
     ModuleCatalog& owner_;
     juce::TextEditor search_;
+    juce::ComboBox category_;
     juce::ListBox list_;
     juce::TextButton insert_{"Insert selected module"};
     juce::Label status_, help_;
-    std::vector<juce::String> filtered_;
+    std::vector<const ModuleCatalogEntry*> filtered_;
+    int dragRow_{-1};
+    bool dragStarted_{};
 };
 
 ModuleCatalog::ModuleCatalog() : impl_(std::make_unique<Impl>(*this))

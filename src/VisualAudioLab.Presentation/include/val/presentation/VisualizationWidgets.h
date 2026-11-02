@@ -12,8 +12,8 @@ class CanvasView;
 enum class ObservationState { waiting, processing, stopped, removed, unsupported };
 /** Host-specific refresh ceilings and geometry; no independent worker or timer per preview. */
 enum class VisualizationHost { embedded, inspector, monitor };
-/** Four calibrated Version 1 displays, all derived from the same immutable analysis product. */
-enum class VisualizationKind { oscilloscope, spectrum, peak, rms };
+/** Calibrated analysis displays, all derived from the same immutable worker result. */
+enum class VisualizationKind { oscilloscope, spectrum, peak, rms, guitarTuner };
 
 /**
  * Message-thread observation service: one analysis worker, one 30 Hz UI scheduler.
@@ -89,7 +89,7 @@ private:
 };
 
 /**
- * Shared inspector/embedded/pinned host. Inspector and embedded use tabs; monitor uses four plots.
+ * Shared inspector/embedded/pinned host. Inspector and embedded use tabs; monitor lays out five plots.
  * Pin holds target identity, not transport storage. Freeze owns a bounded UI copy and suspends demand.
  * Target changes and unfreeze clear old values. Session must outlive all registered hosts.
  */
@@ -124,7 +124,7 @@ private:
     std::uint64_t resumeAfterSequence_{};
     bool demand_{};
     juce::String admissionError_;
-    std::array<std::unique_ptr<VisualizationWidget>, 4> plots_;
+    std::array<std::unique_ptr<VisualizationWidget>, 5> plots_;
     std::shared_ptr<const audio::SignalAnalysis> frozenResult_;
     juce::ComboBox target_;
     juce::ToggleButton pin_{"Pin"}, freeze_{"Freeze"};

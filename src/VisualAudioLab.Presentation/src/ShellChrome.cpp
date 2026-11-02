@@ -5,7 +5,7 @@ namespace val::presentation
 {
 ShellToolbar::ShellToolbar(juce::ApplicationCommandManager& commands, juce::CommandID rename,
                            juce::CommandID undo, juce::CommandID redo,
-                           juce::CommandID audioSettings, juce::CommandID resetLayout)
+                           juce::CommandID resetLayout)
 {
     setName("Application toolbar");
     workspaceName_.setTitle("Temporary workspace name");
@@ -13,10 +13,9 @@ ShellToolbar::ShellToolbar(juce::ApplicationCommandManager& commands, juce::Comm
     rename_.setCommandToTrigger(&commands, rename, true);
     undo_.setCommandToTrigger(&commands, undo, true);
     redo_.setCommandToTrigger(&commands, redo, true);
-    audioSettings_.setCommandToTrigger(&commands, audioSettings, true);
     resetLayout_.setCommandToTrigger(&commands, resetLayout, true);
     for (auto* child : std::initializer_list<juce::Component*>{
-             &workspaceName_, &rename_, &undo_, &redo_, &audioSettings_, &resetLayout_})
+             &workspaceName_, &rename_, &undo_, &redo_, &resetLayout_})
         addAndMakeVisible(child);
 }
 
@@ -27,8 +26,7 @@ void ShellToolbar::resized()
     rename_.setBounds(bounds.removeFromLeft(142).reduced(2));
     undo_.setBounds(bounds.removeFromLeft(56).reduced(2));
     redo_.setBounds(bounds.removeFromLeft(56).reduced(2));
-    audioSettings_.setBounds(bounds.removeFromLeft(120).reduced(2));
-    resetLayout_.setBounds(bounds.removeFromLeft(116).reduced(2));
+    resetLayout_.setBounds(bounds.removeFromLeft(110).reduced(2));
 }
 
 ShellStatusBar::ShellStatusBar()

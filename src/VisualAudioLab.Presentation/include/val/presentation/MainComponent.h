@@ -7,11 +7,12 @@
 #include "ShellTheme.h"
 #include "RuntimePanel.h"
 #include "ModulePanels.h"
+#include <optional>
 
 namespace val::presentation
 {
 /**
- * Message-thread desktop shell and command adapter with a structural canvas and docked tools.
+ * Message-thread desktop shell and command adapter with a fixed canvas and collapsible tools.
  * The borrowed workspace service outlives this component. JUCE command routing is kept in
  * Presentation; reversible use cases and history remain framework-free in Application.
  */
@@ -33,7 +34,7 @@ public:
     [[nodiscard]] DockWorkspace& dockWorkspace() noexcept { return dockWorkspace_; }
     [[nodiscard]] RuntimePanel& runtime() noexcept { return *runtime_; }
     /** Catalog insertion is one undoable content edit with persisted runtime metadata. */
-    void insertModule(std::string type);
+    void insertModule(std::string type, std::optional<juce::Point<float>> placement = std::nullopt);
 
     juce::ApplicationCommandTarget* getNextCommandTarget() override { return nullptr; }
     void getAllCommands(juce::Array<juce::CommandID>& commands) override;
@@ -50,24 +51,17 @@ public:
     [[nodiscard]] application::Result loadProjectFrom(const std::filesystem::path& path);
 
 private:
-    /** Resizes setup when an initially hidden dock opens/moves, not only on shell resize. */
-    class AudioSetupViewport final : public juce::Viewport
+    class AudioSetupWindow final : public juce::DocumentWindow
     {
-        void visibleAreaChanged(const juce::Rectangle<int>&) override
-        {
-            if (auto* content = getViewedComponent())
-            {
-                const int width = juce::jmax(640, getMaximumVisibleWidth());
-                if (content->getWidth() != width || content->getHeight() != 300)
-                    content->setSize(width, 300);
-            }
-        }
+    public:
+        explicit AudioSetupWindow(RuntimePanel& runtime);
+        void closeButtonPressed() override { setVisible(false); }
     };
     /** Stable, presentation-only command identities, separate from persisted user content. */
     enum CommandId
     {
         rename = 0x2100, undo, redo, toggleInspector, resetLayout,
-        showCanvas, showModules, showExplorer, showProperties, showAudioSettings, quit,
+        showModules, showProperties, showAudioSettings, quit,
         saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport
     };
     void refresh();
@@ -80,6 +74,7 @@ private:
     void confirmReplace(std::function<void()> continuation);
     void loadWithConsent(std::filesystem::path path);
     void updateProjectChrome();
+    void showAudioSetup();
     application::WorkspaceService& workspace_;
     application::ProjectSession* project_{};
     std::unique_ptr<juce::FileChooser> chooser_;
@@ -89,17 +84,17 @@ private:
     ShellTheme theme_;
     juce::ApplicationCommandManager commands_;
     juce::MenuBarComponent menu_{this};
-    ShellToolbar toolbar_{commands_, rename, undo, redo, showAudioSettings, resetLayout};
+    ShellToolbar toolbar_{commands_, rename, undo, redo, resetLayout};
     juce::Label banner_;
     juce::ComboBox patches_;
     juce::TextButton addPatch_{"New Patch"};
     ShellStatusBar status_;
     DockWorkspace dockWorkspace_{workspace_};
     std::unique_ptr<RuntimePanel> runtime_;
+    std::unique_ptr<AudioSetupWindow> audioSetupWindow_;
     std::unique_ptr<ModuleCatalog> catalog_;
     std::unique_ptr<ModuleEditor> editor_;
     juce::TabbedComponent inspectorTabs_{juce::TabbedButtonBar::TabsAtTop};
-    AudioSetupViewport audioView_;
     juce::TextButton startAudio_{"Start (F5)"}, stopAudio_{"Stop"};
 };
 }

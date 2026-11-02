@@ -18,6 +18,7 @@ const char* title(VisualizationKind kind)
         case VisualizationKind::spectrum: return "Spectrum Analyzer";
         case VisualizationKind::peak: return "Peak Meter";
         case VisualizationKind::rms: return "RMS Meter";
+        case VisualizationKind::guitarTuner: return "Guitar Tuner";
     }
     return "";
 }
@@ -25,6 +26,27 @@ juce::String db(float value)
 {
     const auto level = audio::AnalyzerEngine::decibels(value);
     return std::isfinite(level) ? juce::String(level, 2) : juce::String("-inf");
+}
+struct TuningReading
+{
+    juce::String note;
+    double cents{};
+};
+TuningReading tuningReading(double frequency)
+{
+    static constexpr std::array<const char*, 12> noteNames{
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    const auto midiNote = static_cast<int>(std::lround(69.0 + 12.0 * std::log2(frequency / 440.0)));
+    const auto reference = 440.0 * std::pow(2.0, static_cast<double>(midiNote - 69) / 12.0);
+    return {juce::String(noteNames[static_cast<std::size_t>((midiNote % 12 + 12) % 12)])
+                + juce::String(midiNote / 12 - 1),
+            1200.0 * std::log2(frequency / reference)};
+}
+juce::String signedCents(double cents)
+{
+    if (std::abs(cents) < 0.05)
+        return "0.0 cents";
+    return (cents > 0 ? "+" : "") + juce::String(cents, 1) + " cents " + (cents > 0 ? "sharp" : "flat");
 }
 }
 VisualizationSession::VisualizationSession()
@@ -203,8 +225,29 @@ void VisualizationWidget::update(std::shared_ptr<const audio::SignalAnalysis> re
     if (now < next_) return;
     result_ = std::move(result); status_ = std::move(state); stale_ = stale;
     next_ = now + 1000.0 / rate_;
-    setDescription(juce::String(title(kind_)) + ". " + status_ + ". "
-        + (kind_ == VisualizationKind::rms ? "Raw RMS, full scale sine minus 3.01 dBFS." : "Sample amplitude reference one equals zero dBFS."));
+    auto description = juce::String(title(kind_)) + ". " + status_ + ". "
+        + (kind_ == VisualizationKind::rms ? "Raw RMS, full scale sine minus 3.01 dBFS." : "Sample amplitude reference one equals zero dBFS.");
+    if (kind_ == VisualizationKind::guitarTuner && result_)
+    {
+        if (!result_->pitchReady) description << " Waiting for a stable pitch window.";
+        else if (result_->pitchSilence) description << " No signal. Check routing and input gain.";
+        else
+        {
+            description << " Channel " << (result_->stamp.firstChannel + result_->pitchChannel + 1)
+                        << ". A4 reference 440 Hz. Confidence " << juce::String(result_->pitchConfidence * 100.0f, 0) << " percent.";
+            if (result_->pitchValid && result_->pitchHz > 0)
+            {
+                const auto reading = tuningReading(result_->pitchHz);
+                description << " " << reading.note << ", " << signedCents(reading.cents) << ".";
+                if (stale_ || status_.startsWith("Frozen"))
+                    description << " Last measurement is not live.";
+                else
+                    description << (std::abs(reading.cents) <= 5.0 ? " In tune." : " Tune toward center.");
+            }
+            else description << " No stable note; reduce noise or isolate one string.";
+        }
+    }
+    setDescription(description);
     repaint();
 }
 void VisualizationWidget::paint(juce::Graphics& g)
@@ -216,14 +259,72 @@ void VisualizationWidget::paint(juce::Graphics& g)
     g.drawText(title(kind_), 9, 4, getWidth() - 95, 25, juce::Justification::centredLeft);
     auto area = getLocalBounds().reduced(9).withTrimmedTop(31).withTrimmedBottom(43).toFloat();
     g.setFont(11.0f);
-    const bool waiting = !result_ || (kind_ == VisualizationKind::spectrum && !result_->spectrumValid)
+    const bool waiting = !result_ || (kind_ == VisualizationKind::guitarTuner && !result_->pitchReady)
+        || (kind_ == VisualizationKind::spectrum && !result_->spectrumValid)
         || (kind_ == VisualizationKind::peak && !result_->peakValid)
-        || (kind_ == VisualizationKind::rms && !result_->rmsValid) || result_->scopeFrames == 0;
+        || (kind_ == VisualizationKind::rms && !result_->rmsValid)
+        || (kind_ != VisualizationKind::guitarTuner && result_->scopeFrames == 0);
     if (!area.isEmpty() && !waiting)
     {
         const auto& data = *result_;
         const auto opacity = stale_ ? 0.35f : 1.0f;
-        if (kind_ == VisualizationKind::oscilloscope)
+        if (kind_ == VisualizationKind::guitarTuner)
+        {
+            if (data.pitchSilence)
+            {
+                g.setColour(juce::Colour(0xffa7b5c5));
+                g.setFont(18.0f);
+                g.drawFittedText("No signal", area.toNearestInt(), juce::Justification::centred, 1);
+            }
+            else if (!data.pitchValid || data.pitchHz <= 0)
+            {
+                g.setColour(juce::Colour(0xffffb454));
+                g.setFont(18.0f);
+                g.drawFittedText("Uncertain signal", area.removeFromTop(area.getHeight() * 0.55f).toNearestInt(),
+                                 juce::Justification::centred, 1);
+                g.setFont(11.0f);
+                g.drawFittedText("Isolate one string | confidence "
+                                     + juce::String(data.pitchConfidence * 100.0f, 0) + "%",
+                                 area.toNearestInt(), juce::Justification::centred, 1);
+            }
+            else
+            {
+                const auto reading = tuningReading(data.pitchHz);
+                const auto inTune = !stale_ && !status_.startsWith("Frozen") && std::abs(reading.cents) <= 5.0;
+                auto noteArea = area.removeFromTop(area.getHeight() * 0.56f);
+                g.setColour(juce::Colour(0xffe6edf3).withAlpha(opacity));
+                g.setFont(juce::FontOptions(std::min(32.0f, noteArea.getHeight() * 0.68f)));
+                g.drawText(reading.note, noteArea.toNearestInt(), juce::Justification::centred);
+                g.setFont(11.0f);
+                g.setColour(juce::Colour(0xffa7b5c5).withAlpha(opacity));
+                g.drawText(juce::String(data.pitchHz, 1) + " Hz | " + signedCents(reading.cents)
+                               + " | Ch " + juce::String(data.stamp.firstChannel + data.pitchChannel + 1)
+                               + " | " + juce::String(data.pitchConfidence * 100.0f, 0) + "% confidence",
+                           area.removeFromTop(17).toNearestInt(), juce::Justification::centred);
+                auto scale = area.reduced(3.0f, 5.0f);
+                const auto centre = scale.getCentreX();
+                g.setColour(juce::Colour(0xff354151));
+                g.fillRoundedRectangle(scale.withHeight(8.0f).withY(scale.getCentreY() - 4.0f), 4.0f);
+                g.setColour(juce::Colour(0xff65d6c4).withAlpha(opacity));
+                g.drawVerticalLine(static_cast<int>(centre), scale.getY(), scale.getBottom());
+                for (int step = -2; step <= 2; ++step)
+                {
+                    const auto x = centre + scale.getWidth() * static_cast<float>(step) / 4.0f;
+                    g.drawVerticalLine(static_cast<int>(x), scale.getCentreY() - (step == 0 ? 8.0f : 4.0f),
+                                       scale.getCentreY() + (step == 0 ? 8.0f : 4.0f));
+                }
+                const auto position = juce::jlimit(-1.0f, 1.0f, static_cast<float>(reading.cents / 50.0));
+                const auto markerX = centre + position * scale.getWidth() * 0.5f;
+                g.setColour(stale_ || status_.startsWith("Frozen") ? juce::Colour(0xffa7b5c5)
+                    : inTune ? juce::Colour(0xff65d6c4) : juce::Colour(0xffffb454));
+                g.fillEllipse(markerX - 5.0f, scale.getCentreY() - 5.0f, 10.0f, 10.0f);
+                g.setFont(10.0f);
+                g.drawText(stale_ || status_.startsWith("Frozen") ? "STALE MEASUREMENT"
+                               : inTune ? "IN TUNE" : "TUNE TOWARD CENTER",
+                           scale.withTrimmedTop(12.0f).toNearestInt(), juce::Justification::centredTop);
+            }
+        }
+        else if (kind_ == VisualizationKind::oscilloscope)
         {
             g.setColour(juce::Colour(0xff354151));
             for (int i = 0; i <= 4; ++i)
@@ -300,11 +401,14 @@ void VisualizationWidget::paint(juce::Graphics& g)
         }
     }
     g.setColour(stale_ ? juce::Colour(0xffffb454) : juce::Colour(0xffa7b5c5));
-    if (waiting) g.drawFittedText(result_ ? "Preparing contiguous analysis window" : status_.isEmpty() ? "Waiting for contiguous samples" : status_,
+    if (waiting) g.drawFittedText(result_ ? (kind_ == VisualizationKind::guitarTuner
+                                                    ? "Preparing pitch window" : "Preparing contiguous analysis window")
+                                          : status_.isEmpty() ? "Waiting for contiguous samples" : status_,
                                 area.toNearestInt(), juce::Justification::centred, 3);
     juce::String caption = kind_ == VisualizationKind::oscilloscope ? "Min/max envelope | amplitude +/-1"
         : kind_ == VisualizationKind::spectrum ? "Hann | peak-amplitude dBFS | log Hz"
         : kind_ == VisualizationKind::peak ? "50 ms sample peak (not true peak) | hold 1 s"
+        : kind_ == VisualizationKind::guitarTuner ? "Chromatic pitch | equal temperament | A4 reference 440 Hz"
         : "Raw RMS | 0 dBFS = amplitude 1 | no AES17 offset";
     if (result_ && kind_ == VisualizationKind::spectrum)
         caption = "N=" + juce::String(result_->fftSize) + " | bin " + juce::String(result_->binHz, 2) + " Hz | dominant " + juce::String(result_->dominantHz[0], 1) + " Hz";
@@ -372,11 +476,13 @@ void VisualizationWidgets::resized()
     status_.setBounds(bounds.removeFromBottom(32));
     if (host_ == VisualizationHost::monitor)
     {
-        auto top = bounds.removeFromTop(bounds.getHeight() / 2);
-        plots_[0]->setBounds(top.removeFromLeft(top.getWidth() / 2).reduced(3));
-        plots_[1]->setBounds(top.reduced(3));
-        plots_[2]->setBounds(bounds.removeFromLeft(bounds.getWidth() / 2).reduced(3));
-        plots_[3]->setBounds(bounds.reduced(3));
+        auto row = bounds.removeFromTop(bounds.getHeight() / 3);
+        plots_[0]->setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(3));
+        plots_[1]->setBounds(row.reduced(3));
+        row = bounds.removeFromTop(bounds.getHeight() / 2);
+        plots_[2]->setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(3));
+        plots_[3]->setBounds(row.reduced(3));
+        plots_[4]->setBounds(bounds.reduced(3));
     }
     else tabs_.setBounds(bounds);
 }

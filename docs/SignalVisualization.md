@@ -4,7 +4,7 @@ This is the implementation companion to [VisualizationArchitecture.md](Visualiza
 The architecture is preserved unchanged as supplied; its candidate budgets, future workspaces,
 and future products are proposals, not claims that they are implemented or qualified.
 
-Implemented: Oscilloscope, Spectrum Analyzer, Peak Meter and RMS Meter. There are no new
+Implemented: Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter and Guitar Tuner. There are no new
 effect processors, spectrograms, true-peak meters, LUFS meters, audio devices or automatic playback.
 The structural editor now has [desktop runtime composition](DesktopWorkflow.md): executable
 modules register scheduled captures on explicit Start, and valid live edits update producers.
@@ -20,7 +20,7 @@ Device-free desktop preview and tests process deterministic buffers through the 
 | `AnalysisResults` | Three preallocated worker/UI pages with atomic Free/Writing/Ready/Reading ownership; bounded newest-copy consumption. |
 | `VisualizationSession` | One message-thread scheduler and one shared newest immutable UI copy per source; source lifecycle and visible demand fan-out. |
 | `VisualizationWidget` | One calibrated rendering and independently validated refresh control; no capture/analysis/timer of its own. |
-| `VisualizationWidgets` | Embedded, inspector or pinned-monitor host; target, pin, freeze, hold reset and four view products. |
+| `VisualizationWidgets` | Embedded, inspector or pinned-monitor host; target, pin, freeze, hold reset and five view products. |
 
 `AudioNode` remains the unified DSP base, with `AudioProcessorNode` its existing alias.
 `AnalyzerNode` is still an EffectNode/pass-through endpoint, **not a parallel processor hierarchy**.
@@ -109,13 +109,13 @@ No timer is created per plot or per node.
 
 ## UI
 
-The Property Inspector hosts four shared-result tabs. A single selected node targets that
+The Property Inspector hosts five shared-result tabs. A single selected node targets that
 node's runtime output; selecting a wire resolves its upstream source. Multiple/absent selection
 has no implicit mixed target. The source selector lists admitted runtime endpoints. Structural
 nodes without a scheduled endpoint show **Unsupported / not scheduled**. Pin separates target
 from editor selection and keyboard focus. Inspecting never inserts or edits a graph.
 
-**Signal Inspector** opens a persistent non-modal, resizable, pinned four-plot window. Closing
+**Signal Inspector** opens a persistent non-modal, resizable, pinned monitor with five plots. Closing
 hides it and suspends demand; reopening reuses it. There is no competing Signal Info analysis
 engine: provenance and analysis timing are metadata in this same host. Broader workspace
 presets/docking, arbitrary endpoint/channel configuration, profile editing and accessibility
@@ -147,6 +147,16 @@ There is no physical voltage/SPL calibration.
 | Spectrum Analyzer | Periodic Hann, default N=2048; admitted powers of two 1024-8192. 50% overlap. Radix-2 Cooley-Tukey transform on worker. Dominant **bin**, not a guaranteed fundamental; frequency resolution `sampleRate/N`. |
 | Peak Meter | **Sample** peak of latest 50 ms; not intersample/true peak. Warm-up validity explicit. Display/hold inspect every worker-side sample, retaining impulses even in host packets longer than 50 ms. Instant display attack, 20 dB/s release; peak hold 1 s then 12 dB/s release. Hold reset is observation-only. Ballistics advance in audio-sample time on worker, independent of refresh or packet partitioning. |
 | RMS Meter | Raw square-root mean square over latest 300 ms (profile 10-1000 ms); requires complete contiguous coverage. No extra attack/release envelope; rectangular rolling integration defines response. Amplitude 1 DC/square = 0 dBFS; full-scale sine = **-3.0103 dBFS**, not AES17's sine-referenced +3.0103 dB offset and not LUFS. |
+| Guitar Tuner | Monophonic chromatic pitch estimate on the shared worker. The worker averages bounded decimation to at most 24 kHz, analyzes 2048 samples with a normalized difference/CMND search over 60-1000 Hz, and refreshes at 50% window overlap. Parabolic lag interpolation refines the period; confidence below 0.80 is not presented as a stable note. AC RMS below -60 dBFS is explicit silence. The display reports equal-tempered note/octave, signed sharp/flat cents, direction/in-tune within +/-5 cents, confidence, analyzed channel and fixed A4=440 Hz reference. |
+
+Guitar Tuner analysis is enabled only for a Guitar Tuner node's capture profile and executes
+on the existing bounded analysis worker; it adds no audio-callback pitch work or allocation.
+Its history and scratch storage are prepared with the worker state and included in the existing
+64 MiB observation admission budget. Discontinuities reset the pitch window. It is a monophonic
+chromatic tuner suitable for one connected guitar signal at a time; it does not identify strings,
+alternate tunings or polyphonic chords. Synthetic fixtures cover standard open-string fundamentals,
+a harmonic-rich tone, noise, silence and a 96 kHz input. These checks do not qualify physical
+pickup levels, room noise, driver latency or every guitar timbre.
 
 Spectrum amplitude uses `abs(DFT) * endpointFactor / sum(window)` where endpointFactor is 2
 except DC/Nyquist (1). Hann coherent gain is 0.5. Averaging is linear **power**, default 100 ms
@@ -188,7 +198,9 @@ Profile changes require new capture/worker state off-callback; never resize live
 DC/silence/square/impulse, raw RMS, sample peak/hold/release, scope extrema/trigger, FFT sizes
 1024/2048/8192, off-bin error, coherent gain and ENBW-integrated PSD. Tolerances:
 bin-centred amplitude +/-0.002 dB, sine RMS +/-0.035 dB (finite window phase), dominant
-bin +/-half-bin, DC/impulse/PSD power +/-1e-5 or tighter. It also checks gaps, invalid samples,
+bin +/-half-bin, DC/impulse/PSD power +/-1e-5 or tighter. Guitar Tuner fixtures cover all six
+standard open-string fundamentals, a 25-cent harmonic-rich tone, explicit silence, deterministic
+noise, and 96 kHz decimation. It also checks gaps, invalid samples,
 epoch/revision changes, admission, retirement, queue ownership, concurrent result publication,
 channel selection, split capture, and exact real-engine output matching with in-block automation.
 C++ allocation/free instrumentation is thread-local and covers ordinary/aligned/sized forms,
@@ -209,7 +221,7 @@ source. It forces full software snapshots of a 3200x2000 logical wall, including
 and prints frame/individual-plot times. This is a conservative **whole-wall repaint** test,
 not proof that 108 plots update simultaneously within 4 ms on a physical display.
 The default test runner does not write screenshots; an explicitly set
-`VAL_VISUALIZATION_SCREENSHOT` output path saves a real four-widget PNG.
+`VAL_VISUALIZATION_SCREENSHOT` output path saves a real five-widget PNG.
 
 These are synthetic/offline measurements, not real-device audio or hardware/GPU benchmarks.
 The architecture's capture p99 <=1%, worker 2 ms and UI 4 ms targets are qualification goals,

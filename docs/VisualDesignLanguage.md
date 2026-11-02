@@ -49,20 +49,23 @@ module catalog, parameter/script editing, native audio settings, explicit
 transport, project persistence and live scope/spectrum/peak/raw-RMS views.
 Its present visual structure still reads as a developer-style shell: a menu
 strip, command toolbar, separate status/banner strips, left browser, bordered
-canvas, right inspector, and a permanently docked bottom Audio Settings area.
-Dock selectors and panel headings consume attention; the browser is a uniform
-list; nodes use similar rounded rectangles; and the active signal view occupies
-a small inspector region rather than leading the experience. The captured
-running desktop shows a live selected oscilloscope, but large blank dock
-surfaces and repeated borders frame it more strongly than the measurement.
+canvas, and docked tools with controls for relocating panels. Dock selectors
+and panel headings consume attention; the browser is a uniform list; nodes use
+similar rounded rectangles; and the active signal view occupies a small
+inspector region rather than leading the experience. The captured desktop shows
+a live selected oscilloscope, but large blank dock surfaces and repeated
+borders frame it more strongly than the measurement. The screenshot is dated
+test evidence; it is not a live usability or physical-device audit.
 
 That observation describes the prototype, not an evaluation with users.
 The design below proposes a calmer, signal-forward hierarchy while preserving
 access to the current functionality. Reverb-tail displays, compressor
 gain-reduction traces, richer plugin-style editors, color-coded control/MIDI
-graphs, workspace presets and a more adaptive docking model are **design
-proposals**. They are not claims about current DSP telemetry or delivered
-features.
+graphs and workspace presets are **design proposals**. They are not claims
+about current DSP telemetry or delivered features. The shell direction is now
+fixed: the patch canvas remains visible and cannot collapse; eligible side
+panels may collapse and reopen in place; panels do not dock, float or
+re-dock. Audio Setup is a dedicated dialog opened from the Audio menu.
 
 The design borrows broad interaction principles—precise, visually legible
 processor controls; immediate graph feedback; and instrument-like focus—from
@@ -207,7 +210,7 @@ caption. Never depend on color alone.
 | Filters (EQ) | Violet rail; frequency-curve glyph; compact frequency/gain/Q values for the selected band. | A small actual response curve is a proposed capability; it requires exposing coefficient/response data. |
 | Modulation (Chorus and future modulators) | Teal rail; periodic glyph with restrained phase cue. | Show wet mix/rate values; do not animate an LFO phase that the module does not publish. |
 | Delay | Cyan rail; echo/tap glyph and time/feedback values. | Optional real tap/feedback visualization only if bounded state is provided; avoid a decorative repeating waveform. |
-| Analysis (Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter) | Blue instrument rail; recognizable scope/FFT/bar glyph; measurement is the body. | Scope shows the real bounded min/max envelope; Spectrum shows current worker result; meters show calibrated measured values. |
+| Analysis (Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter, Guitar Tuner) | Blue instrument rail; recognizable scope/FFT/bar/tuning glyph; measurement is the body. | Scope shows the real bounded min/max envelope; Spectrum shows current worker result; meters show calibrated values; tuner shows its measured note, cents and confidence. |
 | Logic | Blue/neutral logic glyph; distinct control ports and dashed control wires. | No such module is currently in the catalog; reserved for future, explicitly typed nodes. |
 | Scripts | Lavender `ƒ`/page glyph, not a terminal prompt; explicit input/output count and compile state. | No source code on the canvas; use the inspector/full editor. |
 | Audio Output | Destination glyph and left-side input; port shape distinguishes sink. | Show confirmed route/level/over-range state only if measured. |
@@ -230,8 +233,9 @@ animation of every node.
 
 ## 5. Living visualizations and truthful states
 
-Signal is the hero, but only measured signal is hero. The four current
-visualization products are calibrated around amplitude 1.0 full scale:
+Signal is the hero, but only measured signal is hero. The scope, spectrum and
+meters use amplitude 1.0 as digital full scale; the tuner separately reports
+pitch against its declared A4 reference:
 
 - **Oscilloscope:** display the true captured min/max envelope over a labeled
   time span and amplitude range. Mark trigger/source and channel.
@@ -242,6 +246,11 @@ visualization products are calibrated around amplitude 1.0 full scale:
   display and held peak.
 - **RMS Meter:** label **raw RMS**; full-scale sine reads -3.01 dBFS. Do not
   imply AES17 sine-reference offset or loudness/LUFS.
+- **Guitar Tuner:** show equal-tempered note and octave, signed cents, an
+  independent centered marker, confidence and explicit silence/uncertain/stale
+  states. A4=440 Hz is the reference; only a stable monophonic estimate may
+  produce an in-tune indication (within +/-5 cents). Never substitute the
+  Spectrum Analyzer's dominant bin for a pitch estimate.
 
 Every view has named states with both color and text/icon:
 
@@ -357,62 +366,52 @@ label it PSD or loudness.
 All diagrams are original text sketches for hierarchy and information
 relationships, not pixel-perfect mocks.
 
-## 7. Workspace concepts
+## 7. Fixed workspace and panel behavior
 
-Workspaces change visible emphasis, panel arrangement and visualization scale;
-they do not change DSP behavior, device configuration or project data unless
-the user explicitly saves a layout. Preserve panel identity, selected source
-and keyboard focus when switching. Beginners should not be trapped in a
-simplified mode; expose an obvious “Show all”/workspace switch.
+The shell is a stable working instrument, not a freely rearranged collection
+of docks. Keep the Patch Canvas visible, non-collapsible, and large enough to
+edit at the minimum supported window size. Place the Module Browser and
+Property Inspector in fixed side regions; allow eligible side regions to
+collapse/reopen in place with a small icon button. The button must have a
+visible focus state, an accessible name that changes between “Collapse …”
+and “Show …”, and a tooltip. Do not imply dragging, docking, tab relocation or
+floating. Preserve bounded panel resizing only where it does not recreate
+docking behavior.
 
-| Workspace | Main canvas and visible surfaces | Emphasis |
-|---|---|---|
-| **Beginner** | Patch Canvas, guided Module Browser, one large Signal Inspector, compact Properties. Audio Settings collapsed but reachable. | Short guided chain, clear source→processor→analysis→output examples, named units and “what changed?” explanations. No empty project panels dominating. |
-| **Patch Design** | Wide Patch Canvas, compact searchable Module Browser, contextual Properties, optional Signal preview. | Routing and node grouping dominate; route highlight and quick-add are prominent. Device details remain in transport/status. |
-| **Audio Analysis** | Large scope/spectrum/meter region, compact patch overview or selected-path strip, source selector and analysis controls. | Calibrated measurements, provenance and channel/time/rate context; graph remains available but secondary. |
-| **DSP Debugging** | Patch Canvas plus persistent multi-view Signal Inspector, diagnostics rail and selected-node Properties. | Trace selected path, compare relevant observations, show gaps/stale/invalid states and node diagnostics. No claim of per-processor telemetry absent a contract. |
-| **Mastering** | Large spectrum, peak and RMS views; restrained patch strip and selected processor editor. | Measurement confidence, sample-peak vs RMS definitions, sample rate/channel and output warnings. This is a future layout concept, not a mastering chain or true-peak/LUFS feature. |
+Audio Setup is occasional configuration, not a persistent panel. Open its
+dedicated dialog from **Audio > Audio Setup** only. The main shell may show a
+compact passive status such as stopped, running, setup required or fault; it
+must not duplicate the setup action or imply that an available configuration
+means playback is active. Start is always explicit; Stop remains findable.
+Dialog open/close, project load, discovery, graph editing and panel visibility
+never start audio.
 
-### Proposed main workspace wireframe
+### Fixed-shell composition
 
 ```text
 ┌ Visual Audio Lab ──────────────────────────────────────────────────────┐
-│ [Workspace ▾] [Patch ▾]                          ● LIVE 48 kHz / 128  │
-│  setup / file / undo are quiet, compact actions      [Stop] [Audio…]  │
+│ [Project ▾] [Patch ▾]           Stopped · output configured [Start]   │
 ├───────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│   SIGNAL / selected measurement                           (Level 1)   │
-│   ┌ Scope | Spectrum | Peak | RMS ────────────────────────────────┐  │
-│   │ measured signal; scale, channel, units, live/stale provenance │  │
-│   └───────────────────────────────────────────────────────────────┘  │
-│                                                                       │
-│   PATCH FLOW                                              (Level 2)   │
-│   [Source] ─────── [Dynamics] ─────── [Filter] ─────── [Analysis]    │
-│      selected signal path glows; unrelated patch stays quiet          │
-│                                                                       │
-├───────────────────────────────────────────────────────────────────────┤
-│  Selected: Compressor · Threshold −18 dB · Ratio 4:1 · Bypass        │
-│  [Properties] [Signal] [Help]                     Browser ▸  Devices ▸│
+│ [Module Browser]  │ PATCH CANVAS (always visible) │ [Properties]     │
+│ Search / categories│ selected route is legible     │ context controls  │
+│                    │ nodes enter by select or drag │ [Signal]          │
+│                    │                               │                   │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-**Annotations:** (1) Signal receives the largest stable area and remains
-available when the graph is dense. (2) Patch is a readable flow map, not the
-only view of state. (3) Controls are contextual and small until selected.
-(4) Device/project administration collapses to a compact status/action surface
-and expands only on intent. (5) A clear, confirmed live/stopped indicator and
-Stop remain visible; hiding device settings never hides safety-critical state.
+The wireframe is a structural proposal, not a pixel-complete design. A
+selected signal view may occupy a contextual inspector tab or a separate
+existing visualization surface; do not make the patch canvas disappear.
+When a side panel collapses, its control remains at the same shell edge and
+the canvas receives the released space. No main-view Audio Setup control is
+shown; the Audio menu remains its sole entry.
 
-Phase 1 Audio Setup follows this operation hierarchy: compact Start/Stop,
-optional Refresh / Retry, driver-supported Control Panel, and persistent state
-above endpoint/port choices. Backend selection enumerates automatically and
-endpoint selection loads capabilities automatically; there is no Detect
-banner/button competing with the signal workspace. Basic controls use actual
-driver-labeled mono ports or contiguous stereo pairs, not first-N channel
-counts. Advanced ports reveal wider contiguous groups without pretending to
-offer arbitrary routing or mono-to-stereo engine conversion. Discovery does not
-start playback; hardware-initialization warnings and errors remain visible in
-the occasional setup dock. See [DesktopWorkflow.md](DesktopWorkflow.md).
+The Audio Setup dialog follows a conventional device-configuration hierarchy:
+backend and endpoint choices, automatically discovered capability controls,
+current discovery/error state, and explicit transport actions outside the
+dialog. Discovery remains asynchronous and errors remain actionable. Dialog
+visibility is not transport state. See
+[DesktopWorkflow.md](DesktopWorkflow.md).
 
 ## 8. Interaction, accessibility and performance rationale
 
@@ -422,9 +421,11 @@ the occasional setup dock. See [DesktopWorkflow.md](DesktopWorkflow.md).
 - Signal-route selection should show the upstream source and downstream
   destination, and allow return to the whole patch in one action. Do not reorder
   or edit a patch merely because the user inspects it.
-- Put device scan/inspection behind explicit actions, state what those actions
-  may do to a driver, and never autoplay on launch, project load or workspace
-  switch. Audio is not “safe” merely because it is a visual laboratory.
+- Keep device scan/inspection asynchronous, state what native probing may do
+  to a driver, and never autoplay on launch, project load or dialog open. Audio
+  is not “safe” merely because it is a visual laboratory.
+- Collapsing a side panel only changes visibility, never its persisted content,
+  graph state or transport. The canvas cannot be collapsed.
 - Use keyboard traversal parallel to pointer operation: stable focus order,
   named controls, Enter/Space activation, Escape to leave transient gestures,
   visible focus, and shortcuts discoverable in menus. Make graph operations
@@ -433,8 +434,8 @@ the occasional setup dock. See [DesktopWorkflow.md](DesktopWorkflow.md).
   metric/value, units, validity, source and freshness. Provide a keyboard
   navigable measurement cursor/table; a bitmap plot alone is not accessible.
 - Respect reduced motion and system scaling. Measurements must remain usable
-  at 200% text scaling and at narrow/small-screen sizes; collapse side surfaces
-  before shrinking plot labels or removing controls.
+  at 200% text scaling and at the agreed minimum window dimensions; collapse
+  side surfaces before shrinking plot labels or removing controls.
 - Every high-rate visualization needs a bounded shared producer, offscreen
   suspension and a defined maximum refresh rate. User-visible animation is not
   permission to increase callback work.
@@ -445,9 +446,9 @@ the occasional setup dock. See [DesktopWorkflow.md](DesktopWorkflow.md).
 ## 9. Design tradeoffs and open choices
 
 **Signal-first versus patch-first.** A dominant plot improves observation and
-teaching but consumes space needed to arrange large networks. The workspace
-presets and adjustable signal/patch split let the user choose without forcing
-one permanent composition.
+teaching but consumes space needed to arrange large networks. Keep the patch
+canvas permanently visible and let contextual signal inspection emphasize
+measurements without replacing the graph.
 
 **Color identity versus color accessibility.** Warm audio, blue control and
 green MIDI make the graph easier to scan, but color perception varies and
@@ -459,10 +460,10 @@ make the patch feel alive, but only a few can be read at a time and many
 simultaneous displays cost GPU/CPU. Use selected/visible nodes, semantic zoom
 and shared analyzer products; reserve full plots for the inspector/editor.
 
-**Compactness versus discoverability.** Collapsing administration reduces
-chrome but can conceal unfamiliar operations. Provide clear workspace names,
-visible transport/setup affordances and an all-panels path; do not hide required
-device setup behind undocumented gestures.
+**Compactness versus discoverability.** Collapsing side panels reduces chrome
+but can conceal unfamiliar operations. Provide clear accessible collapse
+controls, visible transport state and Stop, and keep Audio Setup discoverable
+as a named Audio-menu item.
 
 **Family color versus semantic state color.** A coral Dynamics rail must not
 look like an error. Keep family marks small and stable; put status in a
@@ -474,12 +475,10 @@ metadata, correct units/ranges, well-defined telemetry, and explicit stopped/
 stale behavior. Do not draw a sophisticated visual for data that the processor
 does not actually expose.
 
-**Design approval questions:** Should first launch open Beginner or Patch
-Design? Should the large Signal region default to the selected analyzer or to
-the last pinned source? Is the Mastering preset in scope before true-peak and
-loudness measurement contracts exist, or should it remain a clearly labeled
-measurement-only layout? These choices affect defaults and product promises,
-not the proposed color/type tokens.
+**Design approval questions:** Which eligible side panels should start open?
+Should the Property Inspector remember its Properties or Signal tab? What is
+the minimum supported window size for acceptance? These choices affect
+defaults and density, not the color/type tokens.
 
 ## 10. Scope boundary
 

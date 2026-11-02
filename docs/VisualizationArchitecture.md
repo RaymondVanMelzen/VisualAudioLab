@@ -192,6 +192,11 @@ These are **analyzer-library Version 1, Version 1.5 and Version 2 groups**, not 
 
 Analysis modules are observational sinks with stable signal inputs and optional preview surfaces. Hiding a surface removes observation demand, not saved graph topology. If a future module has a transparent audio-through port, its pass-through semantics and processing cost must be explicit; analysis is not silently inserted in a signal path. General inspection taps and analyzer nodes use the same service and admission rules.
 
+The product's current Guitar Tuner is implemented in [SignalVisualization.md](SignalVisualization.md)
+as a bounded worker-side monophonic pitch view. Its existence does not make the Spectrum Analyzer's
+dominant FFT bin a fundamental-pitch estimate; the analyzer roadmap below remains a separate
+library-group proposal.
+
 | Library group / module | Analysis semantics and controls | Result, limitations and gap behavior |
 |---|---|---|
 | **Version 1: Oscilloscope** | Time-domain samples per selected channel; free-run or declared rising/falling threshold trigger, pre/post-trigger duration and time/amplitude axes. Initial candidate acquisition up to 4096 samples; detailed longer windows require admission. Min/max envelopes preserve visible extrema, not just every nth sample. | Timestamped waveform and trigger state; sample cursors and numeric range. No interpolated detail presented as additional measured samples. On loss discard incomplete trigger acquisition and show Waiting/gap. Freeze preserves a labeled complete capture. |

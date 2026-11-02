@@ -251,25 +251,42 @@ void runRuntimeIntegrationTests()
         require(creations == 1 && device->scans == 1 && device->probes == 0 && device->opens == 0,
                 "Construction automatically scans only the selected API; unselected endpoints are not probed or opened.");
         setup.restoreSetup(saved);
-        require(device->scans == 1 && device->probes == 1 && setup.ready() && !setup.running() && device->opens == 0,
-                "Restoring exact device hints automatically scans and revalidates, never starts transport.");
+        require(device->scans == 1 && device->probes == 1 && !setup.ready() && !setup.running() && device->opens == 0,
+                "Restoring device hints revalidates automatically but leaves endpoint rows unassigned and transport stopped.");
         auto* scan = control<juce::TextButton>(setup, "Refresh / Retry");
         require(!control<juce::TextButton>(setup, "Detect rates, buffers & channels"), "Detect is removed entirely.");
         auto* input = control<juce::ComboBox>(setup, "Input device");
         auto* output = control<juce::ComboBox>(setup, "Output device");
         auto* rate = control<juce::ComboBox>(setup, "Sample rate");
         auto* buffer = control<juce::ComboBox>(setup, "Buffer frames");
-        auto* outCount = control<juce::ComboBox>(setup, "Output port");
-        auto* inCount = control<juce::ComboBox>(setup, "Input port");
         auto* start = control<juce::TextButton>(setup, "Start");
         auto* panel = control<juce::TextButton>(setup, "Control Panel");
-        require(buffer->isEnabled() && start->isEnabled() && !panel->isEnabled(),
-                "Automatically inspected candidates enable configuration; unreported driver panels remain disabled.");
+        require(buffer->isEnabled() && !start->isEnabled() && !panel->isEnabled()
+                    && !control<juce::ComboBox>(setup, "Input port")
+                    && !control<juce::ComboBox>(setup, "Output port"),
+                "Audio Setup exposes device/rate/buffer only; exact channel assignment is owned by the canvas lanes.");
+        const auto endpointId = [&](domain::EndpointRole role)
+        {
+            for (const auto& [id, endpoint] : workspace.graph().endpoints)
+                if (endpoint.role == role) return id;
+            return domain::GraphId{};
+        };
+        const auto inputEndpoint = endpointId(domain::EndpointRole::hardwareInput);
+        const auto outputEndpoint = endpointId(domain::EndpointRole::hardwareOutput);
+        require(inputEndpoint != 0 && outputEndpoint != 0, "Fresh project has stable input and output rows.");
         output->setSelectedId(0, juce::dontSendNotification);
         output->setSelectedId(1, juce::sendNotificationSync);
-        input->setSelectedId(2, juce::sendNotificationSync);
-        require(setup.ready() && device->probes >= 2 && device->opens == 0,
-                "Endpoint selection automatically reloads ports; never opens an application stream.");
+        if (kind == AudioBackendKind::asio)
+            input->setSelectedId(2, juce::sendNotificationSync);
+        else
+            input->setSelectedId(2, juce::sendNotificationSync);
+        require(device->probes >= 2 && !setup.ready() && device->opens == 0,
+                "Device selection automatically reloads capabilities but an unassigned output row still blocks Start.");
+        const auto outputAssigned = setup.assignEndpointChannels(outputEndpoint, {0, 1});
+        require(outputAssigned.succeeded, "Output row: " + outputAssigned.error);
+        const auto inputAssigned = setup.assignEndpointChannels(inputEndpoint, {0, 1});
+        require(inputAssigned.succeeded, "Input row: " + inputAssigned.error);
+        require(setup.ready(), "Rows assign exact named channels independently of the Audio Setup dialog.");
         juce::Label* state{};
         for (auto* child : setup.getChildren())
             if (child->getName() == "Audio setup state") state = dynamic_cast<juce::Label*>(child);
@@ -284,22 +301,12 @@ void runRuntimeIntegrationTests()
         setup.setSize(800, 300);
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-before.png");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-narrow.png", {0, 0, 323, 101});
-        require(device->selectedInput && !device->opens && inCount->getNumItems() == 4,
-                "Combined configuration probe reports the actual pair, including same-driver ASIO.");
-        require(outCount->getItemText(0) == "Mono: 1: Left"
-                && outCount->getText() == "Stereo: 1: Left / 2: Right"
-                && inCount->getItemText(0) == "None (input disabled)"
-                && inCount->getText() == "Stereo: 1: In left / 2: In right",
-                "Basic choices expose single driver channels and contiguous stereo pairs with verbatim names, not first-N counts: "
-                    + outCount->getItemText(0).toStdString() + "; " + outCount->getText().toStdString()
-                    + "; " + inCount->getText().toStdString());
+        require(device->selectedInput && !device->opens,
+                "Combined configuration probe reports the actual device pair without stream open.");
         if (kind == AudioBackendKind::asio)
         {
             require(input->getNumItems() == 2 && *device->selectedInput == device->selectedOutput,
                     "ASIO exposes None or the same driver, never independent input/output drivers.");
-            input->setSelectedId(1, juce::sendNotificationSync);
-            require(input->getSelectedId() == 1, "Explicit ASIO output-only selection is not overwritten.");
-            input->setSelectedId(2, juce::sendNotificationSync);
         }
         device->defer = true;
         input->setSelectedId(1, juce::sendNotificationSync);
@@ -331,52 +338,51 @@ void runRuntimeIntegrationTests()
         require(!rate->isEnabled() && !buffer->isEnabled() && !setup.ready() && setup.status().contains("unreported"),
                 "Unknown rate/period lists stay unknown, not fabricated defaults or host-managed claims.");
         device->capabilities.sampleRates = {48000}; device->capabilities.bufferFrames = {128};
+        device->capabilities.inputChannels = {"In left", "In right"};
+        device->capabilities.outputChannels = {"Left", "Right"};
+        input->setSelectedId(2, juce::sendNotificationSync);
         scan->onClick();
         require(output->getSelectedId() == 1 && rate->getNumItems() == 1 && setup.ready(),
-                "Refresh keeps exact name hints and automatically revalidates capabilities.");
-        require(setup.setupPreference()->inputName.empty() && setup.ready(),
-                "Retry preserves the user's output-only endpoint choice instead of resurrecting saved duplex input.");
-        input->setSelectedId(2, juce::sendNotificationSync);
-        require(setup.setupPreference() == saved && setup.ready(),
-                "Reselecting the saved input automatically restores exact revalidated settings.");
+                "Refresh preserves valid explicitly assigned channel identities without inventing a new assignment.");
+        const auto outputReassigned = setup.assignEndpointChannels(outputEndpoint, {0, 1});
+        require(outputReassigned.succeeded, "Reassign output channels after device reinspection: " + outputReassigned.error);
+        const auto inputReassigned = setup.assignEndpointChannels(inputEndpoint, {0, 1});
+        require(inputReassigned.succeeded, "Reassign input channels after device reinspection: " + inputReassigned.error);
+        require(setup.ready(), "Exact channel assignments are ready after device reinspection.");
         screenshot(setup, "desktop-options-" + juce::String(static_cast<int>(kind)) + "-ready.png");
         device->capabilities.inputChannels = {"Test analog", "Test virtual A", "Test virtual B",
             "Test virtual C", "Test loopback A", "Test loopback B", ""};
         device->capabilities.outputChannels = {"Test main left", "Test main right", "Test virtual out"};
         clickButton(*scan);
-        outCount->setSelectedId(1, juce::sendNotificationSync);
-        inCount->setSelectedId(9, juce::sendNotificationSync);
-        require(!setup.ready() && !start->isEnabled() && setup.status().contains("must match")
-                && inCount->getText() == "Stereo: 1: Test analog / 2: Test virtual A",
-                "Mono output and stereo input fail clearly; the engine does not invent width conversion.");
-        screenshot(setup, "desktop-channel-counts-" + juce::String(static_cast<int>(kind)) + "-mismatch.png");
-        outCount->setSelectedId(5, juce::sendNotificationSync);
-        inCount->setSelectedId(13, juce::sendNotificationSync);
-        require(setup.ready() && setup.setupPreference()->inputChannels == 2
-                && setup.setupPreference()->outputChannels == 2 && device->opens == 0
-                && outCount->getText() == "Stereo: 2: Test main right / 3: Test virtual out"
-                && setup.setupPreference()->inputChannelIndices == std::vector<int>{4, 5}
-                && setup.setupPreference()->outputChannelIndices == std::vector<int>{1, 2},
-                "Later contiguous pairs preserve exact driver identities independently of bus width.");
-        require(workspace.createNode({0, 0}, "Input", {{"audio.type", std::string("Input")}}).succeeded,
-                "Create real input node for the selected port bus.");
-        const auto inputNode = workspace.lastCreatedNode();
-        require(workspace.createNode({180, 0}, "Output", {{"audio.type", std::string("Output")}}).succeeded,
-                "Create real output node for the selected port bus.");
-        require(workspace.connect({inputNode, domain::Port::output}, {workspace.lastCreatedNode(), domain::Port::input}).succeeded,
-                "Wire the actual engine graph before explicit native Start.");
+        require(setup.assignEndpointChannels(outputEndpoint, {1, 2}).succeeded
+                    && setup.assignEndpointChannels(inputEndpoint, {4}).succeeded
+                    && setup.ready() && setup.setupPreference()->inputChannels == 1
+                    && setup.setupPreference()->outputChannels == 2 && device->opens == 0
+                    && setup.setupPreference()->inputChannelIndices == std::vector<int>{4}
+                    && setup.setupPreference()->outputChannelIndices == std::vector<int>{1, 2},
+                "Sparse named channel groups preserve exact physical identities and allow unequal input/output widths.");
+        require(workspace.connect({inputEndpoint, domain::Port::output}, {outputEndpoint, domain::Port::input},
+                                  domain::AudioAdapter::monoToStereo).succeeded,
+                "Explicit mono-to-stereo cable adapter is required and visible in the graph model.");
         const auto started = setup.start();
         require(started.succeeded && device->opens == 1
-                && device->openedRequest.inputChannelIndices == std::vector<int>{4, 5}
+                && device->openedRequest.inputChannelIndices == std::vector<int>{4}
                 && device->openedRequest.outputChannelIndices == std::vector<int>{1, 2},
-                "Only explicit Start opens a stream and forwards the exact selected ports, not first N: " + started.error);
+                "Only explicit Start opens exact sparse masks without first-N substitution or width equality: " + started.error);
+        std::array<float, 32> inputSamples{}, leftSamples{}, rightSamples{};
+        inputSamples.fill(0.375f);
+        const float* inputData[]{inputSamples.data()};
+        float* outputData[]{leftSamples.data(), rightSamples.data()};
+        device->target->process({inputData, outputData, 1, 2, 32});
+        require(leftSamples[0] == 0.375f && rightSamples[31] == 0.375f,
+                "Prepared callback compacts exact sparse input identities and fans the adapted bus to selected output slots.");
         require(setup.stop().succeeded, "Explicit Stop quiesces the selected stream.");
-        screenshot(setup, "desktop-channel-counts-" + juce::String(static_cast<int>(kind)) + "-ready.png");
-        inCount->setSelectedId(1, juce::sendNotificationSync);
+        screenshot(setup, "desktop-endpoint-rows-" + juce::String(static_cast<int>(kind)) + "-ready.png");
+        require(setup.assignEndpointChannels(inputEndpoint, {}).succeeded,
+                "Unassigning an input row preserves the output-only workflow.");
         require(setup.ready() && setup.setupPreference()->inputChannels == 0
-                && setup.setupPreference()->inputName.empty()
-                && inCount->getText() == "None (input disabled)",
-                "Zero disables native capture without pretending it selects input port zero.");
+                && !setup.setupPreference()->inputName.empty(),
+                "An unassigned input row opens no capture while the selected input device remains an independent setup hint.");
         device->capabilities.hasControlPanel = true;
         scan->onClick();
         require(panel->isEnabled(), "Driver-reported Control Panel support enables its action.");
@@ -399,24 +405,14 @@ void runRuntimeIntegrationTests()
                 "Late selection results cannot overwrite a newer pending selection.");
         newCompletion({device->capabilities, {}});
         require(setup.ready() && !setup.running(), "Latest selection completes without automatic transport.");
-        juce::ToggleButton* advanced{};
-        for (auto* child : setup.getChildren())
-            if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) advanced = toggle;
-        require(advanced && !advanced->getToggleState() && outCount->getNumItems() == 5,
-                "Basic setup contains only mono ports and contiguous stereo pairs.");
-        advanced->setToggleState(true, juce::dontSendNotification); advanced->onClick();
-        outCount->setSelectedId(6, juce::sendNotificationSync);
-        inCount->setSelectedId(1, juce::dontSendNotification);
-        require(setup.ready() && setup.setupPreference()->outputChannelIndices == std::vector<int>{0, 1, 2}
-                && setup.channels() == 3, "Advanced exposes genuine wider contiguous channel groups, not arbitrary mapping.");
-        advanced->setToggleState(false, juce::dontSendNotification); advanced->onClick();
-        require(!setup.ready() && outCount->getSelectedId() == 0,
-                "Hiding an advanced selection never silently substitutes mono or stereo ports.");
+        require(setup.assignEndpointChannels(outputEndpoint, {0, 1, 2}).succeeded
+                    && setup.ready() && setup.setupPreference()->outputChannelIndices == std::vector<int>{0, 1, 2}
+                    && setup.channels() == 3,
+                "Endpoint rows support exact advanced channel sets wider than stereo.");
         device->inventory.devices.clear(); device->changed(device->inventory);
         require(!setup.ready() && !output->isEnabled() && setup.status().contains("No output"),
                 "Empty inventories are truthful and actionable.");
         setup.setLookAndFeel(nullptr);
-        juce::ignoreUnused(outCount);
     }
     if (!testedBackends.empty())
     {
@@ -432,17 +428,20 @@ void runRuntimeIntegrationTests()
         });
         auto legacy = AudioSetupPreference{testedBackends.front(), "", "Test output (not hardware)", 48000, 128, 0, 4};
         setup->restoreSetup(legacy);
-        require(setup->ready() && !setup->running() && device->opens == 0
-                && setup->setupPreference()->outputChannelIndices == std::vector<int>{0, 1, 2, 3},
-                "Restored wider count-only hints explicitly migrate to first-N masks in Advanced, without playback: "
-                    + setup->status().toStdString() + "; port: "
-                    + control<juce::ComboBox>(*setup, "Output port")->getText().toStdString());
+        domain::GraphId outputEndpoint{};
+        for (const auto& [id, endpoint] : workspace.graph().endpoints)
+            if (endpoint.role == domain::EndpointRole::hardwareOutput) outputEndpoint = id;
+        require(!setup->ready() && !setup->running() && device->opens == 0
+                    && setup->assignEndpointChannels(outputEndpoint, {0, 1, 2, 3}).succeeded
+                    && setup->setupPreference()->outputChannelIndices == std::vector<int>{0, 1, 2, 3},
+                "Restored width hints never imply a port assignment; exact four-channel row configuration is explicit.");
+        require(setup->assignEndpointChannels(outputEndpoint, {}).succeeded,
+                "Clear the explicit row assignment before testing legacy channel-count hints.");
         auto missingPorts = legacy;
         missingPorts.outputChannels = 2; missingPorts.outputChannelIndices = {8, 9};
         setup->restoreSetup(missingPorts);
-        require(!setup->ready() && device->opens == 0
-                && control<juce::ComboBox>(*setup, "Output port")->getSelectedId() == 0,
-                "Unavailable saved channel identities remain unselected, never replaced by the first two channels.");
+        require(!setup->ready() && device->opens == 0,
+                "Unavailable saved channel identities remain unselected, never replaced by the first channels.");
         missingPorts.outputName = "Missing saved driver";
         setup->restoreSetup(missingPorts);
         require(!setup->ready() && device->probes == 0 && device->opens == 0
@@ -455,9 +454,9 @@ void runRuntimeIntegrationTests()
         auto panelOwner = std::make_unique<RuntimePanel>(legacy, observations);
         auto& panel = *panelOwner;
         panel.configureOffline(1);
-        require(control<juce::ComboBox>(panel, "Output port")->getText() == "1 channel: preview bus 1"
-                && control<juce::ComboBox>(panel, "Input port")->getText() == "0 channels (input disabled)",
-                "Offline channel counts refer to a preview bus, never invented hardware labels.");
+        require(panel.channels() == 1 && !control<juce::ComboBox>(panel, "Output port")
+                && !control<juce::ComboBox>(panel, "Input port"),
+                "Offline preview uses an explicit virtual bus without reintroducing channel assignment controls into Audio Setup.");
         require(!legacy.createNode({0, 0}, "Invalid", {{"audio.gain", std::numeric_limits<double>::quiet_NaN()}}).succeeded
                 && legacy.graph().nodes.empty() && !legacy.canUndo(), "Invalid initial metadata never creates a partial module/history edit.");
         require(legacy.createNode({0, 0}, "Source", {{"audio.type", std::string("Script")},
@@ -502,8 +501,14 @@ void runRuntimeIntegrationTests()
     shell.insertModule("Script"); const auto script = service.lastCreatedNode();
     shell.insertModule("Gain"); const auto gain = service.lastCreatedNode();
     shell.insertModule("Oscilloscope"); const auto analyzer = service.lastCreatedNode();
-    shell.insertModule("Output"); const auto output = service.lastCreatedNode();
-    require(service.moveNodes({{script, {30, 80}}, {gain, {260, 80}}, {analyzer, {490, 80}}, {output, {720, 80}}}).succeeded, "Arrange executable patch.");
+    domain::GraphId output{};
+    for (const auto& [id, endpoint] : service.graph().endpoints)
+        if (endpoint.role == domain::EndpointRole::hardwareOutput) output = id;
+    const auto nodeCount = service.graph().nodes.size();
+    shell.insertModule("Output");
+    require(service.graph().nodes.size() == nodeCount && output != 0,
+            "Hardware Output is no longer inserted from the module browser.");
+    require(service.moveNodes({{script, {30, 80}}, {gain, {260, 80}}, {analyzer, {490, 80}}}).succeeded, "Arrange executable patch.");
     const std::string source = "NODE Preview AT AUDIO; OUTPUT Y: REAL; PARAM Level: REAL = 0.25 RANGE 0 .. 1; BEGIN Y := Level END.";
     require(service.setParameter(script, "audio.script", source).succeeded
             && service.setParameter(gain, "audio.param.gain", 0.5).succeeded, "Persist authored Script and FX targets.");
@@ -647,7 +652,8 @@ void runRuntimeIntegrationTests()
             require(!runtime.start().succeeded && mock->opens == 0, "Unselected sample rate/buffer/channel configuration never silently falls back or opens hardware.");
             control<juce::ComboBox>(runtime, "Sample rate")->setSelectedId(1, juce::dontSendNotification);
             control<juce::ComboBox>(runtime, "Buffer frames")->setSelectedId(1, juce::dontSendNotification);
-            control<juce::ComboBox>(runtime, "Output port")->setSelectedId(1, juce::dontSendNotification);
+            require(runtime.assignEndpointChannels(output, {0}).succeeded,
+                    "Assign the output row's named driver channel from the canvas-side endpoint API.");
             clickButton(*scan);
             require(runtime.getWidth() >= 640 && control<juce::ComboBox>(runtime, "Output device")->getWidth() >= 200,
                     "The resizable setup dialog gives device controls usable width.");

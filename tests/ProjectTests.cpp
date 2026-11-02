@@ -84,7 +84,11 @@ void testProjects(const ProjectDirectory& directory)
     workspace.setLayout(layout);
     const auto original = workspace.project();
     const auto unicodePath = directory.path() / std::filesystem::path(u8"project-\u00e9-\u97f3.valab");
-    require(session.dirty() && session.saveAs(unicodePath).succeeded && !session.dirty(), "Save As Unicode project.");
+    const auto dirtyBeforeSave = session.dirty();
+    const auto saved = session.saveAs(unicodePath);
+    require(dirtyBeforeSave && saved.succeeded && !session.dirty(),
+            "Save As Unicode project: " + saved.error + " (result=" + std::to_string(saved.succeeded)
+                + ", dirty=" + std::to_string(session.dirty()) + ")");
     const auto loaded = store.read(unicodePath);
     require(loaded.file && loaded.file->state == original, "All patches, graphs, parameters and layout round-trip.");
     require(loaded.file->source.find('\n') != std::string::npos, "JSON is human readable.");
@@ -162,8 +166,10 @@ void testProjects(const ProjectDirectory& directory)
             && parsed(store.read(futurePath).file->source)["patches"][0]["graph"]["nodes"][0]["futureNode"].toString() == "retained",
             "Undo after a deletion has been saved restores unknown entity metadata as well as graph content.");
 
+    int rejectIndex{};
     const auto reject = [&](auto mutate)
     {
+        ++rejectIndex;
         auto value = parsed(loaded.file->source);
         mutate(value);
         const auto content = json(value);
@@ -172,15 +178,18 @@ void testProjects(const ProjectDirectory& directory)
         const auto before = workspace.project();
         const auto activePath = session.path();
         const auto couldUndo = workspace.canUndo();
-        require(!session.load(directory.path() / "invalid.valab").succeeded
-                && workspace.project() == before && session.path() == activePath && workspace.canUndo() == couldUndo,
-                "Invalid loads preserve project/path/history.");
-        require(!session.saveAs(directory.path() / "invalid.valab").succeeded
+        const auto loadAttempt = session.load(directory.path() / "invalid.valab");
+        require(!loadAttempt.succeeded && workspace.project() == before
+                && session.path() == activePath && workspace.canUndo() == couldUndo,
+                "Invalid loads preserve project/path/history (case " + std::to_string(rejectIndex)
+                    + "): " + loadAttempt.error);
+        const auto saveAttempt = session.saveAs(directory.path() / "invalid.valab");
+        require(!saveAttempt.succeeded
                 && invalidFile.loadFileAsString().toStdString() == content,
-                "Unsupported/corrupt target cannot be overwritten.");
+                "Unsupported/corrupt target cannot be overwritten: " + saveAttempt.error);
     };
     reject([](auto& value) { auto v = value["version"]; put(v, "major", 2); });
-    reject([](auto& value) { auto v = value["minimumReader"]; put(v, "minor", 1); });
+    reject([](auto& value) { auto v = value["minimumReader"]; put(v, "minor", 2); });
     reject([](auto& value) { put(value, "requiredFeatures", juce::Array<juce::var>{"futureProcessor"}); });
     reject([](auto& value) { put(value, "activePatch", "999"); });
     reject([](auto& value) { auto n = value["patches"][0]["graph"]["nodes"][0]; put(n, "id", "01"); });
@@ -270,11 +279,75 @@ int main()
                 && workspace.connect({sum, Port::output}, {output, Port::input}).succeeded, "Persist explicit source fan-in.");
         val::application::ProjectFile file{workspace.project(), {}};
         using val::infrastructure::LocalProjectStore;
-        require(LocalProjectStore::encode(file).succeeded, "Sum uses the existing version-1 scalar/edge schema.");
-        require(parsed(file.source)["requiredFeatures"][0] == juce::var("audio.explicit-sum.v1"),
-                "Feature gate prevents older readers from editing Sum semantics.");
+        require(LocalProjectStore::encode(file).succeeded, "Sum uses the version-1.1 endpoint/port schema.");
+        const auto featureValues = parsed(file.source)["requiredFeatures"];
+        bool hasExplicitSum{}, hasEndpointPorts{};
+        for (const auto& feature : *featureValues.getArray())
+        {
+            hasExplicitSum = hasExplicitSum || feature == juce::var("audio.explicit-sum.v1");
+            hasEndpointPorts = hasEndpointPorts || feature == juce::var("audio.endpoint-ports.v1");
+        }
+        require(hasExplicitSum && hasEndpointPorts,
+                "Feature gates protect both explicit Sum and endpoint/port semantics from older readers.");
         const auto decoded = LocalProjectStore::decode(file.source);
         require(decoded.file && decoded.file->state == file.state, "Sum roundtrip preserves every original ID, edge and scalar.");
+        const auto asLegacyProject = [](const std::string& source)
+        {
+            auto root = parsed(source);
+            auto version = root["version"]; put(version, "minor", 0);
+            auto minimumReader = root["minimumReader"]; put(minimumReader, "minor", 0);
+            put(root, "requiredFeatures", juce::Array<juce::var>{});
+            auto patches = root["patches"].getArray();
+            for (int patchIndex = 0; patches != nullptr && patchIndex < patches->size(); ++patchIndex)
+            {
+                auto patchValue = patches->getReference(patchIndex);
+                auto graph = patchValue["graph"];
+                put(graph, "endpoints", juce::Array<juce::var>{});
+                auto wires = graph["connections"].getArray();
+                for (int wireIndex = 0; wires != nullptr && wireIndex < wires->size(); ++wireIndex)
+                    wires->getReference(wireIndex).getDynamicObject()->removeProperty("adapter");
+            }
+            return json(root);
+        };
+        const auto legacySource = asLegacyProject(file.source);
+        const auto migrated = LocalProjectStore::decode(legacySource);
+        require(migrated.file && migrated.file->state.patches.at(file.state.activePatch).graph.nodes.size() == 2
+                && migrated.file->state.patches.at(file.state.activePatch).graph.endpoints.size() == 2
+                && migrated.file->state.patches.at(file.state.activePatch).graph.endpoints.contains(a)
+                && migrated.file->state.patches.at(file.state.activePatch).graph.endpoints.contains(output)
+                && migrated.file->state.patches.at(file.state.activePatch).graph.connections.size() == 3,
+                "Version-1.0 Input/Output nodes migrate to fixed endpoints without changing their IDs or cables.");
+        auto migratedRoundTrip = *migrated.file;
+        require(LocalProjectStore::encode(migratedRoundTrip).succeeded
+                && LocalProjectStore::decode(migratedRoundTrip.source).file->state == migrated.file->state,
+                "Migrated graph saves as the new endpoint schema and round-trips exactly.");
+        val::application::WorkspaceService emptyWorkspace;
+        val::application::ProjectFile emptyProject{emptyWorkspace.project(), {}};
+        require(LocalProjectStore::encode(emptyProject).succeeded, "Encode empty-project migration fixture.");
+        const auto emptyLegacy = LocalProjectStore::decode(asLegacyProject(emptyProject.source));
+        require(emptyLegacy.file && emptyLegacy.file->state.patches.at(emptyLegacy.file->state.activePatch).graph.nodes.empty()
+                && emptyLegacy.file->state.patches.at(emptyLegacy.file->state.activePatch).graph.endpoints.size() == 2,
+                "A legacy project without endpoint nodes receives stable default input/output rows.");
+        auto invalidLegacy = parsed(legacySource);
+        auto legacyNodes = invalidLegacy["patches"][0]["graph"]["nodes"];
+        for (int nodeIndex = 0; nodeIndex < legacyNodes.size(); ++nodeIndex)
+        {
+            auto legacyNode = legacyNodes[nodeIndex];
+            if (legacyNode["parameters"]["audio.type"].toString() == "Output")
+                put(legacyNode, "id", juce::String(std::to_string(b)));
+        }
+        const auto invalidLegacySource = json(invalidLegacy);
+        val::application::WorkspaceService migrationWorkspace;
+        require(migrationWorkspace.createNode({4, 5}, "Keep current graph").succeeded,
+                "Prepare migration rollback fixture.");
+        val::infrastructure::LocalProjectStore migrationStore(directory.path() / "migration-recent.json");
+        val::application::ProjectSession migrationSession(migrationWorkspace, migrationStore);
+        const auto beforeMigrationFailure = migrationWorkspace.project();
+        const auto migrationPath = directory.file.getChildFile("invalid-legacy.valab");
+        require(migrationPath.replaceWithText(juce::String::fromUTF8(invalidLegacySource.c_str()))
+                && !migrationSession.load(directory.path() / "invalid-legacy.valab").succeeded
+                && migrationWorkspace.project() == beforeMigrationFailure,
+                "Invalid legacy endpoint identity collisions fail without replacing the open project.");
         require(!workspace.setParameter(sum, "audio.type", std::string("Gain")).succeeded,
                 "Changing a connected Sum into an effect cannot introduce implicit mixing.");
         val::application::ProjectFile invalid{workspace.project(), {}};

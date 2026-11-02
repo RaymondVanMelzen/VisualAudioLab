@@ -1,6 +1,7 @@
 #include <val/presentation/RuntimePanel.h>
 #include <val/presentation/ShellTheme.h>
 #include <val/presentation/Typography.h>
+#include <val/domain/Routing.h>
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -12,26 +13,10 @@ namespace
 {
 juce::String text(const std::string& value) { return juce::String::fromUTF8(value.c_str()); }
 AudioError invalid(std::string value) { return {AudioErrorCode::invalidArgument, std::move(value)}; }
-juce::String previewChoice(int count)
-{
-    if (count == 0) return "0 channels (input disabled)";
-    return juce::String(count) + (count == 1 ? " channel: " : " channels: ") + "preview bus 1"
-        + (count > 1 ? "-" + juce::String(count) : "");
-}
-juce::String portChoice(const std::vector<int>& indices, const std::vector<std::string>& names)
-{
-    juce::StringArray selected;
-    for (int index : indices)
-    {
-        const auto name = text(names.at(static_cast<std::size_t>(index)));
-        selected.add(juce::String(index + 1) + ": " + (name.trim().isEmpty() ? "name not reported" : name));
-    }
-    return (indices.size() == 1 ? "Mono: " : indices.size() == 2 ? "Stereo: " : juce::String(indices.size()) + "-channel: ")
-        + selected.joinIntoString(" / ");
-}
 bool contentEqual(const domain::Graph& left, const domain::Graph& right)
 {
-    if (left.connections != right.connections || left.nodes.size() != right.nodes.size()) return false;
+    if (left.connections != right.connections || left.nodes.size() != right.nodes.size()
+        || left.endpoints != right.endpoints) return false;
     for (const auto& [id, node] : left.nodes)
     {
         const auto found = right.nodes.find(id);
@@ -79,18 +64,17 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
 #else
     api_.setSelectedId(6, juce::dontSendNotification);
 #endif
-    for (auto* control : std::initializer_list<juce::Component*>{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_,
-             &scan_, &panel_, &advanced_, &start_, &stop_, &done_, &notice_, &state_}) addAndMakeVisible(control);
-    const juce::String names[]{"Backend", "Input device", "Output device", "Sample rate", "Buffer frames", "Input port", "Output port"};
-    juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_};
-    for (int i = 0; i < 7; ++i)
+    for (auto* control : std::initializer_list<juce::Component*>{&api_, &input_, &output_, &rateChoice_, &buffer_,
+             &scan_, &panel_, &start_, &stop_, &done_, &notice_, &state_}) addAndMakeVisible(control);
+    const juce::String names[]{"Backend", "Input device", "Output device", "Sample rate", "Buffer frames"};
+    juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_};
+    for (int i = 0; i < 5; ++i)
     {
         labels_[i].setText(names[i], juce::dontSendNotification); addAndMakeVisible(labels_[i]);
         boxes[i]->setTitle(names[i]); boxes[i]->setTextWhenNothingSelected("Select explicitly");
     }
-    notice_.setText("Check output levels before Start; no master limiter. Automatic inspection may initialize hardware "
-                    "(ASIO may briefly start/stop its driver). Ports use exact driver channel identities. "
-                    "Input must be disabled or match output width. No automatic playback or fallback.", juce::dontSendNotification);
+    notice_.setText("Assign exact named channels in the fixed canvas lanes. Input is optional; output rows use disjoint channels. "
+                    "No automatic playback or device fallback. Check levels before Start; no master limiter.", juce::dontSendNotification);
     notice_.setFont(Typography::ui(13));
     state_.setText(lastStatus_, juce::dontSendNotification); state_.setFont(Typography::ui(13));
     state_.setMinimumHorizontalScale(1.0f);
@@ -99,17 +83,9 @@ RuntimePanel::RuntimePanel(WorkspaceService& workspace, VisualizationSession& vi
     api_.onChange = [this] { selectBackend(); };
     scan_.onClick = [this] { scan(); };
     panel_.onClick = [this] { controlPanel(); };
-    advanced_.onClick = [this]
-    {
-        if (offline_) return;
-        preference_ = setupPreference();
-        populateConfiguration();
-        enableControls();
-    };
-    advanced_.setTooltip("Show wider contiguous driver channel groups (up to 32). No arbitrary remapping or engine width conversion.");
     input_.onChange = [this] { selectionChanged(); };
     output_.onChange = [this] { selectionChanged(true); };
-    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
+    for (auto* box : {&rateChoice_, &buffer_})
         box->onChange = [this] { configurationChanged(); };
     start_.onClick = [this] { const auto result = start(); if (!result.succeeded) message(text(result.error)); };
     stop_.onClick = [this] { const auto result = stop(); if (!result.succeeded) message(text(result.error)); };
@@ -150,17 +126,16 @@ void RuntimePanel::resized()
     done_.setBounds(buttons.removeFromRight(70).reduced(2));
     scan_.setBounds(buttons.removeFromLeft(110).reduced(2));
     panel_.setBounds(buttons.removeFromLeft(110).reduced(2));
-    advanced_.setBounds(bounds.removeFromTop(26).removeFromLeft(160).reduced(2));
     state_.setBounds(bounds.removeFromTop(30).reduced(2));
-    juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_, &inputCount_, &outputCount_};
+    juce::ComboBox* boxes[]{&api_, &input_, &output_, &rateChoice_, &buffer_};
     // Two compact columns fit the resizable Audio Setup dialog.
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < 5; ++i)
     {
         const int row = i / 2, col = i % 2, column = bounds.getWidth() / 2;
         auto cell = juce::Rectangle<int>(bounds.getX() + col * column, bounds.getY() + row * 28, column, 28).reduced(2);
         labels_[i].setBounds(cell.removeFromLeft(100)); boxes[i]->setBounds(cell);
     }
-    bounds.removeFromTop(112);
+    bounds.removeFromTop(84);
     notice_.setBounds(bounds.removeFromTop(52));
 }
 void RuntimePanel::enableControls()
@@ -170,11 +145,10 @@ void RuntimePanel::enableControls()
     input_.setEnabled(!running_ && !scanning_ && !offline_ && input_.getNumItems() > 0
                       && (api_.getSelectedId() != 1 || output_.getSelectedId() > 0));
     output_.setEnabled(!running_ && !scanning_ && !offline_ && output_.getNumItems() > 0);
-    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
+    for (auto* box : {&rateChoice_, &buffer_})
         box->setEnabled(editable && box->getNumItems() > 0);
     scan_.setEnabled(editable && !offline_ && static_cast<bool>(factory_));
     panel_.setEnabled(editable && outputCaps_ && outputCaps_->hasControlPanel);
-    advanced_.setEnabled(editable && !offline_ && outputCaps_.has_value());
     start_.setEnabled(editable && request().value.has_value());
     stop_.setEnabled(running_);
     if (onStatus) onStatus(lastStatus_);
@@ -182,8 +156,7 @@ void RuntimePanel::enableControls()
 void RuntimePanel::clearConfiguration(juce::String placeholder)
 {
     inputCaps_.reset(); outputCaps_.reset();
-    inputPorts_.clear(); outputPorts_.clear();
-    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_})
+    for (auto* box : {&rateChoice_, &buffer_})
     {
         box->clear(juce::dontSendNotification);
         box->setTextWhenNothingSelected(placeholder);
@@ -192,23 +165,11 @@ void RuntimePanel::clearConfiguration(juce::String placeholder)
 }
 void RuntimePanel::configurationChanged()
 {
-    updateChannelTooltips();
     const auto configuration = request();
     if (!configuration.value) message(text(configuration.error.message));
-    else message(offline_ ? "Preview bus width selected; no hardware ports. Start remains explicit."
-        : "Driver ports selected. Start remains explicit; no width conversion or silent fallback.");
+    else message(offline_ ? "Offline preview selected. Channel rows remain visible; Start is explicit."
+        : "Device and stream format selected. Assign exact channel names in the canvas lanes; Start remains explicit.");
     enableControls();
-}
-void RuntimePanel::updateChannelTooltips()
-{
-    for (auto* box : {&inputCount_, &outputCount_})
-    {
-        const auto selection = box->getSelectedId() > 0 ? box->getText() : juce::String("No port selected.");
-        box->setTooltip(selection + (offline_
-            ? "\nOffline preview bus only; no hardware ports."
-            : "\nExact driver indices, packed in ascending order into the engine bus. Driver names are shown verbatim; "
-              "physical/virtual classification is not provided by this metadata. Check vendor routing."));
-    }
 }
 void RuntimePanel::selectionChanged(bool outputChanged)
 {
@@ -368,26 +329,9 @@ void RuntimePanel::capabilities(AudioQuery<AudioDeviceCapabilities> result)
 }
 void RuntimePanel::populateConfiguration()
 {
-    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_}) box->clear(juce::dontSendNotification);
-    inputPorts_ = {{}};
-    outputPorts_.clear();
-    inputCount_.addItem("None (input disabled)", 1);
-    const auto appendPorts = [&](juce::ComboBox& box, std::vector<std::vector<int>>& ports, const std::vector<std::string>& names)
-    {
-        for (int width = 1; width <= (advanced_.getToggleState() ? 32 : 2); ++width)
-            for (int first = 0; first + width <= static_cast<int>(names.size()); ++first)
-            {
-                std::vector<int> indices;
-                for (int i = 0; i < width; ++i) indices.push_back(first + i);
-                ports.push_back(indices);
-                box.addItem(portChoice(indices, names), static_cast<int>(ports.size()));
-            }
-    };
-    if (inputCaps_)
-        appendPorts(inputCount_, inputPorts_, inputCaps_->inputChannels);
+    for (auto* box : {&rateChoice_, &buffer_}) box->clear(juce::dontSendNotification);
     if (outputCaps_)
     {
-        appendPorts(outputCount_, outputPorts_, outputCaps_->outputChannels);
         int id = 1;
         for (const auto rate : outputCaps_->sampleRates)
             if (std::isfinite(rate) && rate >= 8000 && rate <= 384000)
@@ -397,13 +341,9 @@ void RuntimePanel::populateConfiguration()
             if (frames > 0 && frames <= 4096)
                 buffer_.addItem(juce::String(frames), id++);
     }
-    inputCount_.setSelectedId(1, juce::dontSendNotification);
-    if (outputCount_.getNumItems() > 0)
-        outputCount_.setSelectedId(outputCaps_->outputChannels.size() >= 2
-            ? static_cast<int>(outputCaps_->outputChannels.size()) + 1 : 1, juce::dontSendNotification);
     if (rateChoice_.getNumItems() == 1) rateChoice_.setSelectedId(1, juce::dontSendNotification);
     if (buffer_.getNumItems() == 1) buffer_.setSelectedId(1, juce::dontSendNotification);
-    for (auto* box : {&rateChoice_, &buffer_, &outputCount_})
+    for (auto* box : {&rateChoice_, &buffer_})
         box->setTextWhenNothingSelected(box->getNumItems() == 0 ? "Not reported: retry" : "Select reported choice");
     const bool shared = api_.getSelectedId() == 3;
     labels_[4].setText(shared ? "Callback frames" : "Buffer frames", juce::dontSendNotification);
@@ -424,22 +364,13 @@ void RuntimePanel::populateConfiguration()
         };
         restored = selectText(rateChoice_, juce::String(preference_->sampleRate, 0));
         restored = selectText(buffer_, juce::String(preference_->bufferFrames)) && restored;
-        const auto selectPorts = [](juce::ComboBox& box, const auto& ports, const std::vector<int>& selected)
-        {
-            const auto found = std::find(ports.begin(), ports.end(), selected);
-            box.setSelectedId(found == ports.end() ? 0 : static_cast<int>(found - ports.begin()) + 1, juce::dontSendNotification);
-            return found != ports.end();
-        };
-        restored = selectPorts(outputCount_, outputPorts_, preference_->outputChannelIndices) && restored;
-        restored = selectPorts(inputCount_, inputPorts_, preference_->inputChannelIndices) && restored;
     }
-    updateChannelTooltips();
-    message(juce::String(outputCount_.getNumItems() == 0
-                ? "No usable output ports reported. Refresh / Retry, check device/vendor setup, or select another backend. Start is unavailable. "
+    message(juce::String(outputCaps_->outputChannels.empty()
+                ? "No output channels reported. Refresh / Retry or check vendor setup; Start is unavailable. "
                 : rateChoice_.getNumItems() == 0 || buffer_.getNumItems() == 0
                 ? "Rate/buffer candidates are unreported or outside engine limits; Start is unavailable. Refresh / Retry, check vendor/OS setup, or select different endpoints/backend. "
                 : restored ? "Saved settings revalidated. Start remains explicit. "
-                           : "Capabilities ready. Select mono/stereo driver ports. Input must be disabled or match output width. ")
+                           : "Capabilities ready. Assign named channels to endpoint rows in the canvas lanes. ")
             + (shared ? "Windows manages the hardware period; callback frames are application block choices. " : "")
             + (buffer_.getNumItems() == 1 ? "One buffer value reported for this configuration. " : ""));
 }
@@ -449,15 +380,12 @@ void RuntimePanel::configureOffline(int channels, double rate, int frames)
     ++probeSerial_; probing_ = false; scanning_ = false;
     if (backend_) { const auto result = backend_->shutdown(); juce::ignoreUnused(result); backend_.reset(); }
     inputs_.clear(); outputs_.clear(); input_.clear(juce::dontSendNotification); output_.clear(juce::dontSendNotification);
-    inputPorts_.clear(); outputPorts_.clear(); endpointHint_.reset();
+    endpointHint_.reset();
     offline_ = true; api_.setSelectedId(6, juce::dontSendNotification);
-    for (auto* box : {&rateChoice_, &buffer_, &inputCount_, &outputCount_}) box->clear(juce::dontSendNotification);
+    for (auto* box : {&rateChoice_, &buffer_}) box->clear(juce::dontSendNotification);
+    width_ = channels;
     rateChoice_.addItem(juce::String(rate, 0), 1); rateChoice_.setSelectedId(1, juce::dontSendNotification);
     buffer_.addItem(juce::String(frames), 1); buffer_.setSelectedId(1, juce::dontSendNotification);
-    inputCount_.addItem(previewChoice(0), 1); inputCount_.setSelectedId(1, juce::dontSendNotification);
-    for (int i = 1; i <= 32; ++i) outputCount_.addItem(previewChoice(i), i);
-    outputCount_.setSelectedId(channels, juce::dontSendNotification);
-    updateChannelTooltips();
     message("Offline preview selected. Start is explicit; no device opens.");
     enableControls();
 }
@@ -468,13 +396,6 @@ void RuntimePanel::restoreSetup(std::optional<AudioSetupPreference> preference)
     if (!preference_) return;
     const auto validation = validateSettings(Settings{1100, 720, true, preference_});
     if (!validation.succeeded) { message(text(validation.error)); preference_.reset(); return; }
-    if (preference_->inputChannelIndices.empty())
-        preference_->inputChannelIndices = legacyAudioChannels(preference_->inputChannels);
-    if (preference_->outputChannelIndices.empty())
-        preference_->outputChannelIndices = legacyAudioChannels(preference_->outputChannels);
-    // JUCE ignores programmatic toggle changes while the button is disabled.
-    advanced_.setEnabled(true);
-    advanced_.setToggleState(preference_->outputChannels > 2, juce::dontSendNotification);
     const int id = static_cast<int>(preference_->backend) + 1;
     if (api_.indexOfItemId(id) < 0)
     {
@@ -492,15 +413,108 @@ std::optional<AudioSetupPreference> RuntimePanel::setupPreference() const
         const auto configuration = request();
         if (configuration.value)
         {
-            const auto& value = *configuration.value;
-            return AudioSetupPreference{static_cast<AudioBackendKind>(api_.getSelectedId() - 1),
-                value.input ? inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).name : std::string{},
+            const auto& value = configuration.value->stream;
+            auto saved = AudioSetupPreference{static_cast<AudioBackendKind>(api_.getSelectedId() - 1),
+                input_.getSelectedId() > 1 ? inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).name : std::string{},
                 outputs_.at(static_cast<std::size_t>(output_.getSelectedId() - 1)).name,
                 value.sampleRate, value.bufferFrames, value.inputChannels, value.outputChannels,
                 value.inputChannelIndices, value.outputChannelIndices};
+            if (preference_) saved.endpointChannelIndices = preference_->endpointChannelIndices;
+            return saved;
         }
     }
     return preference_;
+}
+std::vector<std::string> RuntimePanel::endpointChannelNames(domain::EndpointRole role) const
+{
+    const auto& caps = role == domain::EndpointRole::hardwareInput ? inputCaps_ : outputCaps_;
+    if (!caps) return {};
+    return role == domain::EndpointRole::hardwareInput ? caps->inputChannels : caps->outputChannels;
+}
+std::vector<int> RuntimePanel::selectedEndpointChannelIndices(domain::GraphId id) const
+{
+    const auto endpoint = workspace_.graph().endpoints.find(id);
+    if (endpoint == workspace_.graph().endpoints.end() || endpoint->second.channelNames.empty()) return {};
+    if (preference_)
+        if (const auto found = preference_->endpointChannelIndices.find(id);
+            found != preference_->endpointChannelIndices.end()
+            && found->second.size() == endpoint->second.channelNames.size())
+            return found->second;
+    const auto available = endpointChannelNames(endpoint->second.role);
+    std::vector<int> result;
+    for (const auto& name : endpoint->second.channelNames)
+    {
+        const auto found = std::find(available.begin(), available.end(), name);
+        if (found == available.end() || std::count(available.begin(), available.end(), name) != 1) return {};
+        result.push_back(static_cast<int>(found - available.begin()));
+    }
+    return result;
+}
+Result RuntimePanel::assignEndpointChannels(domain::GraphId id, const std::vector<int>& channelIndices)
+{
+    const auto endpoint = workspace_.graph().endpoints.find(id);
+    if (endpoint == workspace_.graph().endpoints.end())
+        return Result::failure("Hardware endpoint row no longer exists.");
+    if (channelIndices.empty())
+    {
+        const auto result = workspace_.editHardwareEndpoint(id, endpoint->second.name, endpoint->second.enabled,
+                                                              endpoint->second.layoutChannels, {});
+        if (result.succeeded && preference_) preference_->endpointChannelIndices.erase(id);
+        return result;
+    }
+    if (!application::validAudioChannelSelection(channelIndices, static_cast<int>(channelIndices.size())))
+        return Result::failure("Select one or more distinct driver channels in ascending channel order.");
+    const auto names = endpointChannelNames(endpoint->second.role);
+    if (names.empty())
+        return Result::failure(endpoint->second.role == domain::EndpointRole::hardwareInput
+            ? "Select and inspect an input device before assigning its channels."
+            : "Select and inspect an output device before assigning its channels.");
+    if (channelIndices.back() >= static_cast<int>(names.size()))
+        return Result::failure("One or more selected driver channels are no longer available; refresh device options.");
+    std::vector<std::string> selectedNames;
+    selectedNames.reserve(channelIndices.size());
+    for (const auto index : channelIndices)
+        selectedNames.push_back(names[static_cast<std::size_t>(index)]);
+    const auto layoutChannels = static_cast<int>(selectedNames.size());
+    const auto result = workspace_.editHardwareEndpoint(id, endpoint->second.name, true,
+        layoutChannels, std::move(selectedNames));
+    if (result.succeeded)
+    {
+        if (!preference_) preference_.emplace();
+        preference_->endpointChannelIndices[id] = channelIndices;
+    }
+    return result;
+}
+juce::String RuntimePanel::endpointReadiness(domain::GraphId id) const
+{
+    const auto endpoint = workspace_.graph().endpoints.find(id);
+    if (endpoint == workspace_.graph().endpoints.end()) return "Unavailable";
+    if (!endpoint->second.enabled) return "Disabled";
+    if (endpoint->second.channelNames.empty()) return "Unassigned";
+    if (offline_) return "Offline preview · " + juce::String(endpoint->second.layoutChannels) + " channels";
+    const auto& caps = endpoint->second.role == domain::EndpointRole::hardwareInput ? inputCaps_ : outputCaps_;
+    if (!caps) return "Device not ready";
+    const auto& available = endpoint->second.role == domain::EndpointRole::hardwareInput
+        ? caps->inputChannels : caps->outputChannels;
+    const std::vector<int>* stored{};
+    if (preference_)
+        if (const auto found = preference_->endpointChannelIndices.find(id);
+            found != preference_->endpointChannelIndices.end()) stored = &found->second;
+    for (std::size_t channel = 0; channel < endpoint->second.channelNames.size(); ++channel)
+    {
+        if (stored)
+        {
+            if (stored->size() != endpoint->second.channelNames.size())
+                return "Missing · reassign channels";
+            const auto index = (*stored)[channel];
+            if (index < 0 || index >= static_cast<int>(available.size())
+                || available[static_cast<std::size_t>(index)] != endpoint->second.channelNames[channel])
+                return "Missing · channel identity changed";
+        }
+        else if (std::count(available.begin(), available.end(), endpoint->second.channelNames[channel]) != 1)
+            return "Missing or ambiguous · reassign";
+    }
+    return "Ready · " + juce::String(endpoint->second.layoutChannels) + " ch";
 }
 juce::String RuntimePanel::compactStatus() const
 {
@@ -511,54 +525,165 @@ juce::String RuntimePanel::compactStatus() const
         return "Audio: load device options (stopped)";
     return request().value ? "Audio ready (stopped)" : "Audio setup required (stopped)";
 }
-AudioQuery<AudioStreamRequest> RuntimePanel::request() const
+AudioQuery<RuntimePanel::ResolvedAudioSetup> RuntimePanel::request() const
 {
     if (probing_ || scanning_) return {{}, invalid("Wait for discovery/inspection to finish.")};
-    AudioStreamRequest value;
+    ResolvedAudioSetup resolved;
+    auto& value = resolved.stream;
     if (rateChoice_.getSelectedId() < 1 || buffer_.getSelectedId() < 1)
         return {{}, invalid("Select a reported sample rate and buffer size.")};
     value.sampleRate = rateChoice_.getText().getDoubleValue(); value.bufferFrames = buffer_.getText().getIntValue();
     value.maxFrames = std::max(512, value.bufferFrames);
     if (offline_)
     {
-        value.inputChannels = inputCount_.getSelectedId() - 1;
-        value.outputChannels = outputCount_.getSelectedId();
-        value.inputChannelIndices = legacyAudioChannels(value.inputChannels);
-        value.outputChannelIndices = legacyAudioChannels(value.outputChannels);
+        const auto hasLegacyDestination = std::any_of(workspace_.graph().nodes.begin(), workspace_.graph().nodes.end(),
+            [](const auto& item) { return domain::audioType(item.second) == "Output"; });
+        if (hasLegacyDestination)
+        {
+            value.outputChannels = width_;
+            value.outputChannelIndices = legacyAudioChannels(width_);
+        }
+        else
+        {
+            int nextSlot{};
+            bool firstOutput = true;
+            for (const auto& [id, endpoint] : workspace_.graph().endpoints)
+                if (endpoint.role == domain::EndpointRole::hardwareOutput && endpoint.enabled)
+                {
+                    const int channels = firstOutput ? width_ : endpoint.layoutChannels;
+                    firstOutput = false;
+                    if (channels < 1 || channels > 32 || nextSlot + channels > 32)
+                        return {{}, invalid("Offline preview output rows exceed the 32-channel limit.")};
+                    auto& map = resolved.endpointChannelMaps[id];
+                    for (int channel = 0; channel < channels; ++channel)
+                        map.push_back(nextSlot + channel);
+                    nextSlot += channels;
+                }
+            if (nextSlot == 0)
+                return {{}, invalid("Enable at least one output row for offline preview.")};
+            value.outputChannels = nextSlot;
+            value.outputChannelIndices = legacyAudioChannels(nextSlot);
+        }
+        value.inputChannels = 0;
     }
     else
     {
-        const auto inputIndex = inputCount_.getSelectedId() - 1, outputIndex = outputCount_.getSelectedId() - 1;
-        if (inputIndex < 0 || outputIndex < 0 || inputIndex >= static_cast<int>(inputPorts_.size())
-            || outputIndex >= static_cast<int>(outputPorts_.size()))
-            return {{}, invalid("Select available driver ports. Saved channel identities may no longer exist.")};
-        value.inputChannelIndices = inputPorts_[static_cast<std::size_t>(inputIndex)];
-        value.outputChannelIndices = outputPorts_[static_cast<std::size_t>(outputIndex)];
-        value.inputChannels = static_cast<int>(value.inputChannelIndices.size());
-        value.outputChannels = static_cast<int>(value.outputChannelIndices.size());
-    }
-    if (value.sampleRate < 8000 || value.sampleRate > 384000 || value.bufferFrames < 1 || value.bufferFrames > 4096
-        || value.outputChannels < 1 || value.outputChannels > 32 || value.inputChannels < 0
-        || (value.inputChannels != 0 && value.inputChannels != value.outputChannels))
-        return {{}, invalid("Start unavailable: input port width must match output port width, or input must be disabled. Mono-to-stereo routing is not supported; select a reported rate/buffer.")};
-    if (!offline_)
-    {
-        if (!outputCaps_ || output_.getSelectedId() < 1 || !backend_) return {{}, invalid("Select native endpoints and wait for automatic inspection.")};
+        if (!outputCaps_ || output_.getSelectedId() < 1 || !backend_)
+            return {{}, invalid("Select a native output device and wait for device inspection.")};
         value.output = outputs_.at(static_cast<std::size_t>(output_.getSelectedId() - 1)).token;
-        if (value.inputChannels)
+        std::set<int> inputChannels, outputChannels;
+        std::map<int, std::string> outputOwners;
+        bool hasInputRows{};
+        for (const auto& [id, endpoint] : workspace_.graph().endpoints)
         {
-            if (!inputCaps_ || input_.getSelectedId() < 2) return {{}, invalid("Select an input endpoint or disable input.")};
+            if (!endpoint.enabled || endpoint.channelNames.empty()) continue;
+            const bool inputRole = endpoint.role == domain::EndpointRole::hardwareInput;
+            const auto* caps = inputRole ? (input_.getSelectedId() > 1 ? &inputCaps_ : nullptr) : &outputCaps_;
+            if (!caps || !*caps)
+                return {{}, invalid(inputRole
+                    ? "Input rows are assigned but no input device is selected and inspected."
+                    : "An output row is assigned but no output device is selected and inspected.")};
+            const auto& names = inputRole ? (*caps)->inputChannels : (*caps)->outputChannels;
+            const std::vector<int>* stored{};
+            if (preference_)
+                if (const auto found = preference_->endpointChannelIndices.find(id);
+                    found != preference_->endpointChannelIndices.end()) stored = &found->second;
+            std::vector<int> physical;
+            for (std::size_t channel = 0; channel < endpoint.channelNames.size(); ++channel)
+            {
+                int index = -1;
+                if (stored)
+                {
+                    if (stored->size() != endpoint.channelNames.size())
+                        return {{}, invalid("Saved channel binding width changed for " + endpoint.name + "; reassign the row.")};
+                    index = (*stored)[channel];
+                    if (index < 0 || index >= static_cast<int>(names.size())
+                        || names[static_cast<std::size_t>(index)] != endpoint.channelNames[channel])
+                        return {{}, invalid("Saved driver channel identity changed for " + endpoint.name + "; reassign the row.")};
+                }
+                else
+                {
+                    const auto matches = std::find(names.begin(), names.end(), endpoint.channelNames[channel]);
+                    if (matches == names.end()
+                        || std::count(names.begin(), names.end(), endpoint.channelNames[channel]) != 1)
+                        return {{}, invalid("Channel name is missing or ambiguous for " + endpoint.name + "; reassign the row.")};
+                    index = static_cast<int>(matches - names.begin());
+                }
+                physical.push_back(index);
+            }
+            if (!application::validAudioChannelSelection(physical, static_cast<int>(physical.size())))
+                return {{}, invalid("Channel assignments must be unique and in driver order for " + endpoint.name + ".")};
+            auto& unionChannels = inputRole ? inputChannels : outputChannels;
+            for (const auto index : physical)
+            {
+                if (!inputRole)
+                {
+                    if (const auto owner = outputOwners.find(index); owner != outputOwners.end())
+                        return {{}, invalid("Output channel " + juce::String(index + 1).toStdString() + " is assigned to both "
+                            + owner->second + " and " + endpoint.name + "; output rows must use disjoint channels.")};
+                    outputOwners.emplace(index, endpoint.name);
+                }
+                unionChannels.insert(index);
+            }
+            if (inputRole) hasInputRows = true;
+            (void) id;
+        }
+        if (outputChannels.empty())
+            return {{}, invalid("Assign at least one named channel to an enabled output row before Start.")};
+        if (outputChannels.size() > 32 || inputChannels.size() > 32)
+            return {{}, invalid("Configured input/output channel groups exceed the 32-channel runtime limit.")};
+        value.outputChannelIndices.assign(outputChannels.begin(), outputChannels.end());
+        value.inputChannelIndices.assign(inputChannels.begin(), inputChannels.end());
+        value.outputChannels = static_cast<int>(value.outputChannelIndices.size());
+        value.inputChannels = static_cast<int>(value.inputChannelIndices.size());
+        const auto compactMap = [](const std::vector<int>& physical, const std::set<int>& packed)
+        {
+            std::vector<int> result;
+            for (const auto index : physical)
+                result.push_back(static_cast<int>(std::distance(packed.begin(), packed.find(index))));
+            return result;
+        };
+        for (const auto& [id, endpoint] : workspace_.graph().endpoints)
+        {
+            if (!endpoint.enabled || endpoint.channelNames.empty()) continue;
+            const bool inputRole = endpoint.role == domain::EndpointRole::hardwareInput;
+            const auto* caps = inputRole ? (input_.getSelectedId() > 1 ? &inputCaps_ : nullptr) : &outputCaps_;
+            if (!caps || !*caps) continue;
+            const auto& names = inputRole ? (*caps)->inputChannels : (*caps)->outputChannels;
+            const std::vector<int>* stored{};
+            if (preference_)
+                if (const auto found = preference_->endpointChannelIndices.find(id);
+                    found != preference_->endpointChannelIndices.end()) stored = &found->second;
+            std::vector<int> physical;
+            for (std::size_t channel = 0; channel < endpoint.channelNames.size(); ++channel)
+            {
+                const auto found = stored ? (*stored)[channel]
+                    : static_cast<int>(std::find(names.begin(), names.end(), endpoint.channelNames[channel]) - names.begin());
+                physical.push_back(found);
+            }
+            resolved.endpointChannelMaps.emplace(id, compactMap(physical, inputRole ? inputChannels : outputChannels));
+        }
+        if (hasInputRows)
+        {
+            if (!inputCaps_ || input_.getSelectedId() < 2)
+                return {{}, invalid("Input rows are assigned but no input device is selected.")};
             value.input = inputs_.at(static_cast<std::size_t>(input_.getSelectedId() - 2)).token;
         }
     }
-    return {value, {}};
+    if (value.sampleRate < 8000 || value.sampleRate > 384000 || value.bufferFrames < 1 || value.bufferFrames > 4096
+        || value.outputChannels < 1 || value.outputChannels > 32 || value.inputChannels < 0 || value.inputChannels > 32)
+        return {{}, invalid("Start unavailable: select 1-32 output channels and no more than 32 input channels, plus a reported rate/buffer.")};
+    if (!offline_)
+    {
+        if (value.inputChannels != 0 && !value.input)
+            return {{}, invalid("Input channels require an explicitly selected input device.")};
+    }
+    return {std::move(resolved), {}};
 }
 int RuntimePanel::channels() const noexcept
 {
-    if (offline_) return outputCount_.getSelectedId() > 0 ? outputCount_.getSelectedId() : 2;
-    const int index = outputCount_.getSelectedId() - 1;
-    return index >= 0 && index < static_cast<int>(outputPorts_.size())
-        ? static_cast<int>(outputPorts_[static_cast<std::size_t>(index)].size()) : 2;
+    const auto configuration = request();
+    return configuration.value ? configuration.value->stream.outputChannels : 2;
 }
 void RuntimePanel::controlPanel()
 {
@@ -577,9 +702,10 @@ void RuntimePanel::controlPanel()
     if (!result.succeeded()) { probing_ = false; message(text(result.message)); }
     enableControls();
 }
-AudioQuery<audio::AudioGraph> RuntimePanel::compileGraph(bool captures)
+AudioQuery<audio::AudioGraph> RuntimePanel::compileGraph(
+    bool captures, const std::map<std::uint64_t, std::vector<int>>& endpointChannelMaps)
 {
-    auto compiled = audio::AudioGraph::fromStructural(workspace_.graph(), width_);
+    auto compiled = audio::AudioGraph::fromStructural(workspace_.graph(), width_, endpointChannelMaps);
     if (!compiled.value) return compiled;
     if (captures)
         for (auto& node : compiled.value->nodes)
@@ -595,9 +721,11 @@ Result RuntimePanel::attachCaptures(audio::AudioGraph& graph, std::vector<std::u
     const int limit = std::min(8, static_cast<int>(768000 / (rate_ * captureChannels)));
     std::vector<std::uint64_t> observed;
     const auto dependencies = graph.outputDependencies();
-    for (const auto& node : graph.nodes) if (node.type == audio::AudioNodeType::analyzer) observed.push_back(node.id);
     for (const auto& node : graph.nodes)
-        if (node.type != audio::AudioNodeType::input && node.type != audio::AudioNodeType::analyzer) observed.push_back(node.id);
+        if (!node.hardwareEndpoint && node.type == audio::AudioNodeType::analyzer) observed.push_back(node.id);
+    for (const auto& node : graph.nodes)
+        if (!node.hardwareEndpoint && node.type != audio::AudioNodeType::input
+            && node.type != audio::AudioNodeType::analyzer) observed.push_back(node.id);
     for (auto id : observed)
     {
         if (!std::binary_search(dependencies.begin(), dependencies.end(), id)) continue;
@@ -623,10 +751,11 @@ Result RuntimePanel::start()
     if (probing_) return Result::failure("Wait for device inspection to finish before starting transport.");
     const auto configuration = request();
     if (!configuration.value) return Result::failure(configuration.error.message);
-    const auto& config = *configuration.value;
+    const auto& resolved = *configuration.value;
+    const auto& config = resolved.stream;
     if (!offline_) preference_ = setupPreference();
     width_ = config.outputChannels; rate_ = config.sampleRate; block_ = config.bufferFrames;
-    auto compiled = compileGraph(false);
+    auto compiled = compileGraph(false, resolved.endpointChannelMaps);
     if (!compiled.value) return Result::failure(compiled.error.message);
     if (compiled.value->nodes.empty()) return Result::failure("Patch is empty. Insert and connect a source or processor to Output.");
     const bool outputOnlyWithoutGenerator = config.inputChannels == 0 && !hasZeroInputSourceOnOutput(*compiled.value);
@@ -665,7 +794,8 @@ Result RuntimePanel::stop()
 }
 bool RuntimePanel::parameterOnly(const domain::Graph& next) const
 {
-    if (next.connections != accepted_.connections || next.nodes.size() != accepted_.nodes.size()) return false;
+    if (next.connections != accepted_.connections || next.endpoints != accepted_.endpoints
+        || next.nodes.size() != accepted_.nodes.size()) return false;
     for (const auto& [id, node] : next.nodes)
     {
         const auto old = accepted_.nodes.find(id);
@@ -685,7 +815,9 @@ bool RuntimePanel::parameterOnly(const domain::Graph& next) const
 }
 Result RuntimePanel::applyParameters(const domain::Graph& next)
 {
-    const auto mapped = audio::AudioGraph::fromStructural(next, width_);
+    const auto setup = request();
+    if (!setup.value) return Result::failure(setup.error.message);
+    const auto mapped = audio::AudioGraph::fromStructural(next, width_, setup.value->endpointChannelMaps);
     if (!mapped.value) return Result::failure(mapped.error.message);
     // Validate all changes before delivering any. Queue overflow is visible, never silently dropped.
     const auto format = engine_.streamFormat();
@@ -694,6 +826,7 @@ Result RuntimePanel::applyParameters(const domain::Graph& next)
     if (!plan.value) return Result::failure(plan.error.message);
     for (const auto& node : mapped.value->nodes)
     {
+        if (!next.nodes.contains(node.id)) continue;
         const auto previous = accepted_.nodes.at(node.id).parameters;
         if (previous == next.nodes.at(node.id).parameters) continue;
         const auto old = std::find_if(acceptedAudio_.nodes.begin(), acceptedAudio_.nodes.end(), [&](const auto& n) { return n.id == node.id; });
@@ -731,6 +864,14 @@ void RuntimePanel::synchronize()
 {
     if (!running_) return;
     if (workspace_.project().activePatch != patch_) { const auto result = stop(); if (!result.succeeded) message(text(result.error)); return; }
+    if (workspace_.graph().endpoints != accepted_.endpoints)
+    {
+        const auto result = stop();
+        message(result.succeeded
+            ? "Hardware endpoint assignments changed. Transport stopped; Start again to open the new exact channel masks."
+            : "Endpoint change requires a stream restart, but Stop failed: " + text(result.error));
+        return;
+    }
     if (contentEqual(accepted_, workspace_.graph())) { graphWarning_.clear(); return; }
     if (parameterOnly(workspace_.graph()))
     {
@@ -744,7 +885,14 @@ void RuntimePanel::synchronize()
         else message("Parameter targets updated (existing smoothing/layers preserved).");
         return;
     }
-    auto compiled = compileGraph(true);
+    const auto setup = request();
+    if (!setup.value)
+    {
+        graphWarning_ = "Patch not executable; last accepted audio continues. " + text(setup.error.message);
+        message(graphWarning_);
+        return;
+    }
+    auto compiled = compileGraph(true, setup.value->endpointChannelMaps);
     if (!compiled.value) { graphWarning_ = "Patch not executable; last accepted audio continues. " + text(compiled.error.message); message(graphWarning_); return; }
     const auto actual = engine_.streamFormat();
     const auto valid = audio::PreparedAudioGraph::prepare(*compiled.value, *actual.value, revision_ + 1);

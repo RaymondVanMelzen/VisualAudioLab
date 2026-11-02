@@ -55,10 +55,11 @@ void testSettings(const TestDirectory& directory)
     auto migrated = store.load();
     require(migrated.state == SettingsLoadState::loaded && migrated.value.audioSetup->backend == AudioBackendKind::coreAudio
             && migrated.value.audioSetup->inputChannelIndices.empty()
-            && migrated.value.audioSetup->outputChannelIndices == std::vector<int>{0, 1, 2, 3},
-            "Legacy counts migrate explicitly to first-N indices without changing CoreAudio's numeric identity.");
+            && migrated.value.audioSetup->outputChannels == 4
+            && migrated.value.audioSetup->outputChannelIndices.empty(),
+            "Legacy channel counts are retained without inventing exact channel assignments or changing CoreAudio's numeric identity.");
     require(store.save(migrated.value).succeeded && store.load().value == migrated.value
-            && file.loadFileAsString().contains("outputChannelIndices"), "Migration persists explicit channel identities on the next save.");
+            && file.loadFileAsString().contains("outputChannelIndices"), "Migration persists the unassigned channel map on the next save.");
     require(store.save(value).succeeded, "Optional audio preferences remain compatible with window-only settings.");
     const auto original = file.loadFileAsString();
     require(!store.save({1, 1, true}).succeeded && file.loadFileAsString() == original,
@@ -70,7 +71,6 @@ void testSettings(const TestDirectory& directory)
              R"({"version":1,"windowWidth":1200,"windowHeight":1,"inspectorVisible":true})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[2,2]}})",
-             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[]}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[0,"1"]}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":99,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2}})"})
     {

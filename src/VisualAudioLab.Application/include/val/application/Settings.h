@@ -3,6 +3,7 @@
 #include "Result.h"
 #include "IAudioBackend.h"
 #include <cmath>
+#include <map>
 
 namespace val::application
 {
@@ -14,6 +15,8 @@ struct AudioSetupPreference final
     double sampleRate{};
     int bufferFrames{}, inputChannels{}, outputChannels{};
     std::vector<int> inputChannelIndices, outputChannelIndices;
+    /** Machine-local exact channel bindings keyed by stable project endpoint ID. */
+    std::map<std::uint64_t, std::vector<int>> endpointChannelIndices;
     bool operator==(const AudioSetupPreference&) const = default;
 };
 
@@ -51,14 +54,16 @@ struct SettingsLoadResult final
             || audio.outputName.empty() || audio.outputName.size() > 4096 || audio.inputName.size() > 4096
             || !std::isfinite(audio.sampleRate) || audio.sampleRate < 8000 || audio.sampleRate > 384000
             || audio.bufferFrames < 1 || audio.bufferFrames > 4096 || audio.inputChannels < 0
-            || audio.outputChannels < 1 || audio.outputChannels > 32
-            || (audio.inputChannels != 0 && audio.inputChannels != audio.outputChannels)
-            || (audio.inputChannels > 0) != !audio.inputName.empty()
+            || audio.inputChannels > 32 || audio.outputChannels < 1 || audio.outputChannels > 32
             || (audio.backend == AudioBackendKind::asio && !audio.inputName.empty() && audio.inputName != audio.outputName))
             return Result::failure("Audio setup preferences have invalid backend, device names, rate, buffer or channel counts.");
         if ((!audio.inputChannelIndices.empty() && !validAudioChannelSelection(audio.inputChannelIndices, audio.inputChannels))
             || (!audio.outputChannelIndices.empty() && !validAudioChannelSelection(audio.outputChannelIndices, audio.outputChannels)))
             return Result::failure("Audio setup channel identities must be ordered, unique and match the saved width.");
+        for (const auto& [endpoint, indices] : audio.endpointChannelIndices)
+            if (endpoint == 0 || indices.empty() || indices.size() > 32
+                || !validAudioChannelSelection(indices, static_cast<int>(indices.size())))
+                return Result::failure("Endpoint channel identities must be nonempty ordered driver indices for stable endpoint IDs.");
     }
     return Result::success();
 }

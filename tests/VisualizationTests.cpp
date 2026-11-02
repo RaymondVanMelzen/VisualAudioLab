@@ -370,7 +370,8 @@ void graphCapture()
     observation.capture->release();
     graph.nodes[1].capture = std::make_shared<SignalCaptureBuffer>(123, 48000, 1);
     require(!engine.publish(graph, 2).succeeded, "Wrong source identity cannot observe a reused prepared slot.");
-    require(engine.publish(AudioGraph{}, 2).succeeded == false, "Channel-layout mismatch remains an error.");
+    const AudioGraph mismatchedWidth{2, {{11, AudioNodeType::output}}, {}};
+    require(!engine.publish(mismatchedWidth, 2).succeeded, "Channel-layout mismatch remains an error.");
 }
 void stress()
 {

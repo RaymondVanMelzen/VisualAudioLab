@@ -179,8 +179,8 @@ public:
         list_.setRowHeight(30);
         list_.addMouseListener(this, true);
         insert_.onClick = [this] { insert(); };
-        help_.setText("Modules: reusable functions.\nInput/Output: routing.", juce::dontSendNotification);
-        help_.setFont(Typography::ui(11));
+        help_.setText("Browser: processors, generators, Sum.\nHardware I/O: fixed canvas lanes.", juce::dontSendNotification);
+        help_.setFont(Typography::ui(12));
         for (auto* child : std::initializer_list<juce::Component*>{&search_, &category_, &list_, &insert_, &status_, &help_})
             addAndMakeVisible(child);
         filter();

@@ -87,6 +87,22 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     {
         showStatus(message);
     };
+    dockWorkspace_.canvas().endpointChannels = [this](domain::EndpointRole role)
+    {
+        return runtime_->endpointChannelNames(role);
+    };
+    dockWorkspace_.canvas().selectedEndpointChannels = [this](domain::GraphId endpoint)
+    {
+        return runtime_->selectedEndpointChannelIndices(endpoint);
+    };
+    dockWorkspace_.canvas().endpointStatus = [this](domain::GraphId endpoint)
+    {
+        return runtime_->endpointReadiness(endpoint);
+    };
+    dockWorkspace_.canvas().assignEndpointChannels = [this](domain::GraphId endpoint, const std::vector<int>& channels)
+    {
+        return runtime_->assignEndpointChannels(endpoint, channels);
+    };
     for (auto* component : std::initializer_list<juce::Component*>{
              &menu_, &toolbar_, &banner_, &status_, &dockWorkspace_, &patches_, &addPatch_, &startAudio_, &stopAudio_})
         addAndMakeVisible(component);
@@ -146,6 +162,10 @@ MainComponent::~MainComponent()
     dockWorkspace_.canvas().onObservationTarget = nullptr;
     dockWorkspace_.canvas().onModuleDropped = nullptr;
     dockWorkspace_.canvas().onModuleDropRejected = nullptr;
+    dockWorkspace_.canvas().endpointChannels = nullptr;
+    dockWorkspace_.canvas().selectedEndpointChannels = nullptr;
+    dockWorkspace_.canvas().endpointStatus = nullptr;
+    dockWorkspace_.canvas().assignEndpointChannels = nullptr;
     inspectorTabs_.clearTabs();
     removeKeyListener(commands_.getKeyMappings());
     menu_.setModel(nullptr);
@@ -187,6 +207,11 @@ bool MainComponent::keyPressed(const juce::KeyPress& key)
 }
 void MainComponent::insertModule(std::string type, std::optional<juce::Point<float>> placement)
 {
+    if (type == "Input" || type == "Output")
+    {
+        showStatus("Hardware inputs and outputs are managed as fixed rows in the canvas lanes, not inserted as modules.");
+        return;
+    }
     const auto screenPosition = placement.value_or(dockWorkspace_.canvas().viewport().getCentre().toFloat());
     const auto position = dockWorkspace_.canvas().toPatch(screenPosition);
     std::map<std::string, domain::Parameter> values;

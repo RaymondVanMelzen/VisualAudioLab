@@ -40,16 +40,15 @@ void runEndpointRailTests()
     using namespace val;
     using namespace presentation;
     application::WorkspaceService service;
-    require(service.createNode({-500, 300}, "Input", {{"audio.type", std::string("Input")}}).succeeded, "Create hardware input.");
-    const auto input = service.lastCreatedNode();
+    const auto input = std::find_if(service.graph().endpoints.begin(), service.graph().endpoints.end(),
+        [](const auto& item) { return item.second.role == domain::EndpointRole::hardwareInput; })->first;
+    const auto output = std::find_if(service.graph().endpoints.begin(), service.graph().endpoints.end(),
+        [](const auto& item) { return item.second.role == domain::EndpointRole::hardwareOutput; })->first;
     require(service.createNode({-400, -250}, "DC Generator", {{"audio.type", std::string("DC Generator")}}).succeeded,
             "Create an internal generator source.");
     const auto generator = service.lastCreatedNode();
     require(service.createNode({500, 100}, "Gain", {{"audio.type", std::string("Gain")}}).succeeded, "Create processor.");
     const auto processor = service.lastCreatedNode();
-    require(service.createNode({900, -100}, "Output", {{"audio.type", std::string("Output")}}).succeeded,
-            "Create main hardware output.");
-    const auto output = service.lastCreatedNode();
     require(service.connect({input, domain::Port::output}, {output, domain::Port::input}).succeeded,
             "A direct source-to-destination route remains valid.");
 
@@ -65,7 +64,7 @@ void runEndpointRailTests()
             && canvas.portAt(*inputPort) == domain::Endpoint{input, domain::Port::output}
             && canvas.portAt(*generatorPort) == domain::Endpoint{generator, domain::Port::output}
             && canvas.portAt(*outputPort) == domain::Endpoint{output, domain::Port::input},
-            "Hardware input, current generator instances and main output expose the correctly directed rail ports.");
+            "Configurable hardware rows, current generator instances and destinations expose correctly directed rail ports.");
     canvas.panBy({55, 24});
     canvas.zoomAt(1.4f, canvas.viewport().getCentre().toFloat());
     require(canvas.endpointPortPosition(input, domain::Port::output) == inputPort
@@ -81,24 +80,15 @@ void runEndpointRailTests()
             "A cable remains hit-testable when both endpoint positions are pinned to the rails.");
 
     const auto original = service.graph();
-    const auto card = canvas.sourceRailBounds().withTrimmedTop(76).reduced(6, 0).withHeight(62);
+    const auto card = canvas.sourceRailBounds().withTrimmedTop(86).reduced(6, 0).withHeight(62);
     drag(canvas, card.getCentre().toFloat(), card.getCentre().toFloat() + juce::Point<float>{36, 32});
-    require(service.graph() == original, "Dragging a fixed hardware source never changes its project position.");
-    click(canvas, card.getCentre().toFloat());
-    int errors{};
-    canvas.onEdit = [&](const auto& result) { if (!result.succeeded) ++errors; };
-    canvas.deleteSelection();
-    require(service.graph() == original && errors == 1, "Selected rail endpoints refuse canvas deletion explicitly.");
-    canvas.keyPressed(juce::KeyPress('m'));
-    canvas.keyPressed(juce::KeyPress(juce::KeyPress::rightKey));
-    canvas.keyPressed(juce::KeyPress(juce::KeyPress::returnKey));
-    require(service.graph() == original, "Keyboard move cannot change fixed endpoint positions.");
+    require(service.graph() == original && !service.deleteNodes({input}).succeeded
+            && !service.moveNodes({{input, {300, 300}}}).succeeded,
+            "Hardware rows remain fixed lane records, not movable or deletable nodes.");
     canvas.selectAll();
     require(canvas.selection() == std::set<domain::GraphId>{processor}, "Select All targets movable processors, not fixed endpoints.");
-    const auto outputCard = canvas.destinationRailBounds().withTrimmedTop(76).reduced(6, 0).withHeight(62);
-    click(canvas, outputCard.getCentre().toFloat());
-    canvas.deleteSelection();
-    require(service.graph() == original && errors == 3, "Main Output also refuses canvas deletion and keyboard movement reports clearly.");
+    require(!service.removeHardwareEndpoint(output).succeeded,
+            "The last destination row cannot be removed; disable it or leave it unassigned instead.");
     canvas.setSize(520, 440);
     require(canvas.viewport().getWidth() >= 170
             && canvas.sourceRailBounds().getRight() <= canvas.viewport().getX()
@@ -109,7 +99,7 @@ void runEndpointRailTests()
     require(service.disconnect(service.graph().connections.begin()->first).succeeded
             && service.connect({generator, domain::Port::output}, {processor, domain::Port::input}).succeeded
             && service.connect({processor, domain::Port::output}, {output, domain::Port::input}).succeeded,
-            "Built-in generator sources route through centre processors into the fixed main output.");
+            "Built-in generator sources route through centre processors into the fixed output row.");
     canvas.synchronise();
     require(canvas.endpointPortPosition(generator, domain::Port::output)
                 == std::optional<juce::Point<float>>(generatorPort.value()),

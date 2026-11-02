@@ -53,10 +53,38 @@ bool isGenerator(AudioNodeType type) noexcept
 }
 }
 
-AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, int channels)
+AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, int channels,
+    const std::map<std::uint64_t, std::vector<int>>& endpointChannelMaps)
 {
     AudioGraph result;
     result.channels = channels;
+    for (const auto& [id, endpoint] : graph.endpoints)
+    {
+        if (id == 0 || endpoint.id != id)
+            return {{}, invalid("Hardware endpoint identity is invalid.")};
+        AudioNodeDefinition definition;
+        definition.id = id;
+        definition.type = endpoint.role == domain::EndpointRole::hardwareInput
+            ? AudioNodeType::input : AudioNodeType::output;
+        definition.channels = endpoint.layoutChannels;
+        definition.hardwareEndpoint = true;
+        if (const auto mapping = endpointChannelMaps.find(id); mapping != endpointChannelMaps.end())
+        {
+            if (!endpoint.channelNames.empty()
+                && mapping->second.size() != static_cast<std::size_t>(endpoint.layoutChannels))
+                return {{}, invalid("Resolved endpoint channel map must match the saved bus width.")};
+            definition.hardwareChannelMap = mapping->second;
+            definition.endpointActive = endpoint.enabled;
+        }
+        else definition.endpointActive = false;
+        if (endpoint.layoutChannels < 1 || endpoint.layoutChannels > 32
+            || (!endpoint.channelNames.empty()
+                && static_cast<int>(endpoint.channelNames.size()) != endpoint.layoutChannels))
+            return {{}, invalid("Hardware endpoint has an invalid bus layout or channel assignment.")};
+        if (endpoint.channelNames.empty() && definition.endpointActive)
+            definition.channels = static_cast<int>(definition.hardwareChannelMap.size());
+        result.nodes.push_back(std::move(definition));
+    }
     for (const auto& [id, node] : graph.nodes)
     {
         if (id == 0 || node.id != id)
@@ -99,6 +127,18 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
         else if (*type == "DC Generator") definition.type = AudioNodeType::dcGenerator;
         else if (*type == "Sum") definition.type = AudioNodeType::sum;
         else return {{}, invalid("Unsupported audio.type on node " + std::to_string(id) + ".")};
+        if (isGenerator(definition.type))
+            definition.channels = channels;
+        if ((definition.type == AudioNodeType::input || definition.type == AudioNodeType::output)
+            && !definition.hardwareEndpoint)
+            definition.channels = channels;
+        if (const auto bus = node.parameters.find("audio.busChannels"); bus != node.parameters.end())
+        {
+            const auto* value = std::get_if<double>(&bus->second);
+            if (!isGenerator(definition.type) || !value || std::floor(*value) != *value || *value < 1 || *value > 32)
+                return {{}, invalid("audio.busChannels is a whole 1-32 channel layout setting for generators only.")};
+            definition.channels = static_cast<int>(*value);
+        }
         if (const auto gain = node.parameters.find("audio.gain"); gain != node.parameters.end())
         {
             const auto* value = std::get_if<double>(&gain->second);
@@ -275,7 +315,7 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
         if (id == 0 || edge.id != id || edge.source.port != domain::Port::output
             || edge.destination.port != domain::Port::input)
             return {{}, invalid("Structural connection identity/direction is invalid.")};
-        result.connections.push_back({edge.source.node, edge.destination.node});
+        result.connections.push_back({edge.source.node, edge.destination.node, edge.adapter});
     }
     return {std::move(result), {}};
 }
@@ -303,19 +343,17 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     if (!std::isfinite(format.sampleRate) || format.sampleRate < 8000 || format.sampleRate > 384000
         || format.maxFrames < 1 || format.maxFrames > 4096 || format.bufferFrames < 1
         || format.bufferFrames > format.maxFrames || format.inputChannels < 0 || format.inputChannels > 32
-        || format.outputChannels < 1 || format.outputChannels > 32 || graph.channels != format.outputChannels
-        || (format.inputChannels != 0 && format.inputChannels != graph.channels) || revision == 0)
-        return {{}, invalid("Require 8-384 kHz, 1-4096 frame capacity, 1-32 matching bus channels and a positive revision; input is zero or matches output.")};
+        || format.outputChannels < 1 || format.outputChannels > 32
+        || graph.channels < 1 || graph.channels > 32 || revision == 0)
+        return {{}, invalid("Require 8-384 kHz, 1-4096 frame capacity, 1-32 host channels, valid 1-32 processor layouts and a positive revision.")};
     if (graph.nodes.size() > 256 || graph.connections.size() > 256)
         return {{}, invalid("Basic runtime limit is 256 nodes/connections.")};
-    const auto stride = static_cast<std::size_t>(format.maxFrames) * static_cast<std::size_t>(graph.channels);
-    if ((graph.nodes.size() + 1) * stride * sizeof(float) > 64 * 1024 * 1024)
-        return {{}, invalid("Prepared scratch exceeds the 64 MiB runtime budget.")};
 
     std::map<std::uint64_t, const AudioNodeDefinition*> nodes;
     std::map<std::uint64_t, std::vector<std::uint64_t>> incoming;
     std::map<std::uint64_t, std::vector<std::uint64_t>> outgoing;
-    std::uint64_t output{};
+    std::size_t outputCount{};
+    std::set<int> usedOutputSlots;
     int capturedChannels{};
     int capturedSources{};
     std::size_t scriptInstructions{};
@@ -326,6 +364,46 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             return {{}, invalid("Duplicate/zero node ID or invalid gain (finite 0-4 required).")};
         if (node.type < AudioNodeType::input || node.type > AudioNodeType::sum)
             return {{}, invalid("Unsupported processor type.")};
+        if (node.channels < 0 || node.channels > 32)
+            return {{}, invalid("Processor bus widths must be within 1-32 when explicitly declared.")};
+        if (node.hardwareEndpoint && (node.type == AudioNodeType::input || node.type == AudioNodeType::output)
+            && (node.channels < 1 || node.channels > 32))
+            return {{}, invalid("Hardware endpoint bus width must be within 1-32 channels.")};
+        if (node.type == AudioNodeType::output)
+        {
+            ++outputCount;
+            if (node.hardwareEndpoint && node.endpointActive
+                && node.hardwareChannelMap.size() != static_cast<std::size_t>(node.channels > 0 ? node.channels : graph.channels))
+                return {{}, invalid("An enabled hardware destination requires one resolved device channel per bus channel.")};
+            if (!node.hardwareChannelMap.empty())
+                for (const auto slot : node.hardwareChannelMap)
+                    if (slot < 0 || slot >= format.outputChannels || !usedOutputSlots.insert(slot).second)
+                        return {{}, invalid("Output rows must map to disjoint compact stream channels; resolve overlaps before Start.")};
+            else if (!node.hardwareEndpoint)
+                for (int slot = 0; slot < (node.channels > 0 ? node.channels : graph.channels); ++slot)
+                    if (slot >= format.outputChannels || !usedOutputSlots.insert(slot).second)
+                        return {{}, invalid("Identity-mapped Output must occupy a unique host channel group; use explicit endpoint mappings for multiple outputs.")};
+        }
+        if (node.type == AudioNodeType::input && node.hardwareEndpoint && node.endpointActive
+            && node.hardwareChannelMap.size() != static_cast<std::size_t>(node.channels > 0 ? node.channels : graph.channels))
+            return {{}, invalid("An enabled hardware source requires one resolved device channel per bus channel.")};
+        const auto hostChannels = node.type == AudioNodeType::input ? format.inputChannels : format.outputChannels;
+        if ((node.type == AudioNodeType::input || node.type == AudioNodeType::output)
+            && !node.hardwareChannelMap.empty())
+        {
+            std::set<int> unique;
+            for (const auto slot : node.hardwareChannelMap)
+                if (slot < 0 || slot >= hostChannels || !unique.insert(slot).second)
+                    return {{}, invalid("Endpoint channel maps must use unique in-range compact host-buffer slots.")};
+        }
+        if (!node.hardwareEndpoint && node.hardwareChannelMap.empty()
+            && node.type == AudioNodeType::output
+            && (node.channels > 0 ? node.channels : graph.channels) != format.outputChannels)
+            return {{}, invalid("Legacy identity-mapped Output must match the host output width; use a resolved endpoint map or explicit adapter.")};
+        if (!node.hardwareEndpoint && node.hardwareChannelMap.empty()
+            && node.type == AudioNodeType::input && format.inputChannels != 0
+            && (node.channels > 0 ? node.channels : graph.channels) != format.inputChannels)
+            return {{}, invalid("Legacy identity-mapped Input must match the host input width; use a resolved endpoint map or explicit adapter.")};
         if (node.type == AudioNodeType::script)
         {
             if (!node.script) return {{}, invalid("Script node requires a verified compiler artifact, not deferred source compilation.")};
@@ -345,18 +423,13 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             capturedChannels += node.capture->channels();
             ++capturedSources;
             if (node.capture->source() != node.id || node.capture->sampleRate() != format.sampleRate
-                || node.capture->firstChannel() + node.capture->channels() > graph.channels || capturedChannels > 16
+                || node.capture->firstChannel() + node.capture->channels() > 32 || capturedChannels > 16
                 || capturedSources > 8 || capturedChannels * format.sampleRate > 768000)
                 return {{}, invalid("Capture source/rate/channel mismatch or 16-channel observation limit exceeded.")};
         }
-        if (node.type == AudioNodeType::output)
-        {
-            if (output) return {{}, invalid("Only one explicit Output bus is supported; no implicit mixing.")};
-            output = node.id;
-        }
     }
-    if (!nodes.empty() && output == 0)
-        return {{}, invalid("A nonempty runtime graph requires one Output node.")};
+    if (!nodes.empty() && outputCount == 0)
+        return {{}, invalid("A nonempty runtime graph requires at least one hardware destination row.")};
     std::set<std::pair<std::uint64_t, std::uint64_t>> edges;
     for (const auto& edge : graph.connections)
     {
@@ -364,8 +437,9 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             || nodes.at(edge.source)->type == AudioNodeType::output || nodes.at(edge.destination)->type == AudioNodeType::input
             || isGenerator(nodes.at(edge.destination)->type)
             || !edges.emplace(edge.source, edge.destination).second
-            || (incoming.contains(edge.destination) && nodes.at(edge.destination)->type != AudioNodeType::sum))
-            return {{}, invalid("Invalid/missing endpoint, direction, self-link or multiple input sources.")};
+            || (incoming.contains(edge.destination) && nodes.at(edge.destination)->type != AudioNodeType::sum)
+            || (edge.adapter != domain::AudioAdapter::none && edge.adapter != domain::AudioAdapter::monoToStereo))
+            return {{}, invalid("Invalid/missing endpoint, direction, self-link, adapter or multiple input sources.")};
         const auto& destination = *nodes.at(edge.destination);
         if (destination.type == AudioNodeType::script && destination.script->inputs().empty())
             return {{}, invalid("A zero-input Script generator cannot accept an upstream connection.")};
@@ -388,22 +462,120 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             if (--degrees.at(next) == 0) ready.push(next);
     }
     if (order.size() != nodes.size()) return {{}, invalid("Runtime graph contains a directed cycle.")};
+
+    std::map<std::uint64_t, int> widths;
+    for (const auto id : order)
+    {
+        const auto& node = *nodes.at(id);
+        const auto& upstream = incoming.at(id);
+        const auto convertedWidth = [&](const AudioConnection& edge)
+        {
+            const auto sourceWidth = widths.at(edge.source);
+            return edge.adapter == domain::AudioAdapter::monoToStereo ? 2 : sourceWidth;
+        };
+        if (node.type == AudioNodeType::input || node.type == AudioNodeType::output)
+            widths[id] = node.channels > 0 ? node.channels : graph.channels;
+        else if (isGenerator(node.type))
+            widths[id] = node.channels > 0 ? node.channels : graph.channels;
+        else if (node.type == AudioNodeType::script)
+        {
+            const auto outputs = static_cast<int>(node.script->outputs().size());
+            const auto inputs = static_cast<int>(node.script->inputs().size());
+            if (outputs < 1 || outputs > 32 || (inputs != 0 && inputs != outputs))
+                return {{}, invalid("Script bus layouts require 1-32 outputs and either no inputs or a matching input count.")};
+            widths[id] = outputs;
+        }
+        else if (node.type == AudioNodeType::sum)
+        {
+            if (upstream.empty())
+            {
+                widths[id] = node.channels > 0 ? node.channels : graph.channels;
+                continue;
+            }
+            const auto first = std::find_if(graph.connections.begin(), graph.connections.end(),
+                [id](const auto& edge) { return edge.destination == id; });
+            const auto width = convertedWidth(*first);
+            if (width < 1 || width > 32)
+                return {{}, invalid("Sum bus width must be within 1-32 channels.")};
+            for (const auto& edge : graph.connections)
+                if (edge.destination == id && convertedWidth(edge) != width)
+                    return {{}, invalid("Sum inputs need matching channel layouts; add an explicit adapter before summing.")};
+            widths[id] = width;
+        }
+        else
+        {
+            if (upstream.size() > 1)
+                return {{}, invalid("A processor input accepts one feed; use the explicit Sum utility to mix.")};
+            widths[id] = upstream.empty() ? graph.channels : 1;
+            if (!upstream.empty())
+            {
+                const auto edge = std::find_if(graph.connections.begin(), graph.connections.end(),
+                    [id](const auto& item) { return item.destination == id; });
+                widths[id] = convertedWidth(*edge);
+            }
+        }
+        if (widths[id] < 1 || widths[id] > 32)
+            return {{}, invalid("Every prepared processor bus must have 1-32 channels.")};
+        if (node.type == AudioNodeType::script && !node.script->inputs().empty()
+            && !upstream.empty())
+        {
+            const auto edge = std::find_if(graph.connections.begin(), graph.connections.end(),
+                [id](const auto& item) { return item.destination == id; });
+            const auto inputWidth = convertedWidth(*edge);
+            if (inputWidth != static_cast<int>(node.script->inputs().size()))
+                return {{}, invalid("Script input declaration does not match the connected bus layout.")};
+        }
+    }
+
+    for (const auto& edge : graph.connections)
+    {
+        const auto sourceWidth = widths.at(edge.source);
+        const auto destinationType = nodes.at(edge.destination)->type;
+        const auto destinationWidth = destinationType == AudioNodeType::sum
+            ? widths.at(edge.destination)
+            : widths.at(edge.destination);
+        if (edge.adapter == domain::AudioAdapter::monoToStereo)
+        {
+            if (sourceWidth != 1 || destinationWidth != 2)
+                return {{}, invalid("Dual-mono adapter is defined only for one mono source channel to a two-channel destination.")};
+        }
+        else if (sourceWidth != destinationWidth)
+            return {{}, invalid("Connected ports have incompatible channel dimensions; select an explicit supported adapter.")};
+    }
+
     const auto dependencies = graph.outputDependencies();
     const std::set<std::uint64_t> reachable(dependencies.begin(), dependencies.end());
 
     auto plan = std::unique_ptr<PreparedAudioGraph>(new PreparedAudioGraph);
     plan->format_ = format;
     plan->revision_ = revision;
-    plan->channels_ = graph.channels;
-    plan->scratch_.resize((nodes.size() + 1) * stride, 0.0f);
-    std::size_t storageBytes = plan->scratch_.size() * sizeof(float);
+    std::size_t scratchFloats{};
     std::map<std::uint64_t, std::size_t> offsets;
     for (auto id : order)
     {
+        const auto channelCount = static_cast<std::size_t>(widths.at(id));
+        if (scratchFloats > std::numeric_limits<std::size_t>::max() - channelCount * static_cast<std::size_t>(format.maxFrames))
+            return {{}, invalid("Prepared bus scratch size overflow.")};
+        offsets.emplace(id, scratchFloats);
+        scratchFloats += channelCount * static_cast<std::size_t>(format.maxFrames);
+    }
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::size_t> adapterOffsets;
+    for (const auto& edge : graph.connections)
+        if (edge.adapter != domain::AudioAdapter::none)
+        {
+            const auto channelCount = static_cast<std::size_t>(widths.at(edge.destination));
+            adapterOffsets.emplace(std::pair{edge.source, edge.destination}, scratchFloats);
+            scratchFloats += channelCount * static_cast<std::size_t>(format.maxFrames);
+        }
+    if (scratchFloats > 64 * 1024 * 1024 / sizeof(float))
+        return {{}, invalid("Prepared scratch exceeds the 64 MiB runtime budget.")};
+    plan->scratch_.resize(scratchFloats, 0.0f);
+    std::size_t storageBytes = plan->scratch_.size() * sizeof(float);
+    for (auto id : order)
+    {
         const auto& node = *nodes.at(id);
-        const auto destination = (plan->steps_.size() + 1) * stride;
-        const auto& upstream = incoming.at(id);
-        const auto source = upstream.empty() ? 0 : offsets.at(upstream.front());
+        const auto destination = offsets.at(id);
+        const auto channelCount = widths.at(id);
         auto processor = createProcessor(node.type, node.gain, node.script);
         if (!node.userScale.empty())
         {
@@ -411,7 +583,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             if (!signal || !signal->setUserScale(node.userScale))
                 return {{}, invalid("Signal Generator custom scale configuration is invalid.")};
         }
-        const ProcessingSpec spec{format.sampleRate, format.maxFrames, graph.channels};
+        const ProcessingSpec spec{format.sampleRate, format.maxFrames, channelCount};
         storageBytes += processor->requiredStorageBytes(spec);
         if (storageBytes > 128 * 1024 * 1024)
             return {{}, invalid("Prepared DSP storage exceeds the 128 MiB graph budget.")};
@@ -431,12 +603,19 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             return {{}, invalid(prepared.error)};
         if (node.type == AudioNodeType::analyzer)
             static_cast<AnalyzerNode*>(processor.get())->bindCapture(node.capture);
-        std::vector<std::size_t> sumSources;
-        if (node.type == AudioNodeType::sum)
-            for (auto upstreamId : upstream) sumSources.push_back(offsets.at(upstreamId));
-        plan->steps_.push_back({id, node.type, std::move(processor), source, destination, node.capture,
-                                std::move(sumSources), reachable.contains(id)});
-        offsets.emplace(id, destination);
+        std::vector<InputEdge> inputEdges;
+        for (const auto& edge : graph.connections)
+            if (edge.destination == id)
+            {
+                const auto sourceOffset = offsets.at(edge.source);
+                const auto adapter = edge.adapter;
+                const auto scratch = adapter == domain::AudioAdapter::none ? sourceOffset
+                    : adapterOffsets.at({edge.source, edge.destination});
+                inputEdges.push_back({sourceOffset, scratch, widths.at(edge.source), adapter});
+            }
+        plan->steps_.push_back({id, node.type, std::move(processor), destination, channelCount, node.capture,
+                                node.hardwareChannelMap, std::move(inputEdges), node.endpointActive,
+                                reachable.contains(id)});
     }
     return {std::move(plan), {}};
 }
@@ -451,21 +630,40 @@ void PreparedAudioGraph::process(const AudioBuffer& buffer, int offset, int fram
     for (auto& step : steps_)
     {
         if (!step.active) continue;
+        for (const auto& edge : step.inputs)
+            if (edge.adapter == domain::AudioAdapter::monoToStereo)
+            {
+                const auto* source = scratch_.data() + edge.source + offset;
+                auto* destination = scratch_.data() + edge.scratch + offset;
+                const auto destinationStride = format_.maxFrames;
+                std::copy_n(source, frames, destination);
+                std::copy_n(source, frames, destination + destinationStride);
+            }
+        const auto inputSource = step.inputs.empty() ? step.destination : step.inputs.front().scratch;
         if (step.type == AudioNodeType::sum)
         {
-            for (int channel = 0; channel < channels_; ++channel)
+            for (int channel = 0; channel < step.channels; ++channel)
             {
                 auto* destination = scratch_.data() + step.destination + channel * format_.maxFrames + offset;
                 std::fill_n(destination, frames, 0.0f);
-                for (auto source : step.sumSources)
+                for (const auto& edge : step.inputs)
                     for (int frame = 0; frame < frames; ++frame)
-                        destination[frame] += scratch_[source + channel * format_.maxFrames + offset + frame];
+                        destination[frame] += scratch_[edge.scratch + channel * format_.maxFrames + offset + frame];
             }
             step.processor->process({scratch_.data() + step.destination + offset, scratch_.data() + step.destination + offset,
-                                      channels_, format_.maxFrames, frames, buffer, offset});
+                                      step.channels, format_.maxFrames, frames, buffer, offset});
         }
-        else step.processor->process({scratch_.data() + step.source + offset, scratch_.data() + step.destination + offset,
-                                      channels_, format_.maxFrames, frames, buffer, offset});
+        else
+        {
+            if (step.inputs.empty() && step.type != AudioNodeType::input && step.type != AudioNodeType::output
+                && !isGenerator(step.type))
+                for (int channel = 0; channel < step.channels; ++channel)
+                    std::fill_n(scratch_.data() + step.destination + channel * format_.maxFrames + offset, frames, 0.0f);
+            const auto* map = step.hardwareChannelMap.empty() ? nullptr : step.hardwareChannelMap.data();
+            step.processor->process({scratch_.data() + inputSource + offset, scratch_.data() + step.destination + offset,
+                                      step.channels, format_.maxFrames, frames, buffer, offset, map,
+                                      step.endpointActive});
+        }
     }
 }
 void PreparedAudioGraph::capture(int frames, std::uint64_t epoch, std::uint64_t firstFrame) noexcept

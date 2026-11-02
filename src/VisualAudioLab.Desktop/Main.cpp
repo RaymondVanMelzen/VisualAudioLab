@@ -5,6 +5,7 @@
 #include <val/infrastructure/LocalProjectStore.h>
 #include <val/infrastructure/AudioBackends.h>
 #include <val/presentation/MainComponent.h>
+#include <ValResources.h>
 #include <iostream>
 
 namespace val::desktop
@@ -25,6 +26,8 @@ public:
                const application::Settings& settings)
         : juce::DocumentWindow("Visual Audio Lab", juce::Colour(0xff20252b), allButtons)
     {
+        setIcon(juce::ImageCache::getFromMemory(val_resources::VAL_256x256_png,
+                                                val_resources::VAL_256x256_pngSize));
         setUsingNativeTitleBar(true);
         setResizable(true, false);
         setResizeLimits(800, 600, 7680, 4320);

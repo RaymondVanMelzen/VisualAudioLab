@@ -21,10 +21,15 @@ bool label(const std::string& value)
 class AddPatch final : public Command
 {
 public:
-    AddPatch(ProjectState& state, domain::GraphId id, std::string name)
+    AddPatch(ProjectState& state, domain::GraphId id, domain::GraphId firstEndpoint, std::string name)
         : state_(state), id_(id), previous_(state.activePatch)
     {
-        prepared_.emplace(id, Patch{id, std::move(name), {}, {}});
+        Patch patch{id, std::move(name), {}, {}};
+        patch.graph.endpoints.emplace(firstEndpoint, domain::HardwareEndpoint{firstEndpoint,
+            domain::EndpointRole::hardwareInput, "Hardware Input 1", true, 2, {}});
+        patch.graph.endpoints.emplace(firstEndpoint + 1, domain::HardwareEndpoint{firstEndpoint + 1,
+            domain::EndpointRole::hardwareOutput, "Main Output", true, 2, {}});
+        prepared_.emplace(id, std::move(patch));
     }
     std::string_view name() const noexcept override { return "Add patch"; }
     Result execute() override
@@ -79,6 +84,9 @@ Result validateProject(const ProjectState& state)
             || std::abs(viewport.x) > 3000000 || std::abs(viewport.y) > 3000000)
             return Result::failure("Patch viewport is outside the supported zoom/pan range.");
         const auto& graph = patch.graph;
+        if (std::none_of(graph.endpoints.begin(), graph.endpoints.end(), [](const auto& endpoint)
+            { return endpoint.second.role == domain::EndpointRole::hardwareOutput; }))
+            return Result::failure("Each patch must retain at least one hardware output row.");
         std::unordered_map<domain::GraphId, std::size_t> incoming;
         std::unordered_map<domain::GraphId, std::vector<domain::GraphId>> outgoing;
         std::set<domain::GraphId> occupied;
@@ -96,15 +104,46 @@ Result validateProject(const ProjectState& state)
                     return Result::failure("Parameter key or scalar value is invalid.");
             incoming.emplace(nodeId, 0);
         }
+        for (const auto& [endpointId, endpoint] : graph.endpoints)
+        {
+            const bool validRole = endpoint.role == domain::EndpointRole::hardwareInput
+                || endpoint.role == domain::EndpointRole::hardwareOutput;
+            if (!validId(endpointId) || endpoint.id != endpointId || !label(endpoint.name)
+                || !validRole
+                || endpoint.layoutChannels < 1 || endpoint.layoutChannels > 32
+                || (!endpoint.channelNames.empty()
+                    && static_cast<int>(endpoint.channelNames.size()) != endpoint.layoutChannels)
+                || std::any_of(endpoint.channelNames.begin(), endpoint.channelNames.end(), [](const auto& name)
+                    { return name.empty() || name.size() > 4096 || name.find('\0') != std::string::npos; }))
+                return Result::failure("Hardware endpoint identity, label, layout or selected channel names are invalid.");
+            incoming.emplace(endpointId, 0);
+        }
         for (const auto& [wireId, wire] : graph.connections)
         {
+            const auto sourceNode = graph.nodes.find(wire.source.node);
+            const auto destinationNode = graph.nodes.find(wire.destination.node);
+            const auto sourceEndpoint = graph.endpoints.find(wire.source.node);
+            const auto destinationEndpoint = graph.endpoints.find(wire.destination.node);
+            const bool sourceExists = sourceNode != graph.nodes.end() || sourceEndpoint != graph.endpoints.end();
+            const bool destinationExists = destinationNode != graph.nodes.end() || destinationEndpoint != graph.endpoints.end();
+            const bool sourceOutput = sourceEndpoint != graph.endpoints.end()
+                ? sourceEndpoint->second.role == domain::EndpointRole::hardwareInput
+                : sourceNode != graph.nodes.end() && domain::hasOutputPort(sourceNode->second);
+            const bool destinationInput = destinationEndpoint != graph.endpoints.end()
+                ? destinationEndpoint->second.role == domain::EndpointRole::hardwareOutput
+                : destinationNode != graph.nodes.end() && domain::hasInputPort(destinationNode->second);
+            const bool destinationSum = destinationNode != graph.nodes.end()
+                && domain::isSumPort(destinationNode->second);
             if (!validId(wireId) || wire.id != wireId || wire.source.port != domain::Port::output
-                || wire.destination.port != domain::Port::input || wire.source.node == wire.destination.node
-                || !graph.nodes.contains(wire.source.node) || !graph.nodes.contains(wire.destination.node)
+                || wire.destination.port != domain::Port::input || wire.source.index != 0 || wire.destination.index != 0
+                || wire.source.node == wire.destination.node || !sourceExists || !destinationExists
+                || !sourceOutput || !destinationInput
                 || !edges.emplace(wire.source.node, wire.destination.node).second
                 || (!occupied.insert(wire.destination.node).second
-                    && !domain::isSumPort(graph.nodes.at(wire.destination.node))))
+                    && !destinationSum))
                 return Result::failure("Connection has invalid/duplicate identities, endpoints or an occupied input.");
+            if (wire.adapter != domain::AudioAdapter::none && wire.adapter != domain::AudioAdapter::monoToStereo)
+                return Result::failure("Connection uses an unsupported channel adapter.");
             ++incoming.at(wire.destination.node);
             outgoing[wire.source.node].push_back(wire.destination.node);
         }
@@ -123,7 +162,7 @@ Result validateProject(const ProjectState& state)
                     if (--incoming.at(destination) == 0)
                         pending.push_back(destination);
         }
-        if (visited != graph.nodes.size())
+        if (visited != incoming.size())
             return Result::failure("Project contains a connection cycle; feedback is not supported.");
     }
     return Result::success();
@@ -147,23 +186,29 @@ Result WorkspaceService::replaceProject(ProjectState state)
             (void) value;
             next = std::max(next, wire + 1);
         }
+        for (const auto& [endpoint, value] : patch.graph.endpoints)
+        {
+            (void) value;
+            next = std::max(next, endpoint + 1);
+        }
     }
     history_.clear();
     using std::swap;
     swap(state_, state);
     nextId_ = next;
     nextPatchId_ = state_.patches.rbegin()->first + 1;
-    lastCreatedNode_ = 0;
+    lastCreatedNode_ = lastCreatedEndpoint_ = 0;
     return Result::success();
 }
 
 Result WorkspaceService::addPatch(std::string name)
 {
-    if (!label(name) || nextPatchId_ == std::numeric_limits<domain::GraphId>::max())
+    if (!label(name) || nextPatchId_ == std::numeric_limits<domain::GraphId>::max()
+        || nextId_ >= std::numeric_limits<domain::GraphId>::max() - 2)
         return Result::failure("Use a non-blank patch name of at most 128 bytes; patch identities must be available.");
     const auto id = nextPatchId_;
-    const auto result = history_.execute(std::make_unique<AddPatch>(state_, id, std::move(name)));
-    if (result.succeeded) ++nextPatchId_;
+    const auto result = history_.execute(std::make_unique<AddPatch>(state_, id, nextId_, std::move(name)));
+    if (result.succeeded) { ++nextPatchId_; nextId_ += 2; }
     return result;
 }
 

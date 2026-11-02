@@ -1,8 +1,8 @@
 # Hardware Endpoint Lanes and Audio Setup Plan
 
-**Status:** proposed implementation plan only. This document changes no
-application behavior. Implementation, builds, review-build installation and a
-PR require explicit user authorization.
+**Status:** approved and implemented on `hardware-endpoint-architecture`.
+This plan records the shipped scope and its acceptance criteria; review PR and
+persistent Windows package delivery are tracked separately.
 
 ## Objective
 
@@ -13,12 +13,12 @@ the selected audio-device session, preserve graph identity and project data,
 and execute through real channel-aware audio buses. This is an architectural
 change, not a rails-only visual treatment.
 
-The plan is grounded in the current repository as checked out on
-`signal-generator-level-policy-editor` at `de7152d`; PR #24 is open on PR #23,
-which is also open. PR #22 is reported merged, but it targets the
-`docs/routing-model-redesign` branch; the checked-out `origin/main` is
-`237eab5`. Recheck those references before implementation, and do not assume
-open stacked PR content has landed on `main`.
+The plan's repository evidence was captured at planning time on
+`signal-generator-level-policy-editor` at `de7152d`; PR #24 was open on PR #23,
+which was also open. PR #22 was reported merged but targeted
+`docs/routing-model-redesign`; the checked-out `origin/main` was `237eab5`.
+Those historical refs were rechecked before implementation; open stacked PR
+content was not treated as merged to `main`.
 
 ## Confirmed product decisions and boundaries
 
@@ -347,10 +347,10 @@ count is available.
 - This depends on typed per-port layouts and actual multi-destination execution;
   implementing only descriptors, row widgets or cables is not a valid partial
   delivery.
-- Current processors share one graph width. Every processor needs a verified
-  port-layout declaration before it can join mixed-width routes. VAL Script
-  input/output declarations remain dimensionally exact unless an explicit
-  adapter is inserted.
+- Processor input/output layouts are declared explicitly; that contract does
+  not imply every DSP algorithm supports every width. New or changed processors
+  must be tested at each declared width. VAL Script input/output declarations
+  remain dimensionally exact unless the visible supported adapter is inserted.
 - Driver names may be duplicated, unstable or absent. The local resolver must
   expose ambiguity instead of guessing. JUCE may compact sparse masks in a
   backend-specific way; verify the mapping via injected backend tests and
@@ -367,12 +367,42 @@ count is available.
   claim macOS, physical-device, multichannel hardware or measured-latency
   qualification without corresponding evidence.
 
-## Future delivery steps (not authorized by this plan)
+## Implementation and validation record
 
-After explicit implementation authorization: complete all stages and
-acceptance gates; create a focused PR on the then-current agreed base; preserve
-and update the persistent Windows review package only after a complete
-compatible Release build; verify source identity, README and every file
-checksum; report exact PR, commit, test/screenshot evidence and unqualified
-platform/hardware coverage. No code, tests, build, PR, Latest package or
-hardware probe is part of this planning assignment.
+The implementation adds stable hardware endpoint records, typed per-port
+layouts, per-bus runtime mapping, multiple destinations, visible mono-to-stereo
+adaptation, explicit Sum, exact sparse channel masks and compact callback
+mapping. It moves endpoint assignment out of Audio Setup, adds fixed left/right
+canvas lanes and removes hardware Input/Output from Module Browser insertion
+surfaces. Endpoint rows and cables persist; legacy schema-1 Input/Output nodes
+migrate while retaining stable IDs and route references. The writer emits
+schema 1.1 with required-feature gating. Audio Setup remains discovery and
+device/rate/buffer configuration; Start stays explicit and there is no
+automatic device fallback. Legacy count-only machine preferences retain
+their historic widths without manufacturing first-N channel bindings; endpoint
+rows require explicit named-channel assignments.
+
+The shipped scope is limited to hardware input, the existing internal
+generators and configured main hardware output. Endpoint rows bind named
+channels from a single configured backend/device session. Destination ports
+accept one feed; use Sum explicitly to mix. The implementation does not add
+unsynchronized multi-device operation, generalized resampling, Application
+Capture, File Player, Virtual Audio Device, Recorder/File Writer, Streaming or
+plugin hosting.
+
+Windows Release build and all 22 registered CTest suites passed. Coverage
+includes legacy migration and rollback, new-format round trips, direct and
+multi-destination routes, explicit summing, fan-out, adapters and invalid
+layouts, cycle rejection, sparse channel identity and runtime graph behavior.
+Runtime integration tests ran with virtual/injected channel maps; they do not
+qualify physical hardware. Review screenshots are retained under the session
+artifact directory for the endpoint lanes, workspace and Audio Setup. Native
+device opening was not used for audible playback. macOS, physical-device
+behavior, hardware multichannel qualification and measured latency remain
+unverified.
+
+The original nine user-supplied icon assets are preserved under
+`resources/icons/`; the supplied multi-resolution ICO is embedded in the
+Windows executable, and its icon group and referenced image payloads were
+verified. The persistent Latest package and final PR state are delivery
+artifacts, not acceptance assertions in this plan.

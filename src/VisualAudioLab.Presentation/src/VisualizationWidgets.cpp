@@ -60,7 +60,8 @@ application::Result VisualizationSession::add(std::shared_ptr<audio::SignalCaptu
     { return source.state == ObservationState::removed && source.id == capture->source(); });
     auto results = engine_.results(capture->source());
     const auto id = capture->source();
-    sources_.push_back({id, std::move(capture), std::move(results), {}, std::move(label), ObservationState::waiting, 0, false, {}});
+    sources_.push_back({id, std::move(capture), std::move(results), {}, std::move(label),
+                        ObservationState::waiting, 0, false, id == editorTarget_, {}});
     for (auto* view : views_) view->resized();
     return application::Result::success();
 }
@@ -77,10 +78,12 @@ void VisualizationSession::remove(std::uint64_t source)
         const auto result = engine_.demand(source, false); jassert(result.succeeded);
         record->embeddedDemand = false;
     }
+    if (editorTarget_ == source) editorTarget_ = 0;
     engine_.remove(source);
     if (auto* record = find(source))
     {
-        record->state = ObservationState::removed; record->latest.reset(); record->results.reset(); record->capture.reset();
+        record->state = ObservationState::removed; record->latest.reset(); record->results.reset();
+        record->capture.reset(); record->editorDemand = false;
     }
     std::erase_if(sources_, [this](const auto& record)
     {
@@ -90,10 +93,12 @@ void VisualizationSession::remove(std::uint64_t source)
 }
 void VisualizationSession::reset()
 {
+    const auto selectedTarget = editorTarget_;
     for (auto* view : views_) { view->setTarget(0); view->setPinned(false); }
     const auto ids = sourceIds();
     for (const auto id : ids) remove(id);
     sources_.clear();
+    editorTarget_ = selectedTarget;
 }
 void VisualizationSession::bindCanvas(CanvasView* canvas)
 {
@@ -143,6 +148,11 @@ void VisualizationSession::setState(std::uint64_t source, ObservationState state
         if (state != ObservationState::processing) record->latest.reset();
     }
 }
+void VisualizationSession::setEditorTarget(std::uint64_t source)
+{
+    editorTarget_ = source;
+    for (auto& item : sources_) item.editorDemand = item.id == editorTarget_;
+}
 juce::StringArray VisualizationSession::labels() const
 {
     juce::StringArray values;
@@ -154,6 +164,42 @@ std::vector<std::uint64_t> VisualizationSession::sourceIds() const
     std::vector<std::uint64_t> values;
     for (const auto& source : sources_) values.push_back(source.id);
     return values;
+}
+GeneratorMeterReadout VisualizationSession::generatorMeters(std::uint64_t id) const
+{
+    const auto found = std::find_if(sources_.begin(), sources_.end(),
+        [id](const auto& source) { return source.id == id; });
+    if (found == sources_.end() || found->state == ObservationState::removed)
+        return {"Unavailable · no admitted generator capture; route to Main Output"};
+    if (found->error.isNotEmpty())
+        return {"Unavailable · " + found->error};
+    if (!found->latest)
+        return {found->state == ObservationState::processing ? "Waiting for samples" : "Stopped"};
+    if (juce::Time::getMillisecondCounterHiRes() - found->received > 500.0)
+        return {"Stale · generator capture has not updated"};
+
+    GeneratorMeterReadout result;
+    result.state = "Live · generator output · sample peak 50 ms · RMS 300 ms";
+    const auto& data = *found->latest;
+    if (data.peakValid)
+    {
+        float peak{};
+        for (int channel = 0; channel < data.stamp.channels; ++channel)
+            peak = std::max(peak, std::abs(data.peak[static_cast<std::size_t>(channel)]));
+        result.samplePeakDbfs = audio::AnalyzerEngine::decibels(peak);
+        result.samplePeakValid = true;
+    }
+    if (data.rmsValid)
+    {
+        double energy{};
+        for (int channel = 0; channel < data.stamp.channels; ++channel)
+            energy += static_cast<double>(data.rms[static_cast<std::size_t>(channel)])
+                    * data.rms[static_cast<std::size_t>(channel)];
+        energy /= std::max(1, data.stamp.channels);
+        result.rmsDbfs = audio::AnalyzerEngine::decibels(static_cast<float>(std::sqrt(energy)));
+        result.rmsValid = true;
+    }
+    return result;
 }
 void VisualizationSession::attach(VisualizationWidgets& view)
 {
@@ -170,8 +216,9 @@ void VisualizationSession::refresh()
     const auto now = juce::Time::getMillisecondCounterHiRes();
     for (auto& source : sources_)
     {
-        const bool active = canvas_ && canvas_->observationVisible(source.id)
-            && (source.state == ObservationState::waiting || source.state == ObservationState::processing);
+        const bool active = source.editorDemand
+            || (canvas_ && canvas_->observationVisible(source.id)
+                && (source.state == ObservationState::waiting || source.state == ObservationState::processing));
         if (source.embeddedDemand != active)
         {
             const auto admitted = engine_.demand(source.id, active);

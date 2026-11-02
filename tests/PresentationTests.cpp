@@ -173,6 +173,17 @@ int main(int argc, char** argv)
                     && std::get<std::string>(tunerNode.parameters.at("visualization.kind")) == "Guitar Tuner"
                     && service.graph().connections.empty() && !shell.runtime().running(),
                 "The Guitar Tuner is a pass-through analyzer instance with its own view and no implicit wiring or playback.");
+        shell.insertModule("Signal Generator", dropPoint.toFloat());
+        const auto& signalGenerator = service.graph().nodes.rbegin()->second;
+        require(std::get<std::string>(signalGenerator.parameters.at("audio.type")) == "Signal Generator"
+                    && std::get<double>(signalGenerator.parameters.at("audio.param.levelDb")) == -6.0,
+                "A newly inserted Signal Generator starts at an adjustable -6 dBFS peak target.");
+        shell.insertModule("Noise Generator", dropPoint.toFloat());
+        const auto& noiseGenerator = service.graph().nodes.rbegin()->second;
+        require(std::get<std::string>(noiseGenerator.parameters.at("audio.type")) == "Noise Generator"
+                    && std::get<double>(noiseGenerator.parameters.at("audio.param.levelDbRms")) == -6.0
+                    && service.graph().connections.empty() && !shell.runtime().running(),
+                "A newly inserted Noise Generator uses the peak-reference starting target without wiring or starting audio.");
 
         require(shell.perform(juce::ApplicationCommandTarget::InvocationInfo(commandId("Audio Setup"))),
                 "Audio Setup command opens its dialog.");

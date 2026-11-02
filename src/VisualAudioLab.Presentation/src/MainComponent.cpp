@@ -39,6 +39,11 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     editor_->onChanged = [this] { refresh(); };
     editor_->onRuntimeParameter = [this](auto node, auto index, auto value, auto action) { runtime_->parameter(node, index, value, action); };
     editor_->onScheduleParameter = [this](auto node, auto index, auto value, auto seconds) { runtime_->schedule(node, index, value, seconds); };
+    editor_->onReadGeneratorMeters = [this](auto node)
+    {
+        return runtime_->running() ? dockWorkspace_.visualizations().generatorMeters(node)
+                                   : GeneratorMeterReadout{"Stopped · Start transport to measure"};
+    };
     inspectorTabs_.addTab("Properties / Script", ShellTheme::surface(), editor_.get(), false);
     inspectorTabs_.addTab("Signal", ShellTheme::surface(), &dockWorkspace_.signalPreview(), false);
     dockWorkspace_.setPanelContent(PanelId::propertyInspector, inspectorTabs_);
@@ -47,6 +52,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
         editor_->setNode(node);
         dockWorkspace_.signalPreview().followSelection(node);
         updateGeneratorDisplay();
+        dockWorkspace_.visualizations().setEditorTarget(0);
         const auto found = workspace_.graph().nodes.find(node);
         if (found != workspace_.graph().nodes.end())
         {
@@ -55,9 +61,11 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
                 ? nullptr : std::get_if<std::string>(&typeField->second);
             if (type && type->find("Generator") != std::string::npos)
             {
+                dockWorkspace_.visualizations().setEditorTarget(node);
                 dockWorkspace_.signalPreview().showKind(VisualizationKind::oscilloscope);
-                inspectorTabs_.setCurrentTabIndex(1);
+                inspectorTabs_.setCurrentTabIndex(0);
             }
+            else dockWorkspace_.visualizations().setEditorTarget(0);
             if (const auto kind = found->second.parameters.find("visualization.kind"); kind != found->second.parameters.end())
                 if (const auto* name = std::get_if<std::string>(&kind->second))
                 {
@@ -190,6 +198,10 @@ void MainComponent::insertModule(std::string type, std::optional<juce::Point<flo
         type = "Analyzer";
     }
     values["audio.type"] = type;
+    if (type == "Signal Generator")
+        values["audio.param.levelDb"] = -6.0;
+    else if (type == "Noise Generator")
+        values["audio.param.levelDbRms"] = -6.0;
     if (type == "Script")
     {
         const auto count = runtime_->channels();
@@ -334,7 +346,7 @@ void MainComponent::updateGeneratorDisplay()
     }
     else if (*type == "Noise Generator")
         info.summary = "Noise Generator · " + juce::String(number("color", 0) == 1 ? "Pink" : "White")
-            + " · " + juce::String(number("levelDbRms", -60), 1) + " dBFS RMS";
+            + " · " + juce::String(number("levelDbRms", -60), 1) + " dBFS peak reference";
     else if (*type == "Burst Generator")
         info.summary = "Burst Generator · " + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
             + juce::String(number("durationSeconds", 0.1) * 1000, 0) + " ms · "

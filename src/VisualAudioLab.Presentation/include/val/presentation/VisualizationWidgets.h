@@ -18,6 +18,13 @@ struct GeneratorDisplayInfo
     double durationSeconds{};
     int transport{};
 };
+/** Honest generator-node measurements, derived only from a fresh captured node-output result. */
+struct GeneratorMeterReadout
+{
+    juce::String state{"Waiting for generator samples"};
+    float samplePeakDbfs{-160.0f}, rmsDbfs{-160.0f};
+    bool samplePeakValid{}, rmsValid{};
+};
 /** Calibrated analysis displays, all derived from the same immutable worker result. */
 enum class VisualizationKind { oscilloscope, spectrum, peak, rms, guitarTuner, correlation };
 
@@ -37,6 +44,8 @@ public:
     /** Project/patch transition: unpin/reset all targets and disable/detach every old capture generation. */
     void reset();
     void setState(std::uint64_t source, ObservationState state);
+    /** Keeps one selected generator's bounded capture active while its task editor is visible. */
+    void setEditorTarget(std::uint64_t source);
     /** One shared newest copy per source, independent of view count. Also usable in GUI tests. */
     void refresh();
     /** Borrows the structural canvas; visible scheduled nodes share min/max sparks at 10 Hz. */
@@ -44,6 +53,7 @@ public:
     [[nodiscard]] audio::AnalyzerDiagnostics diagnostics() const { return engine_.diagnostics(); }
     [[nodiscard]] juce::StringArray labels() const;
     [[nodiscard]] std::vector<std::uint64_t> sourceIds() const;
+    [[nodiscard]] GeneratorMeterReadout generatorMeters(std::uint64_t source) const;
 private:
     friend class VisualizationWidgets;
     /** UI-owned source record; reading a result never takes the worker's registry mutex. */
@@ -57,6 +67,7 @@ private:
         ObservationState state{ObservationState::waiting};
         double received{};
         bool embeddedDemand{};
+        bool editorDemand{};
         juce::String error;
     };
     void timerCallback() override { refresh(); }
@@ -68,6 +79,7 @@ private:
     std::vector<VisualizationWidgets*> views_;
     std::unique_ptr<audio::SignalAnalysis> scratch_{std::make_unique<audio::SignalAnalysis>()};
     CanvasView* canvas_{};
+    std::uint64_t editorTarget_{};
     double nextEmbedded_{};
 };
 

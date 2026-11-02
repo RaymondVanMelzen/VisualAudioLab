@@ -105,19 +105,23 @@ connect ports explicitly. Input/Output belong to routing utilities, not the
 effect taxonomy.
 A **module** is a reusable audio function; a placed **node** is its instance
 with its own saved parameters/source and runtime state. Input/Output are
-explicit **routing utilities**, not effects. Analyzer modules observe audio
-while passing it through unchanged. The catalog, canvas roles and inspector
-use these distinctions; reusable patch packaging is not newly implemented.
+explicit **routing utilities**, not effects. On the canvas, current hardware
+Input and inserted built-in generator instances appear in the fixed Sources
+rail; the existing Main Output appears in the fixed Destinations rail. Those
+endpoints cannot be moved or deleted on the canvas. Hardware device and exact
+named channel groups are still chosen in Audio Setup. This rail presentation
+does not yet add system-owned endpoint identities or multiple device buses.
+Analyzer modules observe audio while passing it through unchanged. Reusable
+patch packaging is not newly implemented.
 
 An external input device is optional: choose **None (output only)** to run
 without capture. The graph still needs its explicit Output routing utility.
-For a generated signal today, use a zero-input Script connected to Output; the
-inserted pass-through Script is not itself a generator, and a disconnected or
-input-dependent graph can render silence. Starting such an output-only graph
-shows a warning when no zero-input Script feeds Output because it may render
-silence. A product oscillator
-module is planned but is not shipped. No input, hardware stream, or playback
-starts implicitly.
+The seven shipped built-in generators appear as sources when inserted from the
+Module Browser and can feed a route without hardware input. A zero-input Script
+also remains supported; the inserted pass-through Script is not itself a
+generator, and a disconnected or input-dependent graph can render silence.
+Starting an output-only graph warns when no active zero-input source feeds
+Output. No input, hardware stream, or playback starts implicitly.
 
 For a device-free example:
 

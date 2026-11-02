@@ -4,6 +4,7 @@
 #include <val/presentation/Typography.h>
 #include <val/domain/Routing.h>
 #include <cmath>
+#include <vector>
 
 namespace val::presentation
 {
@@ -24,6 +25,7 @@ CanvasView::CanvasView(application::WorkspaceService& workspace) : workspace_(wo
         button->setWantsKeyboardFocus(false);
     help_.setText("N: add | Drag ports: wire | Wheel: zoom | Middle/Space-drag: pan",
                    juce::dontSendNotification);
+    help_.setFont(Typography::font(TextRole::status));
     help_.setTooltip("Shift adds selection; Ctrl/Command toggles. Empty drag selects a box. "
                      "Delete removes selection. M then arrows/Enter moves; Escape cancels. "
                      "Arrows navigate nodes; Tab leaves canvas. C then arrows/Enter connects; D disconnects input. "
@@ -72,11 +74,104 @@ void CanvasView::resetForProject()
 
 juce::Rectangle<int> CanvasView::viewport() const
 {
+    auto area = contentBounds();
+    return area.withTrimmedLeft(static_cast<int>(railWidth())).withTrimmedRight(static_cast<int>(railWidth()));
+}
+
+juce::Rectangle<int> CanvasView::contentBounds() const
+{
     return getLocalBounds().withTrimmedTop(34).withTrimmedBottom(26);
+}
+
+float CanvasView::railWidth() const noexcept
+{
+    if (getWidth() < 390)
+        return std::max(72.0f, (getWidth() - 170.0f) * 0.5f);
+    return std::min(150.0f, std::max(110.0f, getWidth() * 0.21f));
+}
+
+juce::Rectangle<int> CanvasView::sourceRailBounds() const
+{
+    return contentBounds().withWidth(static_cast<int>(railWidth()));
+}
+
+juce::Rectangle<int> CanvasView::destinationRailBounds() const
+{
+    const auto area = contentBounds();
+    return area.withX(area.getRight() - static_cast<int>(railWidth())).withWidth(static_cast<int>(railWidth()));
+}
+
+std::vector<domain::GraphId> CanvasView::sourceEndpointIds() const
+{
+    std::vector<domain::GraphId> result;
+    for (const auto& [id, node] : workspace_.graph().nodes)
+        if (domain::isFixedEndpoint(node) && domain::audioType(node) != "Output")
+            result.push_back(id);
+    return result;
+}
+
+std::vector<domain::GraphId> CanvasView::destinationEndpointIds() const
+{
+    std::vector<domain::GraphId> result;
+    for (const auto& [id, node] : workspace_.graph().nodes)
+        if (domain::audioType(node) == "Output")
+            result.push_back(id);
+    return result;
+}
+
+bool CanvasView::fixedEndpoint(domain::GraphId id) const
+{
+    const auto found = workspace_.graph().nodes.find(id);
+    return found != workspace_.graph().nodes.end() && domain::isFixedEndpoint(found->second);
+}
+
+juce::Rectangle<int> CanvasView::endpointCardBounds(domain::GraphId id) const
+{
+    const auto sources = sourceEndpointIds();
+    const auto destinations = destinationEndpointIds();
+    const auto source = std::find(sources.begin(), sources.end(), id);
+    const auto destination = std::find(destinations.begin(), destinations.end(), id);
+    const bool isSource = source != sources.end();
+    const bool isDestination = destination != destinations.end();
+    if (!isSource && !isDestination)
+        return {};
+    const auto rail = isSource ? sourceRailBounds() : destinationRailBounds();
+    const auto index = static_cast<int>(isSource ? std::distance(sources.begin(), source)
+                                                  : std::distance(destinations.begin(), destination));
+    const auto scroll = isSource ? sourceScroll_ : destinationScroll_;
+    return {rail.getX() + 6, rail.getY() + 86 + index * 70 - scroll,
+            std::max(50, rail.getWidth() - 12), 62};
+}
+
+std::optional<juce::Point<float>> CanvasView::endpointPortPosition(domain::GraphId id, domain::Port direction) const
+{
+    const auto found = workspace_.graph().nodes.find(id);
+    if (found == workspace_.graph().nodes.end())
+        return std::nullopt;
+    const bool source = domain::audioType(found->second) != "Output" && domain::isFixedEndpoint(found->second);
+    const bool destination = domain::audioType(found->second) == "Output";
+    if ((source && direction != domain::Port::output) || (destination && direction != domain::Port::input)
+        || (!source && !destination))
+        return std::nullopt;
+    const auto card = endpointCardBounds(id);
+    return juce::Point<float>{source ? static_cast<float>(card.getRight() - 1)
+                                     : static_cast<float>(card.getX() + 1),
+                              static_cast<float>(card.getCentreY())};
+}
+
+void CanvasView::clampRailScroll()
+{
+    const auto sourceMaximum = std::max(0, static_cast<int>(sourceEndpointIds().size()) * 70
+                                           - std::max(0, contentBounds().getHeight() - 78));
+    const auto destinationMaximum = std::max(0, static_cast<int>(destinationEndpointIds().size()) * 70
+                                                - std::max(0, contentBounds().getHeight() - 78));
+    sourceScroll_ = juce::jlimit(0, sourceMaximum, sourceScroll_);
+    destinationScroll_ = juce::jlimit(0, destinationMaximum, destinationScroll_);
 }
 
 void CanvasView::resized()
 {
+    clampRailScroll();
     auto row = getLocalBounds().removeFromTop(32).reduced(2);
     add_.setBounds(row.removeFromLeft(110));
     remove_.setBounds(row.removeFromLeft(65));
@@ -106,6 +201,16 @@ domain::Position CanvasView::position(domain::GraphId node) const
 {
     if (const auto found = preview_.find(node); found != preview_.end())
         return found->second;
+    if (const auto output = endpointPortPosition(node, domain::Port::output))
+    {
+        const auto patch = toPatch(*output);
+        return {patch.x - NodeView::width, patch.y - NodeView::portY};
+    }
+    if (const auto input = endpointPortPosition(node, domain::Port::input))
+    {
+        const auto patch = toPatch(*input);
+        return {patch.x, patch.y - NodeView::portY};
+    }
     return workspace_.graph().nodes.at(node).position;
 }
 
@@ -118,24 +223,39 @@ ConnectionView CanvasView::wireView(const domain::Connection& wire) const
 void CanvasView::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(ShellTheme::background());
+    {
     juce::Graphics::ScopedSaveState saved(graphics);
-    graphics.reduceClipRegion(viewport());
+    graphics.reduceClipRegion(contentBounds());
     const auto visible = visiblePatch();
-    const auto clip = graphics.getClipBounds().getIntersection(viewport()).toFloat();
+    const auto clip = graphics.getClipBounds().getIntersection(contentBounds()).toFloat();
     const juce::Rectangle<float> damaged{toPatch(clip.getTopLeft()), toPatch(clip.getBottomRight())};
     const auto origin = toScreen({0, 0});
     graphics.addTransform(juce::AffineTransform::scale(zoom_).translated(origin.x, origin.y));
     float grid = 32.0f;
     while (grid * zoom_ < 20.0f)
         grid *= 4.0f;
-    graphics.setColour(ShellTheme::border().withAlpha(0.18f));
-    for (float x = std::floor(damaged.getX() / grid) * grid; x < damaged.getRight(); x += grid)
-        for (float y = std::floor(damaged.getY() / grid) * grid; y < damaged.getBottom(); y += grid)
-            graphics.fillRect(x, y, 1.0f / zoom_, 1.0f / zoom_);
+    {
+        juce::Graphics::ScopedSaveState patchArea(graphics);
+        graphics.reduceClipRegion(viewport());
+        graphics.setColour(ShellTheme::border().withAlpha(0.18f));
+        for (float x = std::floor(damaged.getX() / grid) * grid; x < damaged.getRight(); x += grid)
+            for (float y = std::floor(damaged.getY() / grid) * grid; y < damaged.getBottom(); y += grid)
+                graphics.fillRect(x, y, 1.0f / zoom_, 1.0f / zoom_);
+    }
 
     for (auto id : scene_->connections(damaged.expanded(8.0f / zoom_)))
-        if (!movingWires_.contains(id))
+        if (!movingWires_.contains(id)
+            && !fixedEndpoint(workspace_.graph().connections.at(id).source.node)
+            && !fixedEndpoint(workspace_.graph().connections.at(id).destination.node))
             scene_->wires().at(id).paint(graphics, id == selectedWire_);
+    for (const auto& [id, wire] : workspace_.graph().connections)
+        if ((fixedEndpoint(wire.source.node) || fixedEndpoint(wire.destination.node))
+            && !movingWires_.contains(id))
+        {
+            const auto view = wireView(wire);
+            if (view.bounds().expanded(8.0f / zoom_).intersects(damaged))
+                view.paint(graphics, id == selectedWire_);
+        }
     for (auto id : movingWires_)
         wireView(workspace_.graph().connections.at(id)).paint(graphics, id == selectedWire_);
 
@@ -145,12 +265,14 @@ void CanvasView::paint(juce::Graphics& graphics)
             candidates.insert(id);
     for (auto id : candidates)
     {
+        if (fixedEndpoint(id))
+            continue;
         const auto point = position(id);
         if (NodeView::bounds(point).expanded(12.0f / zoom_).intersects(visible))
         {
             NodeView::paint(graphics, workspace_.graph().nodes.at(id), point,
                             selected_.contains(id), focusedNode_ == id && hasKeyboardFocus(true), zoom_);
-            if (paintObservation && zoom_ >= 0.75f)
+            if (paintObservation && zoom_ >= 0.65f)
                 paintObservation(graphics, id, NodeView::bounds(point).reduced(58, 0).withTrimmedTop(36).withHeight(36));
         }
     }
@@ -171,19 +293,119 @@ void CanvasView::paint(juce::Graphics& graphics)
     }
     if (workspace_.graph().nodes.empty())
     {
-        graphics.setFont(Typography::ui(Typography::canvasHeight(12, zoom_, 12)));
+        graphics.setFont(Typography::ui(Typography::canvasHeight(15, zoom_, 14)));
         graphics.setColour(ShellTheme::textSecondary());
-        graphics.drawFittedText("Place module instances from Module Browser.\nRouting Draft (N) creates a structural utility, not an audio function.\n"
-                                "No DSP or audio processing.",
+        graphics.drawFittedText("Add a source from the left rail and Main Output from Module Browser.\n"
+                                "The centre patch area is for user processors.\n"
+                                "Routing Draft (N) remains structural only; it performs no DSP.",
                                 visible.toNearestInt().reduced(8), juce::Justification::centred, 4);
     }
+    }
+    paintEndpointRails(graphics);
+}
+
+void CanvasView::paintEndpointRails(juce::Graphics& graphics)
+{
+    const auto sources = sourceEndpointIds();
+    const auto destinations = destinationEndpointIds();
+    const auto sourceRail = sourceRailBounds();
+    const auto destinationRail = destinationRailBounds();
+    const auto paintRail = [&](juce::Rectangle<int> rail, bool source)
+    {
+        juce::Graphics::ScopedSaveState saved(graphics);
+        graphics.reduceClipRegion(rail);
+        graphics.setColour(ShellTheme::surface().darker(0.35f));
+        graphics.fillRect(rail);
+        graphics.setColour(ShellTheme::border());
+        graphics.drawVerticalLine(source ? rail.getRight() - 1 : rail.getX(), static_cast<float>(rail.getY()),
+                                  static_cast<float>(rail.getBottom()));
+        graphics.setColour(ShellTheme::textPrimary());
+        graphics.setFont(Typography::font(TextRole::panelTitle));
+        graphics.drawText(source ? "Sources" : "Destinations",
+                          rail.withTrimmedTop(8).withHeight(23).reduced(8, 0), juce::Justification::centredLeft);
+        graphics.setColour(ShellTheme::textSecondary());
+        graphics.setFont(Typography::font(TextRole::status));
+        graphics.drawFittedText("Device +\nchannel names:\nAudio Setup",
+                               rail.withTrimmedTop(32).withHeight(48).reduced(8, 0),
+                               juce::Justification::topLeft, 3);
+
+        const auto& endpoints = source ? sources : destinations;
+        if (endpoints.empty())
+        {
+            auto placeholder = rail.withTrimmedTop(86).reduced(6, 0).withHeight(76);
+            graphics.setColour(ShellTheme::raised());
+            graphics.fillRoundedRectangle(placeholder.toFloat(), 5);
+            graphics.setColour(ShellTheme::textPrimary());
+            graphics.setFont(Typography::ui(15, true));
+            graphics.drawText(source ? "Hardware Input" : "Main Output",
+                              placeholder.reduced(7, 5).withHeight(22), juce::Justification::centredLeft);
+            graphics.setColour(ShellTheme::textSecondary());
+            graphics.setFont(Typography::ui(14));
+            graphics.drawFittedText(source ? "Add Input; set exact channels in Audio Setup."
+                                          : "Add Output; select named channels in Audio Setup.",
+                                   placeholder.reduced(7, 27), juce::Justification::topLeft, 3);
+            return;
+        }
+        for (auto id : endpoints)
+        {
+            const auto card = endpointCardBounds(id);
+            if (!rail.intersects(card))
+                continue;
+            const auto& node = workspace_.graph().nodes.at(id);
+            const auto type = domain::audioType(node);
+            const bool hardware = type == "Input";
+            const auto title = hardware ? juce::String("Hardware Input")
+                : type == "Output" ? juce::String("Main Output") : juce::String::fromUTF8(node.name.c_str());
+            graphics.setColour(ShellTheme::raised());
+            graphics.fillRoundedRectangle(card.toFloat(), 5);
+            graphics.setColour(ShellTheme::border());
+            graphics.drawRoundedRectangle(card.toFloat(), 5, 1);
+            graphics.setColour(ShellTheme::textPrimary());
+            graphics.setFont(Typography::ui(15, true));
+            graphics.drawFittedText(title, card.reduced(7, 4).withHeight(34),
+                                    juce::Justification::centredLeft, 2);
+            graphics.setColour(ShellTheme::textSecondary());
+            graphics.setFont(Typography::ui(14));
+            graphics.drawText(hardware || type == "Output" ? "Audio Setup" : "Built-in source",
+                              card.reduced(7, 39).withHeight(20), juce::Justification::centredLeft);
+            if (const auto port = endpointPortPosition(id, source ? domain::Port::output : domain::Port::input))
+            {
+                graphics.setColour(ShellTheme::audio());
+                graphics.fillEllipse(port->x - 5, port->y - 5, 10, 10);
+                graphics.setColour(ShellTheme::background());
+                graphics.drawEllipse(port->x - 5, port->y - 5, 10, 10, 1);
+            }
+            if (selected_.contains(id))
+            {
+                graphics.setColour(ShellTheme::selected());
+                graphics.drawRoundedRectangle(card.toFloat(), 5, 2);
+            }
+            if (focusedNode_ == id && hasKeyboardFocus(true))
+            {
+                graphics.setColour(ShellTheme::focus());
+                graphics.drawRoundedRectangle(card.expanded(3).toFloat(), 7, 1.5f);
+            }
+        }
+        const auto required = static_cast<int>(endpoints.size()) * 70;
+        const auto available = std::max(0, rail.getHeight() - 68);
+        if (required > available)
+        {
+            graphics.setColour(ShellTheme::textSecondary());
+            graphics.setFont(Typography::font(TextRole::status));
+            graphics.drawText("Scroll for more",
+                rail.withTrimmedTop(rail.getHeight() - 23).reduced(8, 0).withHeight(18),
+                juce::Justification::centredLeft);
+        }
+    };
+    paintRail(sourceRail, true);
+    paintRail(destinationRail, false);
 }
 
 bool CanvasView::observationVisible(domain::GraphId id) const
 {
     if (const auto* peer = getPeer(); peer && peer->isMinimised()) return false;
     const auto found = workspace_.graph().nodes.find(id);
-    return isShowing() && zoom_ >= 0.75f && found != workspace_.graph().nodes.end()
+    return isShowing() && zoom_ >= 0.65f && found != workspace_.graph().nodes.end()
         && NodeView::bounds(position(id)).intersects(visiblePatch());
 }
 
@@ -205,7 +427,10 @@ void CanvasView::updateDetails()
     }
     zoomLabel_.setText(juce::String(juce::roundToInt(zoom_ * 100)) + "%", juce::dontSendNotification);
     remove_.setEnabled(!selected_.empty() || selectedWire_ != 0);
-    setDescription(juce::String(workspace_.graph().nodes.size()) + " placed nodes (module instances or routing utilities), "
+    setDescription("Fixed Sources rail on the left; fixed Destinations rail on the right. "
+                    "Hardware device and exact named channels are selected in Audio Setup. "
+                    "Built-in generators appear as sources. Processors remain movable in the centre patch area. "
+                    + juce::String(workspace_.graph().nodes.size()) + " graph nodes, "
                     + juce::String(selected_.size()) + " selected. Focused node "
                     + juce::String(focusedNode_) + ". " + help_.getTooltip());
 }
@@ -215,6 +440,7 @@ void CanvasView::synchronise()
     cancelGesture();
     const auto& graph = workspace_.graph();
     std::erase_if(selected_, [&](auto id) { return !graph.nodes.contains(id); });
+    clampRailScroll();
     if (!graph.nodes.contains(focusedNode_))
         focusedNode_ = selected_.empty() ? 0 : *selected_.begin();
     if (!graph.connections.contains(selectedWire_))
@@ -250,7 +476,14 @@ void CanvasView::deleteSelection()
 {
     cancelGesture();
     if (!selected_.empty())
+    {
+        if (std::any_of(selected_.begin(), selected_.end(), [&](auto id) { return fixedEndpoint(id); }))
+        {
+            finish(application::Result::failure("Sources and destinations stay fixed on their rails and cannot be deleted."));
+            return;
+        }
         finish(workspace_.deleteNodes({selected_.begin(), selected_.end()}));
+    }
     else if (selectedWire_ != 0)
         finish(workspace_.disconnect(selectedWire_));
     else
@@ -263,8 +496,8 @@ void CanvasView::selectAll()
     selected_.clear();
     for (const auto& [id, node] : workspace_.graph().nodes)
     {
-        (void) node;
-        selected_.insert(id);
+        if (!domain::isFixedEndpoint(node))
+            selected_.insert(id);
     }
     selectedWire_ = 0;
     updateDetails();
@@ -305,7 +538,7 @@ void CanvasView::fitGraph()
 {
     cancelGesture();
     const auto content = scene_->contentBounds().expanded(40);
-    if (!workspace_.graph().nodes.empty() && !viewport().isEmpty())
+    if (!content.isEmpty() && !viewport().isEmpty())
     {
         zoom_ = juce::jlimit(0.025f, 3.0f,
             juce::jmin(viewport().getWidth() / content.getWidth(), viewport().getHeight() / content.getHeight()));
@@ -318,26 +551,45 @@ void CanvasView::fitGraph()
 
 domain::GraphId CanvasView::nodeAt(juce::Point<float> screen) const
 {
+    for (auto id : sourceEndpointIds())
+        if (endpointCardBounds(id).toFloat().contains(screen))
+            return id;
+    for (auto id : destinationEndpointIds())
+        if (endpointCardBounds(id).toFloat().contains(screen))
+            return id;
+    if (!viewport().toFloat().contains(screen))
+        return 0;
     const auto point = toPatch(screen);
     const auto candidates = scene_->nodes({point.x - 1, point.y - 1, 2, 2});
     for (auto it = candidates.rbegin(); it != candidates.rend(); ++it)
-        if (NodeView::bounds(position(*it)).contains(point))
+        if (!fixedEndpoint(*it) && NodeView::bounds(position(*it)).contains(point))
             return *it;
     return 0;
 }
 
 std::optional<domain::Endpoint> CanvasView::portAt(juce::Point<float> screen) const
 {
+    for (const auto& [ids, direction] : {std::pair{sourceEndpointIds(), domain::Port::output},
+                                        std::pair{destinationEndpointIds(), domain::Port::input}})
+        for (auto id : ids)
+            if (const auto point = endpointPortPosition(id, direction); point && point->getDistanceFrom(screen) <= 9.0f)
+                return domain::Endpoint{id, direction};
+    if (!viewport().toFloat().contains(screen))
+        return std::nullopt;
     const auto point = toPatch(screen);
     const float tolerance = 9.0f / zoom_;
     const auto candidates = scene_->nodes({point.x - tolerance, point.y - tolerance,
                                            tolerance * 2, tolerance * 2});
     for (auto it = candidates.rbegin(); it != candidates.rend(); ++it)
+    {
+        if (fixedEndpoint(*it))
+            continue;
         for (const auto direction : {domain::Port::input, domain::Port::output})
             if ((direction == domain::Port::input ? domain::hasInputPort(workspace_.graph().nodes.at(*it))
                                                   : domain::hasOutputPort(workspace_.graph().nodes.at(*it)))
                 && NodeView::port(position(*it), direction).getDistanceFrom(point) <= tolerance)
                 return domain::Endpoint{*it, direction};
+    }
     return std::nullopt;
 }
 
@@ -345,10 +597,19 @@ domain::GraphId CanvasView::connectionAt(juce::Point<float> screen) const
 {
     const auto point = toPatch(screen);
     const auto tolerance = 7.0f / zoom_;
-    for (auto id : scene_->connections({point.x - tolerance, point.y - tolerance,
-                                        tolerance * 2, tolerance * 2}))
-        if (scene_->wires().at(id).hit(point, tolerance))
+    const auto candidates = scene_->connections({point.x - tolerance, point.y - tolerance,
+                                                  tolerance * 2, tolerance * 2});
+    for (const auto& [id, wire] : workspace_.graph().connections)
+    {
+        if (fixedEndpoint(wire.source.node) || fixedEndpoint(wire.destination.node))
+        {
+            if (wireView(wire).hit(point, tolerance))
+                return id;
+        }
+        else if (candidates.contains(id)
+                 && scene_->wires().at(id).hit(point, tolerance))
             return id;
+    }
     return 0;
 }
 
@@ -357,7 +618,7 @@ void CanvasView::selectRectangle(juce::Rectangle<float> rectangle, bool add, boo
     if (!add && !toggle)
         selected_.clear();
     for (auto id : scene_->nodes(rectangle))
-        if (NodeView::bounds(position(id)).intersects(rectangle))
+        if (!fixedEndpoint(id) && NodeView::bounds(position(id)).intersects(rectangle))
         {
             if (toggle && selected_.contains(id))
                 selected_.erase(id);
@@ -371,7 +632,7 @@ void CanvasView::selectRectangle(juce::Rectangle<float> rectangle, bool add, boo
 
 void CanvasView::mouseDown(const juce::MouseEvent& event)
 {
-    if (!viewport().contains(event.position.toInt()))
+    if (!contentBounds().contains(event.position.toInt()))
         return;
     grabKeyboardFocus();
     cancelGesture();
@@ -381,7 +642,7 @@ void CanvasView::mouseDown(const juce::MouseEvent& event)
         contextMenu(event.position);
         return;
     }
-    if (event.mods.isMiddleButtonDown() || spaceHeld_)
+    if (viewport().contains(event.position.toInt()) && (event.mods.isMiddleButtonDown() || spaceHeld_))
     {
         gesture_ = Gesture::pan;
         originalOffset_ = offset_;
@@ -394,6 +655,8 @@ void CanvasView::mouseDown(const juce::MouseEvent& event)
         return;
     }
     const auto node = nodeAt(event.position);
+    if (node == 0 && !viewport().contains(event.position.toInt()))
+        return;
     const bool toggle = event.mods.isCommandDown();
     if (node != 0)
     {
@@ -407,7 +670,8 @@ void CanvasView::mouseDown(const juce::MouseEvent& event)
             selected_.insert(node);
         }
         focusedNode_ = node;
-        if (selected_.contains(node))
+        if (selected_.contains(node)
+            && std::none_of(selected_.begin(), selected_.end(), [&](auto id) { return fixedEndpoint(id); }))
         {
             gesture_ = Gesture::move;
             for (auto id : selected_)
@@ -542,6 +806,17 @@ void CanvasView::cancelGesture()
 
 void CanvasView::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
+    if (sourceRailBounds().contains(event.position.toInt()) || destinationRailBounds().contains(event.position.toInt()))
+    {
+        const auto delta = -juce::roundToInt(wheel.deltaY * 140.0f);
+        if (sourceRailBounds().contains(event.position.toInt()))
+            sourceScroll_ += delta;
+        else
+            destinationScroll_ += delta;
+        clampRailScroll();
+        repaint(contentBounds());
+        return;
+    }
     if (!viewport().contains(event.position.toInt()))
         return;
     if (event.mods.isShiftDown())
@@ -601,6 +876,12 @@ bool CanvasView::keyPressed(const juce::KeyPress& key)
     }
     if (code == 'M' && !selected_.empty() && !modifiers.isAnyModifierKeyDown())
     {
+        if (std::any_of(selected_.begin(), selected_.end(), [&](auto id) { return fixedEndpoint(id); }))
+        {
+            if (onEdit)
+                onEdit(application::Result::failure("Sources and destinations stay fixed on their rails; only processors can move."));
+            return true;
+        }
         cancelGesture();
         gesture_ = Gesture::keyboardMove;
         for (auto id : selected_)
@@ -684,11 +965,12 @@ bool CanvasView::keyPressed(const juce::KeyPress& key)
             selected_.insert(focusedNode_);
             selectedWire_ = 0;
         }
-        const auto point = toScreen(NodeView::bounds(next->second.position).getCentre());
-        if (!viewport().contains(point.toInt()))
+        const auto point = fixedEndpoint(next->first) ? endpointCardBounds(next->first).getCentre().toFloat()
+                                                       : toScreen(NodeView::bounds(next->second.position).getCentre());
+        if (!fixedEndpoint(next->first) && !viewport().contains(point.toInt()))
             panBy(viewport().getCentre().toFloat() - point);
         updateDetails();
-        repaint(viewport());
+        repaint(contentBounds());
         return true;
     }
     return false;
@@ -718,7 +1000,8 @@ void CanvasView::contextMenu(juce::Point<float> screen)
     const auto endpoint = portAt(screen);
     const auto wire = connectionAt(screen);
     juce::PopupMenu menu;
-    menu.addItem(1, "Create routing draft here (structural only, no DSP)");
+    if (viewport().contains(screen.toInt()))
+        menu.addItem(1, "Create routing draft here (structural only, no DSP)");
     std::vector<domain::GraphId> wires;
     if (endpoint)
     {
@@ -737,7 +1020,7 @@ void CanvasView::contextMenu(juce::Point<float> screen)
         wires.push_back(wire);
         menu.addItem(101, "Disconnect selected wire");
     }
-    if (node != 0 && !endpoint)
+    if (node != 0 && !endpoint && !fixedEndpoint(node))
     {
         if (!selected_.contains(node))
             selected_ = {node};
@@ -747,7 +1030,8 @@ void CanvasView::contextMenu(juce::Point<float> screen)
     }
     menu.addSeparator();
     menu.addItem(3, "Select all nodes");
-    menu.addItem(4, "Fit graph");
+    if (viewport().contains(screen.toInt()))
+        menu.addItem(4, "Fit graph");
     updateDetails();
     repaint(viewport());
     const juce::Component::SafePointer<CanvasView> safe(this);

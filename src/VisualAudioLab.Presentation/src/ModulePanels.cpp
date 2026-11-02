@@ -162,7 +162,7 @@ public:
         list_.setRowHeight(30);
         list_.addMouseListener(this, true);
         insert_.onClick = [this] { insert(); };
-        help_.setText("Modules are reusable audio functions; placed nodes are instances.\nInput / Output are routing utilities.", juce::dontSendNotification);
+        help_.setText("Modules: reusable functions.\nInput/Output: routing.", juce::dontSendNotification);
         help_.setFont(Typography::ui(11));
         for (auto* child : std::initializer_list<juce::Component*>{&search_, &category_, &list_, &insert_, &status_, &help_})
             addAndMakeVisible(child);

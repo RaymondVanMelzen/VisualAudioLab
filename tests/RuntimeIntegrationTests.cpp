@@ -137,7 +137,9 @@ private:
     {
         try
         {
-            if (++ticks_ > 1200) throw std::runtime_error("Integrated desktop workflow exceeded 18 seconds.");
+            if (++ticks_ > 1200)
+                throw std::runtime_error("Integrated desktop workflow exceeded 18 seconds at phase "
+                                         + std::to_string(index_) + ".");
             if (index_ < phases_.size() && phases_[index_]()) ++index_;
             if (index_ != phases_.size()) return;
         }

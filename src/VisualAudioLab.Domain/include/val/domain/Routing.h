@@ -19,5 +19,9 @@ namespace val::domain
         && type != "Click Generator" && type != "Burst Generator" && type != "Chirp Generator"
         && type != "Noise Generator" && type != "DC Generator";
 }
+[[nodiscard]] inline bool isFixedEndpoint(const Node& node) noexcept
+{
+    return !hasInputPort(node) || audioType(node) == "Output";
+}
 [[nodiscard]] inline bool hasOutputPort(const Node& node) noexcept { return audioType(node) != "Output"; }
 }

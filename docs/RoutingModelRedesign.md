@@ -1,10 +1,13 @@
 # Routing Model Redesign: Fixed Sources and Destinations
 
 **Status:** target architecture and UX design. The first executable shared-bus
-layer now supports explicit Sum, multiple roots, fan-out and legal inert nodes;
-see [implementation boundary and remaining dependency order](plans/07-TypographyAndRoutingImplementation.md).
-Fixed system-owned endpoints, independent typed buses/ports, layout adapters and
-multiple destinations below are not shipped by that layer.
+layer supports explicit Sum, multiple roots, fan-out and legal inert nodes. Its
+canvas follow-up adds fixed-looking Sources/Destinations rails that group the
+existing Input, generator and Main Output graph nodes and prevent their canvas
+move/delete. This is a presentation layer over the version-1 graph, **not**
+system-owned endpoint lifetime/readiness/bindings. Independent typed buses,
+layout adapters and multiple destinations below remain unshipped. See the
+[implementation boundary and dependency order](plans/07-TypographyAndRoutingImplementation.md).
 
 ## 1. Review of the current model
 

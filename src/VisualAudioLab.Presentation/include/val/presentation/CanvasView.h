@@ -51,6 +51,9 @@ public:
     [[nodiscard]] std::optional<domain::Endpoint> portAt(juce::Point<float> screenPoint) const;
     [[nodiscard]] domain::GraphId connectionAt(juce::Point<float> screenPoint) const;
     [[nodiscard]] juce::Rectangle<int> viewport() const;
+    [[nodiscard]] juce::Rectangle<int> sourceRailBounds() const;
+    [[nodiscard]] juce::Rectangle<int> destinationRailBounds() const;
+    [[nodiscard]] std::optional<juce::Point<float>> endpointPortPosition(domain::GraphId, domain::Port) const;
     /** Persist only the precision retained by the float-based canvas transform. */
     [[nodiscard]] application::PatchViewport navigation() const
     {
@@ -82,10 +85,18 @@ private:
     void updateMove(juce::Point<float> patchDelta);
     void updateMarquee(juce::Point<float> screenPoint, juce::ModifierKeys modifiers);
     void updateDetails();
+    void paintEndpointRails(juce::Graphics&);
+    void clampRailScroll();
     [[nodiscard]] domain::Position position(domain::GraphId node) const;
     [[nodiscard]] ConnectionView wireView(const domain::Connection& wire) const;
     [[nodiscard]] juce::Rectangle<float> visiblePatch() const;
     [[nodiscard]] juce::Rectangle<int> dirtyPreview() const;
+    [[nodiscard]] juce::Rectangle<int> contentBounds() const;
+    [[nodiscard]] juce::Rectangle<int> endpointCardBounds(domain::GraphId) const;
+    [[nodiscard]] std::vector<domain::GraphId> sourceEndpointIds() const;
+    [[nodiscard]] std::vector<domain::GraphId> destinationEndpointIds() const;
+    [[nodiscard]] bool fixedEndpoint(domain::GraphId) const;
+    [[nodiscard]] float railWidth() const noexcept;
 
     application::WorkspaceService& workspace_;
     std::unique_ptr<CanvasScene> scene_;
@@ -97,6 +108,7 @@ private:
     juce::Point<float> down_, pointer_, offset_{40, 40}, originalOffset_;
     juce::Rectangle<float> marquee_;
     float zoom_{1.0f};
+    int sourceScroll_{}, destinationScroll_{};
     bool spaceHeld_{};
     juce::TextButton add_{"Routing Draft"}, remove_{"Delete"}, fit_{"Fit"}, minus_{"-"}, plus_{"+"};
     juce::Label zoomLabel_, help_;

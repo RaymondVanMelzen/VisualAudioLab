@@ -1,4 +1,5 @@
 #include <val/presentation/CanvasScene.h>
+#include <val/domain/Routing.h>
 #include <cmath>
 
 namespace val::presentation
@@ -69,6 +70,8 @@ CanvasScene::CanvasScene(const domain::Graph& graph)
     bool first = true;
     for (const auto& [id, node] : graph.nodes)
     {
+        if (domain::isFixedEndpoint(node))
+            continue;
         const auto rectangle = NodeView::bounds(node.position);
         nodes_.add(id, rectangle.expanded(8.0f));
         bounds_ = first ? rectangle : bounds_.getUnion(rectangle);
@@ -78,7 +81,9 @@ CanvasScene::CanvasScene(const domain::Graph& graph)
     {
         ConnectionView view(NodeView::port(graph.nodes.at(wire.source.node).position, wire.source.port),
                              NodeView::port(graph.nodes.at(wire.destination.node).position, wire.destination.port));
-        connections_.add(id, view.path());
+        if (!domain::isFixedEndpoint(graph.nodes.at(wire.source.node))
+            && !domain::isFixedEndpoint(graph.nodes.at(wire.destination.node)))
+            connections_.add(id, view.path());
         wires_.emplace(id, std::move(view));
         incident_[wire.source.node].push_back(id);
         incident_[wire.destination.node].push_back(id);

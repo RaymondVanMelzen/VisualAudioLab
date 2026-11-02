@@ -18,7 +18,7 @@ public:
     [[nodiscard]] static juce::Font font(TextRole role);
     [[nodiscard]] static juce::Font ui(float height, bool semibold = false);
     [[nodiscard]] static juce::Font numeric(float height = 13.0f);
-    [[nodiscard]] static juce::Font code(float height = 13.0f, bool bold = false, bool italic = false);
+    [[nodiscard]] static juce::Font code(float height = 14.0f, bool bold = false, bool italic = false);
     [[nodiscard]] static bool bundledFontsAvailable();
     [[nodiscard]] static bool tabularFiguresAvailable();
     [[nodiscard]] static TextDetail detail(float zoom) noexcept;

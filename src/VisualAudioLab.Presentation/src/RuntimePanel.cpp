@@ -52,7 +52,15 @@ bool hasZeroInputSourceOnOutput(const audio::AudioGraph& graph)
         const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(),
             [current](const auto& candidate) { return candidate.id == current; });
         if (node == graph.nodes.end()) return false;
-        if (node->type == audio::AudioNodeType::script && node->script && node->script->inputs().empty())
+        const auto generated = node->type == audio::AudioNodeType::signalGenerator
+            || node->type == audio::AudioNodeType::impulseGenerator
+            || node->type == audio::AudioNodeType::clickGenerator
+            || node->type == audio::AudioNodeType::burstGenerator
+            || node->type == audio::AudioNodeType::chirpGenerator
+            || node->type == audio::AudioNodeType::noiseGenerator
+            || node->type == audio::AudioNodeType::dcGenerator
+            || (node->type == audio::AudioNodeType::script && node->script && node->script->inputs().empty());
+        if (generated)
             return true;
         const auto incoming = std::find_if(graph.connections.begin(), graph.connections.end(),
             [current](const auto& connection) { return connection.destination == current; });
@@ -462,7 +470,7 @@ void RuntimePanel::configureOffline(int channels, double rate, int frames)
     for (int i = 1; i <= 32; ++i) outputCount_.addItem(previewChoice(i), i);
     outputCount_.setSelectedId(channels, juce::dontSendNotification);
     updateChannelTooltips();
-    message("Offline preview selected. Start processes silent input / script generators to visualizers only; no device opens.");
+    message("Offline preview selected. Start is explicit; no device opens.");
     enableControls();
 }
 void RuntimePanel::restoreSetup(std::optional<AudioSetupPreference> preference)
@@ -630,7 +638,7 @@ Result RuntimePanel::start()
     width_ = config.outputChannels; rate_ = config.sampleRate; block_ = config.bufferFrames;
     auto compiled = compileGraph(false);
     if (!compiled.value) return Result::failure(compiled.error.message);
-    if (compiled.value->nodes.empty()) return Result::failure("Patch is empty. Insert and connect modules (for example Script -> Output).");
+    if (compiled.value->nodes.empty()) return Result::failure("Patch is empty. Insert and connect a source or processor to Output.");
     const bool outputOnlyWithoutGenerator = config.inputChannels == 0 && !hasZeroInputSourceOnOutput(*compiled.value);
     const AudioStreamFormat format{rate_, block_, config.maxFrames, config.inputChannels, width_};
     const auto validated = audio::PreparedAudioGraph::prepare(*compiled.value, format, 1);
@@ -651,7 +659,7 @@ Result RuntimePanel::start()
     for (int i = 0; i < width_; ++i) offlinePointers_[i] = offlineOutput_.data() + i * block_;
     for (const auto& [id, capture] : captures_) { juce::ignoreUnused(capture); visualizations_.setState(id, ObservationState::processing); }
     message(outputOnlyWithoutGenerator
-        ? "Audio running with input disabled, but no zero-input Script generator feeds Output; this patch may render silence. Connect a generator or enable input. No oscillator module is shipped."
+        ? "Audio is running with input disabled, but no zero-input source feeds Output; this patch may render silence. Connect a generator or enable input."
         : offline_ ? "Offline preview running (no hardware, not realtime scheduling)." : "Audio running. Stop before changing device configuration.");
     if (onStarted) onStarted();
     enableControls(); return Result::success();

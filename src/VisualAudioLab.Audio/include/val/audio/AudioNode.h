@@ -3,9 +3,11 @@
 #include <val/application/AudioStream.h>
 #include <val/application/Result.h>
 #include <val/audio/SignalCaptureBuffer.h>
+#include <val/script/Program.h>
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -35,6 +37,17 @@ struct ParameterSpec
 /** Ordered parameter-layer transitions; automation targets are steps followed by declared smoothing. */
 enum class ParameterAction { base, automation, overrideValue, releaseOverride, disableAutomation };
 
+/** Explicit scalar source mapped onto one named destination parameter in physical units. */
+enum class ParameterControlSource { lfo, envelope, script };
+struct ParameterControlBinding
+{
+    std::uint16_t parameter{};
+    ParameterControlSource source{ParameterControlSource::lfo};
+    float offset{}, depth{1}, rateHz{1}, attackSeconds{0.01f}, holdSeconds{}, releaseSeconds{0.5f};
+    float sourceMinimum{-1}, sourceMaximum{1};
+    std::shared_ptr<const script::Program> program;
+};
+
 /** Deterministic linear sample smoother; inputs must be finite/validated, durations 0-1 s and rates 8-384 kHz. */
 class ParameterSmoother final
 {
@@ -58,6 +71,7 @@ class AudioNode
 {
 public:
     static constexpr std::uint16_t bypassParameter = 255;
+    static constexpr std::size_t maximumParameters = 24;
     virtual ~AudioNode() = default;
     [[nodiscard]] virtual application::Result prepare(ProcessingSpec spec);
     virtual void reset() noexcept;
@@ -69,10 +83,14 @@ public:
     [[nodiscard]] bool parameterEvent(std::uint16_t parameter, float value, ParameterAction action) noexcept;
     /** Set persisted base values before prepare, never concurrently with rendering. */
     [[nodiscard]] bool initialParameter(std::uint16_t parameter, float value) noexcept;
+    /** Set one prepared scalar control mapping before prepare; script scratch is allocated off callback. */
+    [[nodiscard]] bool initialControl(ParameterControlBinding binding);
     void initialBypass(bool bypassed) noexcept { initialBypass_ = bypassed; }
     [[nodiscard]] virtual int latencyFrames() const noexcept { return 0; }
     [[nodiscard]] virtual std::size_t requiredStorageBytes(ProcessingSpec spec) const noexcept;
     [[nodiscard]] std::uint64_t numericalFaults() const noexcept { return faults_.load(std::memory_order_relaxed); }
+    /** Atomic progress within this prepared node instance; sampled off-callback by visualization. */
+    [[nodiscard]] std::uint64_t processedFrames() const noexcept { return processedFrames_.load(std::memory_order_relaxed); }
 protected:
     explicit AudioNode(std::span<const ParameterSpec> parameters = {});
     /** Derived constructor only, before prepare: bind immutable metadata owned for the node lifetime. */
@@ -91,6 +109,15 @@ protected:
     [[nodiscard]] double cleanState(double value) noexcept;
     ProcessingSpec spec_;
 private:
+    struct ControlRuntime
+    {
+        ParameterControlBinding binding;
+        std::unique_ptr<script::Value[]> scratch;
+        double phase{};
+        std::uint64_t frame{};
+    };
+    [[nodiscard]] bool controlRangeFits(std::uint16_t parameter, float base) const noexcept;
+    [[nodiscard]] float controlSample(ControlRuntime& control) noexcept;
     /** Render-owned layers preserve saved base values while automation and live override are active. */
     struct ParameterState
     {
@@ -101,14 +128,18 @@ private:
         { return overrideActive ? overridden : automation ? automated : base; }
     };
     std::span<const ParameterSpec> definitions_;
-    std::array<ParameterState, 8> states_{};
+    std::array<ParameterState, maximumParameters> states_{};
     ParameterState bypass_;
-    std::array<float, 8> initial_{}, values_{};
+    std::array<float, maximumParameters> initial_{}, values_{};
+    std::vector<ParameterControlBinding> initialControls_;
+    std::vector<ControlRuntime> controls_;
     ParameterSmoother wet_;
     bool initialBypass_{}, prepared_{};
     std::vector<float> dryDelay_;
     std::size_t dryPosition_{};
     std::atomic<std::uint64_t> faults_{};
+    std::atomic<std::uint64_t> processedFrames_{};
+    std::atomic<bool> controlFailed_{};
 };
 
 /** Audio-to-audio processor; bypass crossfades against latency-aligned dry samples. */

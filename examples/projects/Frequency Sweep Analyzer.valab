@@ -1,0 +1,59 @@
+{
+  "version": { "major": 1, "minor": 0 },
+  "minimumReader": { "major": 1, "minor": 0 },
+  "requiredFeatures": [],
+  "format": "VisualAudioLab",
+  "name": "Frequency Sweep Analyzer",
+  "activePatch": "1",
+  "patches": [
+    {
+      "id": "1",
+      "name": "20 Hz to 20 kHz",
+      "viewport": { "zoom": 1.0, "x": 40.0, "y": 40.0 },
+      "graph": {
+        "nodes": [
+          {
+            "id": "1", "name": "Log sweep (one-shot)",
+            "position": { "x": 80.0, "y": 160.0 },
+            "parameters": {
+              "audio.type": "Signal Generator",
+              "audio.param.mode": 1.0,
+              "audio.param.startFrequencyHz": 20.0,
+              "audio.param.endFrequencyHz": 20000.0,
+              "audio.param.durationSeconds": 10.0,
+              "audio.param.sweepCurve": 1.0,
+              "audio.param.transport": 1.0,
+              "audio.param.levelDb": -50.0
+            }
+          },
+          {
+            "id": "2", "name": "Spectrum Analyzer",
+            "position": { "x": 360.0, "y": 160.0 },
+            "parameters": { "audio.type": "Analyzer", "visualization.kind": "Spectrum Analyzer" }
+          },
+          {
+            "id": "3", "name": "Output",
+            "position": { "x": 640.0, "y": 160.0 },
+            "parameters": { "audio.type": "Output" }
+          }
+        ],
+        "connections": [
+          { "id": "4", "source": { "node": "1", "port": "out" }, "destination": { "node": "2", "port": "in" } },
+          { "id": "5", "source": { "node": "2", "port": "out" }, "destination": { "node": "3", "port": "in" } }
+        ]
+      }
+    }
+  ],
+  "layout": {
+    "window": { "x": 80, "y": 80, "width": 1200, "height": 780 },
+    "panels": [
+      { "id": "canvas", "dock": 1, "visible": true },
+      { "id": "modules", "dock": 0, "visible": true },
+      { "id": "explorer", "dock": 0, "visible": true },
+      { "id": "properties", "dock": 2, "visible": true },
+      { "id": "audio", "dock": 3, "visible": false }
+    ],
+    "ratios": [0.22, 0.24, 0.26],
+    "selectedPanels": [1, 0, 3, -1]
+  }
+}

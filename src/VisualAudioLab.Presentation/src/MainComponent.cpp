@@ -43,18 +43,30 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     {
         editor_->setNode(node);
         dockWorkspace_.signalPreview().followSelection(node);
+        updateGeneratorDisplay();
         const auto found = workspace_.graph().nodes.find(node);
         if (found != workspace_.graph().nodes.end())
+        {
+            const auto typeField = found->second.parameters.find("audio.type");
+            const auto* type = typeField == found->second.parameters.end()
+                ? nullptr : std::get_if<std::string>(&typeField->second);
+            if (type && type->find("Generator") != std::string::npos)
+            {
+                dockWorkspace_.signalPreview().showKind(VisualizationKind::oscilloscope);
+                inspectorTabs_.setCurrentTabIndex(1);
+            }
             if (const auto kind = found->second.parameters.find("visualization.kind"); kind != found->second.parameters.end())
                 if (const auto* name = std::get_if<std::string>(&kind->second))
                 {
                     const auto display = *name == "Spectrum Analyzer" ? VisualizationKind::spectrum
                         : *name == "Peak Meter" ? VisualizationKind::peak
                         : *name == "RMS Meter" ? VisualizationKind::rms
+                        : *name == "Correlation Meter" ? VisualizationKind::correlation
                         : *name == "Guitar Tuner" ? VisualizationKind::guitarTuner : VisualizationKind::oscilloscope;
                     dockWorkspace_.signalPreview().showKind(display);
                     inspectorTabs_.setCurrentTabIndex(1);
                 }
+        }
     };
     dockWorkspace_.canvas().onModuleDropped = [this](std::string type, juce::Point<float> position)
     {
@@ -169,7 +181,7 @@ void MainComponent::insertModule(std::string type, std::optional<juce::Point<flo
     std::map<std::string, domain::Parameter> values;
     std::string name = type;
     if (type == "Oscilloscope" || type == "Spectrum Analyzer" || type == "Peak Meter"
-        || type == "RMS Meter" || type == "Guitar Tuner")
+        || type == "RMS Meter" || type == "Correlation Meter" || type == "Guitar Tuner")
     {
         values["visualization.kind"] = type;
         type = "Analyzer";
@@ -241,6 +253,99 @@ void MainComponent::refresh()
     commands_.commandStatusChanged();
     if (runtime_) runtime_->synchronize();
     if (editor_) editor_->refresh();
+    updateGeneratorDisplay();
+}
+
+void MainComponent::updateGeneratorDisplay()
+{
+    GeneratorDisplayInfo info;
+    const auto id = dockWorkspace_.signalPreview().target();
+    const auto found = workspace_.graph().nodes.find(id);
+    if (found == workspace_.graph().nodes.end())
+    {
+        dockWorkspace_.signalPreview().setGeneratorContext(std::move(info));
+        return;
+    }
+    const auto& parameters = found->second.parameters;
+    const auto typeField = parameters.find("audio.type");
+    const auto* type = typeField == parameters.end() ? nullptr
+        : std::get_if<std::string>(&typeField->second);
+    if (!type || type->find("Generator") == std::string::npos)
+    {
+        dockWorkspace_.signalPreview().setGeneratorContext(std::move(info));
+        return;
+    }
+    const auto number = [&](std::string_view name, double fallback)
+    {
+        const auto key = std::string("audio.param.") + std::string(name);
+        const auto value = parameters.find(key);
+        if (value == parameters.end()) return fallback;
+        if (const auto* scalar = std::get_if<double>(&value->second)) return *scalar;
+        return fallback;
+    };
+    const auto choice = [](const char* const* names, std::size_t count, double value)
+    {
+        const auto index = static_cast<int>(value);
+        return index >= 0 && static_cast<std::size_t>(index) < count
+            ? juce::String(names[index]) : juce::String("Unknown");
+    };
+    static constexpr const char* waveforms[]{"Sine", "Square (aliased)", "Triangle (aliased)",
+        "Sawtooth (aliased)", "White noise", "Pink noise", "DC"};
+    static constexpr const char* curves[]{"linear", "logarithmic", "curved exponential"};
+    static constexpr const char* transports[]{"free run", "one-shot", "loop"};
+
+    if (*type == "Signal Generator")
+    {
+        const auto waveform = choice(waveforms, std::size(waveforms), number("waveform", 0));
+        const auto mode = static_cast<int>(number("mode", 0));
+        const auto level = number("levelDb", -60);
+        if (mode == 0)
+            info.summary = "Signal Generator · " + waveform + " · "
+                + juce::String(number("frequencyHz", 440), 2) + " Hz · "
+                + juce::String(level, 1) + " dBFS peak";
+        else
+        {
+            const auto musical = mode == 2;
+            const auto curve = choice(curves, std::size(curves), number("sweepCurve", 1));
+            info.summary = "Signal Generator · " + (musical ? juce::String("Musical sweep")
+                                                                : juce::String(curve + " sweep"))
+                + " · " + juce::String(number("startFrequencyHz", 20), 1) + " → "
+                + juce::String(number("endFrequencyHz", 20000), 1) + " Hz · "
+                + juce::String(number("durationSeconds", 5), 2) + " s · "
+                + choice(transports, std::size(transports), number("transport", 0))
+                + " · " + juce::String(level, 1) + " dBFS peak";
+            info.durationSeconds = number("durationSeconds", 5);
+            info.transport = static_cast<int>(number("transport", 0));
+        }
+    }
+    else if (*type == "Chirp Generator")
+    {
+        info.summary = "Chirp Generator · " + choice(curves, std::size(curves), number("sweepCurve", 1))
+            + " · " + juce::String(number("startFrequencyHz", 20), 1) + " → "
+            + juce::String(number("endFrequencyHz", 20000), 1) + " Hz · "
+            + juce::String(number("durationSeconds", 5), 2) + " s · "
+            + choice(transports, std::size(transports), number("transport", 1))
+            + " · " + juce::String(number("levelDb", -60), 1) + " dBFS peak";
+        info.durationSeconds = number("durationSeconds", 5);
+        info.transport = static_cast<int>(number("transport", 1));
+    }
+    else if (*type == "Noise Generator")
+        info.summary = "Noise Generator · " + juce::String(number("color", 0) == 1 ? "Pink" : "White")
+            + " · " + juce::String(number("levelDbRms", -60), 1) + " dBFS RMS";
+    else if (*type == "Burst Generator")
+        info.summary = "Burst Generator · " + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
+            + juce::String(number("durationSeconds", 0.1) * 1000, 0) + " ms · "
+            + juce::String(number("levelDb", -60), 1) + " dBFS peak";
+    else if (*type == "Click Generator")
+        info.summary = "Click Generator · " + juce::String(number("bpm", 120), 1) + " BPM · "
+            + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
+            + juce::String(number("levelDb", -60), 1) + " dBFS peak";
+    else if (*type == "Impulse Generator")
+        info.summary = "Impulse Generator · one-sample peak · "
+            + juce::String(number("levelDb", -60), 1) + " dBFS";
+    else if (*type == "DC Generator")
+        info.summary = "DC Generator · exact " + juce::String(number("value", 0), 4) + " / ±1.0";
+    dockWorkspace_.signalPreview().setGeneratorContext(std::move(info));
 }
 
 void MainComponent::report(const application::Result& result)

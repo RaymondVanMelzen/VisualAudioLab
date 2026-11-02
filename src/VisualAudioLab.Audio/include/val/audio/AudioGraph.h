@@ -11,7 +11,11 @@
 namespace val::audio
 {
 /** Built-in prepared processors; no plugin hosting or implicit processor-name inference. */
-enum class AudioNodeType { input, gain, output, eq, delay, compressor, distortion, chorus, reverb, analyzer, script };
+enum class AudioNodeType
+{
+    input, gain, output, eq, delay, compressor, distortion, chorus, reverb, analyzer, script,
+    signalGenerator, impulseGenerator, clickGenerator, burstGenerator, chirpGenerator, noiseGenerator, dcGenerator
+};
 /** Control-owned node definition with stable identity, initial physical-domain parameters and bypass. */
 struct AudioNodeDefinition
 {
@@ -20,6 +24,10 @@ struct AudioNodeDefinition
     float gain{1};
     std::vector<std::pair<std::uint16_t, float>> parameters;
     bool bypassed{};
+    /** Optional validated semitone offsets for the Signal Generator's User Scale. */
+    std::vector<int> userScale;
+    /** Persisted scalar sources mapped to continuous parameters; never audio connections. */
+    std::vector<ParameterControlBinding> controls;
     /** Optional already-admitted observation transport; control retains ownership until callback retirement. */
     std::shared_ptr<SignalCaptureBuffer> capture;
     /** Immutable compiler-produced artifact; no parsing/compilation is allowed during processing. */

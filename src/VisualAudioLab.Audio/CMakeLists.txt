@@ -4,6 +4,7 @@ add_library(VisualAudioLab.Audio STATIC
     src/ScriptNode.cpp
     src/AudioNode.cpp
     src/DspNodes.cpp
+    src/GeneratorNodes.cpp
     src/AudioGraph.cpp
     src/AudioEngine.cpp
     src/AudioProcessorNode.cpp)

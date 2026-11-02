@@ -24,7 +24,7 @@ struct AnalyzerProfile
 struct SignalAnalysis
 {
     CaptureStamp stamp;
-    bool spectrumValid{}, rmsValid{}, peakValid{}, pitchReady{}, pitchValid{}, pitchSilence{}, gap{}, nonFinite{}, triggered{};
+    bool spectrumValid{}, rmsValid{}, peakValid{}, correlationValid{}, pitchReady{}, pitchValid{}, pitchSilence{}, gap{}, nonFinite{}, triggered{};
     std::uint64_t segment{}, resultVersion{}, captureDrops{}, invalidSamples{};
     std::array<float, 2> peak{}, heldPeak{}, displayedPeak{}, rms{}, mean{}, minimum{}, maximum{};
     std::array<std::uint64_t, 2> overRange{};
@@ -32,7 +32,7 @@ struct SignalAnalysis
     int scopeFrames{};
     std::array<std::array<float, 4097>, 2> amplitudeDb{}, densityDb{};
     std::array<double, 2> dominantHz{};
-    double pitchHz{};
+    double pitchHz{}, correlation{};
     float pitchConfidence{}, pitchRms{};
     int pitchChannel{};
     double binHz{}, coherentGain{}, enbwBins{}, enbwHz{};

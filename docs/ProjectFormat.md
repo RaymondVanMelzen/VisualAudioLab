@@ -1,6 +1,6 @@
 # Visual Audio Lab project files
 
-The structural editor reads and writes **`.valab`** projects as indented UTF-8 JSON. This is the implemented persistence contract, not an audio/DSP, plugin or scripting format. A project contains one or more named patches, stable nodes/connections, scalar parameter data, per-patch viewport navigation and the shell window/dock layout. The application still has no processing engine or parameter inspector/editor UI.
+The desktop application reads and writes **`.valab`** projects as indented UTF-8 JSON. A project contains one or more named patches, stable nodes/connections, scalar parameters, per-patch viewport navigation and shell layout. Explicit `audio.type` metadata identifies built-in DSP modules; generator and effect base values are validated when mapped into a prepared graph. See [DSP modules](DspModules.md) and the [Signal Generator Toolkit](modules/SignalGeneratorToolkit.md). Opening a project never starts audio. Plugin state, persisted automation curves and arbitrary typed collections are not part of schema 1.0.
 
 ## File workflows
 
@@ -73,7 +73,7 @@ Example (a two-node patch):
 
 All shown fields are required. Additional patches use the same structure. Node and connection IDs are globally unique across patches; patch IDs use a separate namespace. IDs are canonical positive decimal **strings**, below `UINT64_MAX`, to avoid JSON number precision limits. Endpoints resolve within their containing patch. Node and patch names and the project name are non-blank, at most 128 UTF-8 bytes, without control characters.
 
-Parameters are a JSON object with nonempty keys up to 128 UTF-8 bytes and values of `null`, boolean, finite binary64 number or string. They are structural data only. Collections, processor definitions and parameter automation are not supported value types and are rejected rather than being silently reinterpreted. The service exposes reversible scalar edits; no DSP interpretation is attached.
+Parameters are a JSON object with nonempty keys up to 128 UTF-8 bytes and values of `null`, boolean, finite binary64 number or string. Structural and application-level metadata remain scalar; the DSP mapper interprets only explicit, supported keys. Examples include `audio.type`, numeric `audio.param.<name>` base values, boolean `audio.bypass`, the Signal Generator's `audio.scaleIntervals` comma-separated semitone string, and typed scalar mappings such as `audio.control.frequencyHz.source`, `.offset`, `.depth` and `.rateHz`. Mapping fields identify a single continuous destination parameter and an explicit source; they do not represent audio connections. Unknown or invalid DSP types/ranges/bindings are rejected when mapping a runtime graph rather than guessed. Runtime automation/overrides are transient and are not serialized as curves. Collections, processor state blobs and arbitrary parameter automation are not schema 1.0 value types.
 
 Node origins are bounded to +/-1,000,000 patch units. Zoom is 0.025-3.0 and viewport offsets are bounded to +/-3,000,000 pixels. Connections must be output-to-input, with valid node references, no self-links/cycles/duplicate wires and at most one incoming wire per input. Outputs allow fan-out. These are the same rules as editor-created graphs.
 

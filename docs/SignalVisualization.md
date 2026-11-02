@@ -35,7 +35,10 @@ graph preparation. The graph validates source ID, sample rate, channel span and 
 Capture does not make a pruned/disconnected branch execute. After *all* in-block automation
 spans have rendered, AudioEngine copies each tapped node's complete output once, carrying:
 node ID, graph revision, stream epoch, absolute first sample frame, sample rate, channel
-selection, frame count, sequence and producer drop count.
+selection, frame count, sequence, producer drop count, and the node-relative first frame
+within that prepared processor instance. The latter is a lock-free atomic progress snapshot,
+used for generator sweep progress without confusing session time with time since the source
+was prepared or reset.
 
 Preparation/registration, shared-pointer changes, destruction and registry mutexes are all
 **off the audio callback**. Prepared steps retain transports across graph swaps; callback
@@ -109,18 +112,23 @@ No timer is created per plot or per node.
 
 ## UI
 
-The Property Inspector hosts five shared-result tabs. A single selected node targets that
+The Property Inspector hosts six shared-result tabs (scope, spectrum, peak, RMS, correlation and tuner). A single selected node targets that
 node's runtime output; selecting a wire resolves its upstream source. Multiple/absent selection
 has no implicit mixed target. The source selector lists admitted runtime endpoints. Structural
 nodes without a scheduled endpoint show **Unsupported / not scheduled**. Pin separates target
 from editor selection and keyboard focus. Inspecting never inserts or edits a graph.
 
-**Signal Inspector** opens a persistent non-modal, resizable, pinned monitor with five plots. Closing
+**Signal Inspector** opens a persistent non-modal, resizable, pinned monitor with six plots. Closing
 hides it and suspends demand; reopening reuses it. There is no competing Signal Info analysis
 engine: provenance and analysis timing are metadata in this same host. Broader workspace
 presets/docking, arbitrary endpoint/channel configuration, profile editing and accessibility
 screen-reader plot navigation remain future UX work; controls have names, descriptions and
 normal JUCE keyboard focus.
+
+Correlation is mean-removed zero-lag L/R covariance normalized by the standard deviations
+over the RMS measurement window. It is unavailable for mono sources and for windows with
+insufficient channel variance; neither case is reported as zero correlation. It is not a
+frequency-dependent phase measurement.
 
 Embedded defaults to 10 Hz (1-15); inspector defaults to 20 Hz (1-30); monitor defaults to
 30 Hz (1-30). Each plot validates its requested rate; unsupported values return errors, not

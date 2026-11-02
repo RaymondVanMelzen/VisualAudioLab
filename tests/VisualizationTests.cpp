@@ -239,12 +239,14 @@ void continuityAndAdmission()
     std::vector<float> planar(4096 * 4);
     std::fill(planar.begin() + 8192, planar.begin() + 12288, 0.25f);
     std::fill(planar.begin() + 12288, planar.end(), 0.75f);
-    wide->capture(planar.data(), 4096, 4096, 7, 9, 1000);
+    wide->capture(planar.data(), 4096, 4096, 7, 9, 1000, 8000);
     const auto* first = wide->acquire();
-    require(first && first->stamp.frames == 2048 && first->samples[0] == 0.25f && first->samples[2048] == 0.75f,
+    require(first && first->stamp.frames == 2048 && first->stamp.nodeFrame == 8000
+            && first->samples[0] == 0.25f && first->samples[2048] == 0.75f,
             "Selected channels on wider buses preserve layout and bounded two-slot segmentation.");
     wide->release();
-    require(wide->acquire()->stamp.firstFrame == 3048, "Second segment carries the correct absolute sample position.");
+    require(wide->acquire()->stamp.firstFrame == 3048 && wide->acquire()->stamp.nodeFrame == 10048,
+            "Segmented capture carries absolute session and node-relative sample positions.");
     wide->release();
 }
 void concurrentTransport()
@@ -301,6 +303,48 @@ void concurrentTransport()
         }
     worker.join();
     require(!corrupted.load(), "Fixed result pool never overwrites a UI Reading page or tears a transaction.");
+}
+void stereoCorrelation()
+{
+    constexpr double rate = 48000;
+    constexpr double frequency = 1000;
+    AnalysisFixture inPhase(rate, 2);
+    inPhase.feed(19200, [](std::uint64_t frame, int channel)
+    {
+        const auto phase = 2 * std::numbers::pi * frequency * static_cast<double>(frame) / rate;
+        return static_cast<float>((channel == 0 ? 0.6 : 0.25) * std::sin(phase)
+                                  + (channel == 0 ? 0.2 : -0.1));
+    });
+    require(inPhase.result.correlationValid && std::abs(inPhase.result.correlation - 1.0) < 1.0e-5,
+            "Mean-removed correlation is invariant to channel gain and DC offset.");
+
+    AnalysisFixture inverted(rate, 2);
+    inverted.feed(19200, [](std::uint64_t frame, int channel)
+    {
+        const auto sample = std::sin(2 * std::numbers::pi * frequency * static_cast<double>(frame) / rate);
+        return static_cast<float>(channel == 0 ? sample : -sample);
+    });
+    require(inverted.result.correlationValid && std::abs(inverted.result.correlation + 1.0) < 1.0e-5,
+            "Polarity-inverted stereo channels report negative unity.");
+
+    AnalysisFixture quadrature(rate, 2);
+    quadrature.feed(19200, [](std::uint64_t frame, int channel)
+    {
+        const auto phase = 2 * std::numbers::pi * frequency * static_cast<double>(frame) / rate;
+        return static_cast<float>(channel == 0 ? std::sin(phase) : std::cos(phase));
+    });
+    require(quadrature.result.correlationValid && std::abs(quadrature.result.correlation) < 1.0e-5,
+            "A complete-window quadrature pair reports near-zero correlation.");
+
+    AnalysisFixture mono(rate, 1);
+    mono.feed(19200, [](std::uint64_t frame, int)
+    { return static_cast<float>(std::sin(2 * std::numbers::pi * frequency * static_cast<double>(frame) / rate)); });
+    require(!mono.result.correlationValid, "Mono sources explicitly have no stereo correlation measurement.");
+
+    AnalysisFixture constant(rate, 2);
+    constant.feed(19200, [](std::uint64_t, int channel) { return channel == 0 ? 0.5f : -0.25f; });
+    require(!constant.result.correlationValid,
+            "Constant or silent stereo windows report undefined correlation, not a fabricated zero.");
 }
 void graphCapture()
 {
@@ -383,6 +427,6 @@ int main(int argc, char** argv)
     return runTests([&]
     {
         if (argc == 2 && std::string_view(argv[1]) == "--stress") { stress(); return; }
-        calibration(); guitarTuner(); continuityAndAdmission(); concurrentTransport(); graphCapture();
+        calibration(); guitarTuner(); stereoCorrelation(); continuityAndAdmission(); concurrentTransport(); graphCapture();
     });
 }

@@ -2,6 +2,7 @@
 #include <val/audio/AudioGraph.h>
 #include <val/presentation/ModulePanels.h>
 #include <val/script/Compiler.h>
+#include <val/presentation/ShellTheme.h>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -65,6 +66,21 @@ double savedNumber(const val::application::WorkspaceService& service, std::uint6
     return std::get<double>(service.graph().nodes.at(id).parameters.at(key));
 }
 
+void saveScreenshotIfRequested(juce::Component& component, const char* variable)
+{
+    const auto path = juce::SystemStats::getEnvironmentVariable(variable, {});
+    if (path.isEmpty()) return;
+    const auto file = juce::File(path);
+    auto stream = file.createOutputStream();
+    const auto image = component.createComponentSnapshot(component.getLocalBounds(), true, 1.0f,
+                                                         juce::SoftwareImageType{});
+    require(stream && stream->setPosition(0) && stream->truncate().wasOk() && image.isValid()
+                && juce::PNGImageFormat{}.writeImageToStream(image, *stream),
+            "Save the actual generator editor screenshot.");
+    stream->flush();
+    require(stream->getStatus().wasOk(), "Generator editor screenshot reaches storage.");
+}
+
 /** Expected host callback record, independent of hardware and processing state. */
 struct RuntimeEdit
 {
@@ -73,6 +89,7 @@ struct RuntimeEdit
     float value{};
     val::audio::ParameterAction action{};
 };
+
 }
 
 /**
@@ -90,9 +107,11 @@ void runModulePanelIntegrationTests()
             "Run module panel interactions before another test stops the dispatch loop.");
 
     application::WorkspaceService workspace;
+    ShellTheme theme;
     ModuleCatalog catalog;
     ModuleEditor editor(workspace);
     juce::Component host;
+    host.setLookAndFeel(&theme);
     host.addAndMakeVisible(catalog);
     host.addAndMakeVisible(editor);
     host.setSize(1000, 900);
@@ -136,7 +155,8 @@ void runModulePanelIntegrationTests()
     std::vector<std::function<void()>> steps;
     const auto add = [&](std::function<void()> step) { steps.push_back(std::move(step)); };
     domain::Graph beforeEffect, afterEffect, beforeScript;
-    std::uint64_t eq{}, legacyGain{}, scriptId{};
+    std::uint64_t eq{}, legacyGain{}, scriptId{}, generator{};
+    int controlChangedBefore{};
     double gestureValue{};
     juce::Point<float> gestureStart;
     int changedBefore{};
@@ -145,19 +165,22 @@ void runModulePanelIntegrationTests()
 
     add([&]
     {
-        require(list.getListBoxModel()->getNumRows() == 15 && list.getSelectedRow() >= 0
-                    && category.getNumItems() == 5,
-                "The actual catalog exposes fifteen modules and only categories with shipped entries.");
+        require(list.getListBoxModel()->getNumRows() == 23 && list.getSelectedRow() >= 0
+                    && category.getNumItems() == 6,
+                "The actual catalog exposes the delivered modules and their populated categories.");
         category.setSelectedId(2, juce::sendNotificationSync);
         require(list.getListBoxModel()->getNumRows() == 7,
                 "Effects category contains the seven implemented effects.");
         category.setSelectedId(4, juce::sendNotificationSync);
+        require(list.getListBoxModel()->getNumRows() == 6,
+                "Analysis contains five measurement tools and the guitar tuner.");
+        category.setSelectedId(3, juce::sendNotificationSync);
+        require(list.getListBoxModel()->getNumRows() == 7,
+                "Generators category exposes the seven separately insertable signal sources.");
+        category.setSelectedId(5, juce::sendNotificationSync);
         require(list.getListBoxModel()->getNumRows() == 2,
                 "Routing category contains only the Input and Output utilities.");
-        category.setSelectedId(3, juce::sendNotificationSync);
-        require(list.getListBoxModel()->getNumRows() == 5,
-                "Analysis contains the four measurement tools and the guitar tuner.");
-        category.setSelectedId(5, juce::sendNotificationSync);
+        category.setSelectedId(6, juce::sendNotificationSync);
         require(list.getListBoxModel()->getNumRows() == 1
                     && list.getListBoxModel()->getTooltipForRow(0).contains("User-authored"),
                 "Custom DSP category identifies Script as the one shipped user-authored module.");
@@ -186,8 +209,8 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        require(inserted.size() == 1 && list.getListBoxModel()->getNumRows() == 2,
-                "Disabled insertion does not emit a callback; meter search has two real rows.");
+        require(inserted.size() == 1 && list.getListBoxModel()->getNumRows() == 3,
+                "Disabled insertion does not emit a callback; meter search exposes peak, RMS and correlation rows.");
         list.selectRow(1);
         list.keyPressed(juce::KeyPress(juce::KeyPress::returnKey));
     });
@@ -199,9 +222,11 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        const std::array<std::string, 15> names{
+        const std::array<std::string, 23> names{
             "Input", "Output", "Gain", "EQ", "Delay", "Compressor", "Distortion",
-            "Chorus", "Reverb", "Oscilloscope", "Spectrum Analyzer", "Peak Meter", "RMS Meter", "Guitar Tuner", "Script"};
+            "Chorus", "Reverb", "Signal Generator", "Impulse Generator", "Click Generator", "Burst Generator",
+            "Chirp Generator", "Noise Generator", "DC Generator", "Oscilloscope", "Spectrum Analyzer",
+            "Peak Meter", "RMS Meter", "Correlation Meter", "Guitar Tuner", "Script"};
         require(list.getListBoxModel()->getNumRows() == static_cast<int>(names.size()), "Clearing search restores every module.");
         catalog.onInsert = [&, names](std::string type)
         {
@@ -211,11 +236,11 @@ void runModulePanelIntegrationTests()
             inserted.push_back(std::move(type));
         };
     });
-    for (int row = 0; row < 15; ++row)
+    for (int row = 0; row < 23; ++row)
         add([&, row] { list.selectRow(row); button(catalog, "Insert selected module").triggerClick(); });
     add([&]
     {
-        require(inserted.size() == 17 && catalogMatched,
+        require(inserted.size() == 25 && catalogMatched,
                 "Every actual catalog row can be selected and emits its module type through the insertion button.");
         catalog.onInsert = {};
         require(workspace.createNode({10, 20}, "EQ under test",
@@ -541,6 +566,103 @@ void runModulePanelIntegrationTests()
                     && !textControl(editor, "VAL Script source draft").getText().contains("previous-project draft")
                     && !workspace.canUndo(),
                 "Revert restores the loaded saved source without creating history or applying the previous project's draft.");
+        require(workspace.createNode({0, 0}, "Signal Generator",
+                    {{"audio.type", std::string("Signal Generator")}}).succeeded,
+                "Create a zero-input source for end-to-end typed control editor tests.");
+        generator = workspace.lastCreatedNode();
+        editor.setNode(generator);
+        saveScreenshotIfRequested(editor, "VAL_TOOLKIT_EDITOR_SCREENSHOT");
+        auto& controlTarget = control<juce::ComboBox>(editor,
+            [](const auto& item) { return item.getTitle() == "Continuous parameter receiving a scalar control mapping"; });
+        auto& controlSource = control<juce::ComboBox>(editor,
+            [](const auto& item) { return item.getTitle() == "Typed scalar source for the selected parameter"; });
+        auto selectTarget = [&](const juce::String& name)
+        {
+            for (int item = 0; item < controlTarget.getNumItems(); ++item)
+                if (controlTarget.getItemText(item) == name)
+                    controlTarget.setSelectedId(controlTarget.getItemId(item), juce::sendNotificationSync);
+            require(controlTarget.getText() == name, "Select a supported continuous generator target.");
+        };
+        selectTarget("frequencyHz");
+        controlSource.setSelectedId(2, juce::sendNotificationSync);
+        textControl(editor, "Control mapping offset in destination parameter units").setText("0", false);
+        textControl(editor, "Control mapping depth in destination parameter units").setText("20", false);
+        textControl(editor, "LFO rate in hertz").setText("2", false);
+        auto& controlSave = button(editor, "Save typed control mapping");
+        require(controlSource.getSelectedId() == 2 && controlSave.isVisible() && controlSave.isEnabled()
+                    && controlSave.isShowing(),
+                "LFO mapping editor is active and save action is enabled.");
+        controlChangedBefore = changed;
+        controlSave.triggerClick();
+    });
+    add([&]
+    {
+        auto& controlSource = control<juce::ComboBox>(editor,
+            [](const auto& item) { return item.getTitle() == "Typed scalar source for the selected parameter"; });
+        require(changed == controlChangedBefore + 1,
+                "Saving the mapping triggers one undoable document edit: " + diagnostics.getText().toStdString());
+        const auto lfoSaved = workspace.graph().nodes.at(generator).parameters.find("audio.control.frequencyHz.source");
+        std::string savedKeys;
+        for (const auto& [key, value] : workspace.graph().nodes.at(generator).parameters)
+        {
+            (void) value;
+            savedKeys += key + "; ";
+        }
+        require(lfoSaved != workspace.graph().nodes.at(generator).parameters.end(),
+                "LFO control source field is saved: " + diagnostics.getText().toStdString() + " keys=" + savedKeys);
+        require(std::get<std::string>(lfoSaved->second) == "lfo",
+                "LFO selection is persisted exactly.");
+        const auto lfoGraph = audio::AudioGraph::fromStructural(workspace.graph(), 1);
+        require(lfoGraph.value.has_value(),
+                "LFO-to-frequency mapping is persisted, graph-validated and visible through the real editor: "
+                    + lfoGraph.error.message);
+
+        controlSource.setSelectedId(4, juce::sendNotificationSync);
+        textControl(editor, "Control mapping offset in destination parameter units").setText("0", false);
+        textControl(editor, "Control mapping depth in destination parameter units").setText("1", false);
+        textControl(editor, "Declared minimum VAL Script scalar output").setText("0", false);
+        textControl(editor, "Declared maximum VAL Script scalar output").setText("1", false);
+        textControl(editor, "Stateless VAL Script scalar control source").setText(
+            "NODE SweepSpeed AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\nBEGIN\n  Value := Time * 0.1;\nEND.", false);
+        button(editor, "Save typed control mapping").triggerClick();
+    });
+    add([&]
+    {
+        auto& controlTarget = control<juce::ComboBox>(editor,
+            [](const auto& item) { return item.getTitle() == "Continuous parameter receiving a scalar control mapping"; });
+        auto& controlSource = control<juce::ComboBox>(editor,
+            [](const auto& item) { return item.getTitle() == "Typed scalar source for the selected parameter"; });
+        const auto scriptSaved = workspace.graph().nodes.at(generator).parameters.find("audio.control.frequencyHz.source");
+        require(scriptSaved != workspace.graph().nodes.at(generator).parameters.end()
+                    && std::get<std::string>(scriptSaved->second) == "script"
+                    && audio::AudioGraph::fromStructural(workspace.graph(), 1).value,
+                "A stateless VAL Script Time-to-scalar mapping compiles, persists and prepares through the editor: "
+                    + diagnostics.getText().toStdString());
+
+        for (int item = 0; item < controlTarget.getNumItems(); ++item)
+            if (controlTarget.getItemText(item) == "levelDb")
+                controlTarget.setSelectedId(controlTarget.getItemId(item), juce::sendNotificationSync);
+        controlSource.setSelectedId(3, juce::sendNotificationSync);
+        textControl(editor, "Control mapping offset in destination parameter units").setText("0", false);
+        textControl(editor, "Control mapping depth in destination parameter units").setText("60", false);
+        textControl(editor, "Envelope attack duration in seconds").setText("0.1", false);
+        textControl(editor, "Envelope hold duration in seconds").setText("0.2", false);
+        textControl(editor, "Envelope release duration in seconds").setText("0.5", false);
+        button(editor, "Save typed control mapping").triggerClick();
+    });
+    add([&]
+    {
+        auto& controlTarget = control<juce::ComboBox>(editor,
+            [](const auto& item) { return item.getTitle() == "Continuous parameter receiving a scalar control mapping"; });
+        for (int item = 0; item < controlTarget.getNumItems(); ++item)
+            if (controlTarget.getItemText(item) == "levelDb")
+                controlTarget.setSelectedId(controlTarget.getItemId(item), juce::sendNotificationSync);
+        const auto envelopeSaved = workspace.graph().nodes.at(generator).parameters.find("audio.control.levelDb.source");
+        require(envelopeSaved != workspace.graph().nodes.at(generator).parameters.end()
+                    && std::get<std::string>(envelopeSaved->second) == "envelope"
+                    && audio::AudioGraph::fromStructural(workspace.graph(), 1).value,
+                "One-shot Envelope-to-level mapping is persisted and graph-validated from the real editor: "
+                    + diagnostics.getText().toStdString());
         require(workspace.createNode({0, 0}, "Gain").succeeded, "Create a generic node with a misleading display name.");
         editor.setNode(workspace.lastCreatedNode());
         require(controls<juce::Slider>(editor).empty() && diagnostics.getText().contains("explicit audio.type"),

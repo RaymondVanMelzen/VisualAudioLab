@@ -19,6 +19,7 @@ const char* title(VisualizationKind kind)
         case VisualizationKind::peak: return "Peak Meter";
         case VisualizationKind::rms: return "RMS Meter";
         case VisualizationKind::guitarTuner: return "Guitar Tuner";
+        case VisualizationKind::correlation: return "Correlation Meter";
     }
     return "";
 }
@@ -225,8 +226,21 @@ void VisualizationWidget::update(std::shared_ptr<const audio::SignalAnalysis> re
     if (now < next_) return;
     result_ = std::move(result); status_ = std::move(state); stale_ = stale;
     next_ = now + 1000.0 / rate_;
-    auto description = juce::String(title(kind_)) + ". " + status_ + ". "
-        + (kind_ == VisualizationKind::rms ? "Raw RMS, full scale sine minus 3.01 dBFS." : "Sample amplitude reference one equals zero dBFS.");
+    auto description = juce::String(title(kind_)) + ". " + status_ + ". ";
+    if (kind_ == VisualizationKind::rms)
+        description << "Raw RMS, full scale sine minus 3.01 dBFS.";
+    else if (kind_ == VisualizationKind::correlation)
+        description << "Mean-removed stereo correlation, dimensionless.";
+    else
+        description << "Sample amplitude reference one equals zero dBFS.";
+    if (kind_ == VisualizationKind::correlation)
+    {
+        if (!result_) description << " Waiting for stereo samples.";
+        else if (result_->stamp.channels < 2) description << " Unavailable: choose a stereo source.";
+        else if (!result_->correlationValid) description << " No measurable stereo variation in the analysis window.";
+        else description << " Left/right correlation " << juce::String(result_->correlation, 3)
+                         << " over " << juce::String(result_->rmsFrames / result_->stamp.sampleRate, 2) << " seconds.";
+    }
     if (kind_ == VisualizationKind::guitarTuner && result_)
     {
         if (!result_->pitchReady) description << " Waiting for a stable pitch window.";
@@ -263,6 +277,7 @@ void VisualizationWidget::paint(juce::Graphics& g)
         || (kind_ == VisualizationKind::spectrum && !result_->spectrumValid)
         || (kind_ == VisualizationKind::peak && !result_->peakValid)
         || (kind_ == VisualizationKind::rms && !result_->rmsValid)
+        || (kind_ == VisualizationKind::correlation && !result_->correlationValid)
         || (kind_ != VisualizationKind::guitarTuner && result_->scopeFrames == 0);
     if (!area.isEmpty() && !waiting)
     {
@@ -325,6 +340,40 @@ void VisualizationWidget::paint(juce::Graphics& g)
                                : inTune ? "IN TUNE" : "TUNE TOWARD CENTER",
                            scale.withTrimmedTop(12.0f).toNearestInt(), juce::Justification::centredTop);
             }
+        }
+        else if (kind_ == VisualizationKind::correlation)
+        {
+            const auto centre = area.getCentreX();
+            const auto track = area.withHeight(18.0f).withY(area.getCentreY() - 9.0f);
+            g.setColour(ShellTheme::raised());
+            g.fillRoundedRectangle(track, 4.0f);
+            g.setColour(ShellTheme::border());
+            g.drawVerticalLine(static_cast<int>(centre), area.getY(), area.getBottom());
+            for (int tick = 0; tick <= 4; ++tick)
+            {
+                const auto x = area.getX() + area.getWidth() * static_cast<float>(tick) / 4.0f;
+                g.drawVerticalLine(static_cast<int>(x), track.getY() - 4.0f, track.getBottom() + 4.0f);
+            }
+            const auto extent = std::abs(static_cast<float>(data.correlation)) * area.getWidth() * 0.5f;
+            const auto bar = data.correlation < 0
+                ? juce::Rectangle<float>(centre - extent, track.getY(), extent, track.getHeight())
+                : juce::Rectangle<float>(centre, track.getY(), extent, track.getHeight());
+            g.setColour(ShellTheme::audio().withAlpha(opacity));
+            g.fillRoundedRectangle(bar, 4.0f);
+            g.setColour(ShellTheme::textPrimary());
+            g.setFont(juce::FontOptions(22.0f));
+            g.drawText(juce::String(data.correlation, 3), area.withHeight(32.0f).toNearestInt(),
+                       juce::Justification::centred);
+            g.setFont(11.0f);
+            g.setColour(ShellTheme::textSecondary());
+            g.drawText("-1   Out of phase", static_cast<int>(area.getX()), static_cast<int>(track.getBottom() + 8.0f),
+                       static_cast<int>(area.getWidth() * 0.4f), 18, juce::Justification::left);
+            g.drawText("Uncorrelated", static_cast<int>(centre - area.getWidth() * 0.2f),
+                       static_cast<int>(track.getBottom() + 8.0f), static_cast<int>(area.getWidth() * 0.4f), 18,
+                       juce::Justification::centred);
+            g.drawText("+1   In phase", static_cast<int>(area.getRight() - area.getWidth() * 0.4f),
+                       static_cast<int>(track.getBottom() + 8.0f), static_cast<int>(area.getWidth() * 0.4f), 18,
+                       juce::Justification::right);
         }
         else if (kind_ == VisualizationKind::oscilloscope)
         {
@@ -403,7 +452,10 @@ void VisualizationWidget::paint(juce::Graphics& g)
         }
     }
     g.setColour(stale_ ? ShellTheme::warning() : ShellTheme::textSecondary());
-    if (waiting) g.drawFittedText(result_ ? (kind_ == VisualizationKind::guitarTuner
+    if (waiting) g.drawFittedText(result_ ? (kind_ == VisualizationKind::correlation
+                                                    ? result_->stamp.channels < 2 ? "Requires a stereo source"
+                                                        : "No stereo variation in the analysis window"
+                                                : kind_ == VisualizationKind::guitarTuner
                                                     ? "Preparing pitch window" : "Preparing contiguous analysis window")
                                           : status_.isEmpty() ? "Waiting for contiguous samples" : status_,
                                 area.toNearestInt(), juce::Justification::centred, 3);
@@ -411,6 +463,7 @@ void VisualizationWidget::paint(juce::Graphics& g)
         : kind_ == VisualizationKind::spectrum ? "Hann | peak-amplitude dBFS | log Hz"
         : kind_ == VisualizationKind::peak ? "50 ms sample peak (not true peak) | hold 1 s"
         : kind_ == VisualizationKind::guitarTuner ? "Chromatic pitch | equal temperament | A4 reference 440 Hz"
+        : kind_ == VisualizationKind::correlation ? "Mean-removed L/R correlation [-1,+1] over the RMS window"
         : "Raw RMS | 0 dBFS = amplitude 1 | no AES17 offset";
     if (result_ && kind_ == VisualizationKind::spectrum)
         caption = "N=" + juce::String(result_->fftSize) + " | bin " + juce::String(result_->binHz, 2) + " Hz | dominant " + juce::String(result_->dominantHz[0], 1) + " Hz";
@@ -442,6 +495,9 @@ VisualizationWidgets::VisualizationWidgets(VisualizationSession& session, Visual
     };
     for (auto* child : std::initializer_list<juce::Component*>{&target_, &pin_, &freeze_, &details_, &reset_, &status_})
         addAndMakeVisible(child);
+    addAndMakeVisible(generatorInfo_);
+    generatorInfo_.setFont(juce::FontOptions(12.0f));
+    generatorInfo_.setColour(juce::Label::textColourId, ShellTheme::textPrimary());
     status_.setText("No target. Structural nodes are not automatically processing.", juce::dontSendNotification);
     status_.setFont(juce::FontOptions(11.0f));
     for (std::size_t i = 0; i < plots_.size(); ++i)
@@ -475,16 +531,19 @@ void VisualizationWidgets::resized()
     auto controls = bounds.removeFromTop(25);
     pin_.setBounds(controls.removeFromLeft(47)); freeze_.setBounds(controls.removeFromLeft(67));
     reset_.setBounds(controls.removeFromLeft(80)); details_.setBounds(controls);
+    generatorInfo_.setVisible(generatorInfoData_.summary.isNotEmpty());
+    if (generatorInfo_.isVisible())
+        generatorInfo_.setBounds(bounds.removeFromTop(27).reduced(4, 1));
     status_.setBounds(bounds.removeFromBottom(32));
     if (host_ == VisualizationHost::monitor)
     {
-        auto row = bounds.removeFromTop(bounds.getHeight() / 3);
-        plots_[0]->setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(3));
-        plots_[1]->setBounds(row.reduced(3));
-        row = bounds.removeFromTop(bounds.getHeight() / 2);
-        plots_[2]->setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(3));
-        plots_[3]->setBounds(row.reduced(3));
-        plots_[4]->setBounds(bounds.reduced(3));
+        const auto rowHeight = bounds.getHeight() / 3;
+        for (std::size_t rowIndex = 0; rowIndex < 3; ++rowIndex)
+        {
+            auto row = bounds.removeFromTop(rowIndex == 2 ? bounds.getHeight() : rowHeight);
+            plots_[rowIndex * 2]->setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(3));
+            plots_[rowIndex * 2 + 1]->setBounds(row.reduced(3));
+        }
     }
     else tabs_.setBounds(bounds);
 }
@@ -500,6 +559,9 @@ void VisualizationWidgets::setTarget(std::uint64_t source)
 {
     if (source_ == source) return;
     releaseDemand(); source_ = source; frozenResult_.reset(); resumeAfterSequence_ = 0; admissionError_.clear();
+    generatorInfoData_ = {};
+    generatorInfo_.setText({}, juce::dontSendNotification);
+    generatorInfo_.setVisible(false);
     freeze_.setToggleState(false, juce::dontSendNotification);
     const auto ids = session_.sourceIds();
     const auto found = std::find(ids.begin(), ids.end(), source);
@@ -510,6 +572,13 @@ void VisualizationWidgets::setTarget(std::uint64_t source)
     tick(juce::Time::getMillisecondCounterHiRes());
 }
 void VisualizationWidgets::followSelection(std::uint64_t source) { if (!pinned()) setTarget(source); }
+void VisualizationWidgets::setGeneratorContext(GeneratorDisplayInfo info)
+{
+    generatorInfoData_ = std::move(info);
+    generatorInfo_.setVisible(generatorInfoData_.summary.isNotEmpty());
+    generatorInfo_.setText(generatorInfoData_.summary, juce::dontSendNotification);
+    resized();
+}
 void VisualizationWidgets::setPinned(bool pinned) { pin_.setToggleState(pinned, juce::dontSendNotification); }
 void VisualizationWidgets::setFrozen(bool frozen)
 {
@@ -576,12 +645,31 @@ void VisualizationWidgets::tick(double now)
     {
         state += " | " + juce::String(result->stamp.sampleRate, 0) + " Hz | drops " + juce::String(result->captureDrops);
         if (result->nonFinite) state += " | invalid samples";
+        if (generatorInfoData_.durationSeconds > 0 && result->stamp.sampleRate > 0
+            && generatorInfoData_.transport != 0)
+        {
+            const auto elapsed = static_cast<double>(result->stamp.nodeFrame) / result->stamp.sampleRate;
+            const auto duration = generatorInfoData_.durationSeconds;
+            const auto progress = generatorInfoData_.transport == 2 ? std::fmod(elapsed, duration)
+                : std::min(elapsed, duration);
+            const auto percent = 100.0 * progress / duration;
+            const auto stateText = generatorInfoData_.transport == 1 && elapsed >= duration
+                ? juce::String("Complete") : juce::String(percent, 1) + "%";
+            generatorInfo_.setText(generatorInfoData_.summary + " | " + stateText,
+                                    juce::dontSendNotification);
+        }
+        else generatorInfo_.setText(generatorInfoData_.summary, juce::dontSendNotification);
         status_.setText("Source " + juce::String(result->stamp.source) + " | epoch " + juce::String(result->stamp.epoch)
             + " | revision " + juce::String(result->stamp.revision) + " | " + juce::String(result->analysisMilliseconds, 3) + " ms analysis"
             + " | UI received " + juce::String(std::max(0.0, now - (source ? source->received : now)), 0) + " ms ago",
             juce::dontSendNotification);
     }
-    else status_.setText(state, juce::dontSendNotification);
+    else
+    {
+        status_.setText(state, juce::dontSendNotification);
+        if (generatorInfo_.isVisible())
+            generatorInfo_.setText(generatorInfoData_.summary, juce::dontSendNotification);
+    }
     for (auto& plot : plots_) if (plot->isShowing()) plot->update(result, state, now, stale);
 }
 }

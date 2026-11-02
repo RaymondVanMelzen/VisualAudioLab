@@ -198,12 +198,23 @@ Result WorkspaceService::disconnect(domain::GraphId connection)
 
 Result WorkspaceService::setParameter(domain::GraphId node, std::string key, domain::Parameter value)
 {
-    if (!graph().nodes.contains(node) || key.empty() || key.size() > 128 || key.find('\0') != std::string::npos
-        || (std::holds_alternative<std::string>(value) && std::get<std::string>(value).find('\0') != std::string::npos)
-        || (std::holds_alternative<double>(value) && !std::isfinite(std::get<double>(value))))
-        return Result::failure("Parameter needs an existing node, a 1-128 byte key and a finite scalar value.");
+    std::map<std::string, domain::Parameter> values;
+    values.emplace(std::move(key), std::move(value));
+    return setParameters(node, std::move(values));
+}
+
+Result WorkspaceService::setParameters(domain::GraphId node, std::map<std::string, domain::Parameter> values)
+{
+    if (!graph().nodes.contains(node) || values.empty())
+        return Result::failure("Parameter edits need an existing node and at least one scalar value.");
+    for (const auto& [key, value] : values)
+        if (key.empty() || key.size() > 128 || key.find('\0') != std::string::npos
+            || (std::holds_alternative<std::string>(value) && std::get<std::string>(value).find('\0') != std::string::npos)
+            || (std::holds_alternative<double>(value) && !std::isfinite(std::get<double>(value))))
+            return Result::failure("Each parameter needs a 1-128 byte key and a finite scalar value.");
     auto replacement = graph().nodes.at(node);
-    replacement.parameters.insert_or_assign(std::move(key), std::move(value));
+    for (auto& [key, value] : values)
+        replacement.parameters.insert_or_assign(std::move(key), std::move(value));
     if (replacement == graph().nodes.at(node))
         return Result::success();
     domain::Graph alternate;

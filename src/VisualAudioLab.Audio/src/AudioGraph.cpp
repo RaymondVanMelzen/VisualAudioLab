@@ -1,11 +1,15 @@
 #include <val/audio/AudioGraph.h>
+#include <val/audio/GeneratorNodes.h>
 #include <val/audio/ScriptNode.h>
 #include <val/script/Compiler.h>
 #include <algorithm>
+#include <charconv>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <queue>
 #include <set>
+#include <string_view>
 #include <new>
 
 namespace val::audio
@@ -29,8 +33,22 @@ std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1, s
         case AudioNodeType::reverb: return std::make_unique<ReverbNode>();
         case AudioNodeType::analyzer: return std::make_unique<AnalyzerNode>();
         case AudioNodeType::script: return script ? std::make_unique<ScriptNode>(std::move(script)) : nullptr;
+        case AudioNodeType::signalGenerator: return std::make_unique<SignalGeneratorNode>();
+        case AudioNodeType::impulseGenerator: return std::make_unique<ImpulseGeneratorNode>();
+        case AudioNodeType::clickGenerator: return std::make_unique<ClickGeneratorNode>();
+        case AudioNodeType::burstGenerator: return std::make_unique<BurstGeneratorNode>();
+        case AudioNodeType::chirpGenerator: return std::make_unique<ChirpGeneratorNode>();
+        case AudioNodeType::noiseGenerator: return std::make_unique<NoiseGeneratorNode>();
+        case AudioNodeType::dcGenerator: return std::make_unique<DcGeneratorNode>();
     }
     return {};
+}
+bool isGenerator(AudioNodeType type) noexcept
+{
+    return type == AudioNodeType::signalGenerator || type == AudioNodeType::impulseGenerator
+        || type == AudioNodeType::clickGenerator || type == AudioNodeType::burstGenerator
+        || type == AudioNodeType::chirpGenerator || type == AudioNodeType::noiseGenerator
+        || type == AudioNodeType::dcGenerator;
 }
 }
 
@@ -71,6 +89,13 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
             }
             definition.script = *compiled.value;
         }
+        else if (*type == "Signal Generator") definition.type = AudioNodeType::signalGenerator;
+        else if (*type == "Impulse Generator") definition.type = AudioNodeType::impulseGenerator;
+        else if (*type == "Click Generator") definition.type = AudioNodeType::clickGenerator;
+        else if (*type == "Burst Generator") definition.type = AudioNodeType::burstGenerator;
+        else if (*type == "Chirp Generator") definition.type = AudioNodeType::chirpGenerator;
+        else if (*type == "Noise Generator") definition.type = AudioNodeType::noiseGenerator;
+        else if (*type == "DC Generator") definition.type = AudioNodeType::dcGenerator;
         else return {{}, invalid("Unsupported audio.type on node " + std::to_string(id) + ".")};
         if (const auto gain = node.parameters.find("audio.gain"); gain != node.parameters.end())
         {
@@ -78,6 +103,15 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
             if (definition.type != AudioNodeType::gain || !value || !std::isfinite(*value) || *value < 0 || *value > 4)
                 return {{}, invalid("audio.gain requires a finite Gain-node linear value from 0 to 4.")};
             definition.gain = static_cast<float>(*value);
+        }
+        if (const auto customScale = node.parameters.find("audio.scaleIntervals"); customScale != node.parameters.end())
+        {
+            const auto* value = std::get_if<std::string>(&customScale->second);
+            if (definition.type != AudioNodeType::signalGenerator || !value)
+                return {{}, invalid("audio.scaleIntervals is a comma-separated ascending semitone list (1-12 values in [0,127]) for Signal Generator User Scale.")};
+            const auto parsed = parseUserScale(*value);
+            if (!parsed) return {{}, invalid("Invalid audio.scaleIntervals: " + std::string(parsed.error))};
+            definition.userScale.assign(parsed.offsets.begin(), parsed.offsets.begin() + static_cast<std::ptrdiff_t>(parsed.count));
         }
         for (const auto& [key, scalar] : node.parameters)
         {
@@ -96,13 +130,140 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
                 if (!value || !std::isfinite(*value)) return {{}, invalid("audio.param values must be finite numbers.")};
                 // Parameter identities are names in projects and immutable indices in prepared plans.
                 const auto prototype = createProcessor(definition.type, 1, definition.script);
+                if (!definition.userScale.empty())
+                {
+                    auto* signal = dynamic_cast<SignalGeneratorNode*>(prototype.get());
+                    if (!signal || !signal->setUserScale(definition.userScale))
+                        return {{}, invalid("Signal Generator custom scale configuration is invalid.")};
+                }
                 const auto parameters = prototype->parameters();
                 const auto found = std::find_if(parameters.begin(), parameters.end(), [&](const auto& item) { return name == item.name; });
-                if (found == parameters.end() || *value < found->minimum || *value > found->maximum)
+                if (found == parameters.end()
+                    || !prototype->accepts(static_cast<std::uint16_t>(found - parameters.begin()),
+                                           static_cast<float>(*value), ParameterAction::base))
                     return {{}, invalid("Unknown/out-of-range audio.param." + name)};
                 if (definition.type == AudioNodeType::gain && node.parameters.contains("audio.gain"))
                     return {{}, invalid("Use audio.gain or audio.param.gain, not both.")};
                 definition.parameters.emplace_back(static_cast<std::uint16_t>(found - parameters.begin()), static_cast<float>(*value));
+            }
+        }
+        if (definition.type == AudioNodeType::signalGenerator)
+        {
+            const auto scale = std::find_if(definition.parameters.begin(), definition.parameters.end(),
+                [](const auto& parameter) { return parameter.first == signalScale; });
+            const auto root = std::find_if(definition.parameters.begin(), definition.parameters.end(),
+                [](const auto& parameter) { return parameter.first == signalRootMidi; });
+            const auto scaleValue = scale == definition.parameters.end()
+                ? 0 : static_cast<int>(scale->second);
+            const auto rootValue = root == definition.parameters.end()
+                ? 36 : static_cast<int>(root->second);
+            if (scaleValue == static_cast<int>(MusicalScale::user)
+                && (definition.userScale.empty() || rootValue + definition.userScale.back() > 127))
+                return {{}, invalid("Signal Generator User Scale requires audio.scaleIntervals and every root-plus-offset MIDI note must be <= 127.")};
+        }
+        std::map<std::string, std::map<std::string, const domain::Parameter*>> controlFields;
+        constexpr std::string_view controlPrefix{"audio.control."};
+        for (const auto& [key, value] : node.parameters)
+            if (key.starts_with(controlPrefix))
+            {
+                const auto suffix = std::string_view(key).substr(controlPrefix.size());
+                const auto separator = suffix.find('.');
+                if (separator == std::string_view::npos || separator == 0 || separator + 1 == suffix.size())
+                    return {{}, invalid("Control mappings use audio.control.<parameter>.<field>.")};
+                const auto parameter = std::string(suffix.substr(0, separator));
+                const auto fieldName = std::string(suffix.substr(separator + 1));
+                constexpr std::string_view supportedFields[]{
+                    "source", "offset", "depth", "rateHz", "attackSeconds", "holdSeconds",
+                    "releaseSeconds", "minimum", "maximum", "script"};
+                if (std::find(std::begin(supportedFields), std::end(supportedFields), fieldName)
+                    == std::end(supportedFields))
+                    return {{}, invalid("Unsupported control mapping field: " + fieldName + ".")};
+                if (!controlFields[parameter].emplace(fieldName, &value).second)
+                    return {{}, invalid("Duplicate control mapping field.")};
+            }
+        if (!controlFields.empty())
+        {
+            auto prototype = createProcessor(definition.type, 1, definition.script);
+            if (!prototype) return {{}, invalid("Cannot map a parameter on this processor.")};
+            if (!definition.userScale.empty())
+            {
+                auto* signal = dynamic_cast<SignalGeneratorNode*>(prototype.get());
+                if (!signal || !signal->setUserScale(definition.userScale))
+                    return {{}, invalid("Signal Generator custom scale configuration is invalid.")};
+            }
+            for (const auto& [parameter, value] : definition.parameters)
+                if (!prototype->initialParameter(parameter, value))
+                    return {{}, invalid("Control target has an invalid saved base parameter.")};
+            const auto specs = prototype->parameters();
+            for (const auto& [parameterName, fields] : controlFields)
+            {
+                const auto target = std::find_if(specs.begin(), specs.end(),
+                    [&](const auto& item) { return parameterName == item.name; });
+                if (target == specs.end())
+                    return {{}, invalid("Unknown control target parameter: " + parameterName + ".")};
+                const auto index = static_cast<std::uint16_t>(target - specs.begin());
+                const auto getString = [&](std::string_view field) -> const std::string*
+                {
+                    const auto found = fields.find(std::string(field));
+                    return found == fields.end() ? nullptr : std::get_if<std::string>(found->second);
+                };
+                const auto getNumber = [&](std::string_view field, float& output) -> bool
+                {
+                    const auto found = fields.find(std::string(field));
+                    if (found == fields.end()) return false;
+                    const auto* number = std::get_if<double>(found->second);
+                    if (!number || !std::isfinite(*number)
+                        || *number < -std::numeric_limits<float>::max()
+                        || *number > std::numeric_limits<float>::max()) return false;
+                    output = static_cast<float>(*number);
+                    return true;
+                };
+                const auto* source = getString("source");
+                ParameterControlBinding binding;
+                binding.parameter = index;
+                if (source && *source == "none") continue;
+                if (!source || !getNumber("offset", binding.offset) || !getNumber("depth", binding.depth))
+                    return {{}, invalid("Each control mapping requires a source, finite offset and finite depth.")};
+                if (*source == "lfo")
+                {
+                    binding.source = ParameterControlSource::lfo;
+                    if (!getNumber("rateHz", binding.rateHz))
+                        return {{}, invalid("LFO control requires rateHz from 0.01 to 20.")};
+                }
+                else if (*source == "envelope")
+                {
+                    binding.source = ParameterControlSource::envelope;
+                    binding.sourceMinimum = 0;
+                    binding.sourceMaximum = 1;
+                    if (!getNumber("attackSeconds", binding.attackSeconds)
+                        || !getNumber("holdSeconds", binding.holdSeconds)
+                        || !getNumber("releaseSeconds", binding.releaseSeconds))
+                        return {{}, invalid("Envelope control requires attackSeconds, holdSeconds and releaseSeconds.")};
+                }
+                else if (*source == "script")
+                {
+                    binding.source = ParameterControlSource::script;
+                    const auto* sourceText = getString("script");
+                    if (!sourceText || !getNumber("minimum", binding.sourceMinimum)
+                        || !getNumber("maximum", binding.sourceMaximum))
+                        return {{}, invalid("Script control requires source text and declared finite minimum/maximum.")};
+                    const auto compiled = script::Compiler::compile(*sourceText);
+                    if (!compiled.value)
+                    {
+                        const auto& diagnostic = compiled.diagnostics.front();
+                        return {{}, invalid("Control Script at " + std::to_string(diagnostic.source.line)
+                            + ":" + std::to_string(diagnostic.source.column) + ": " + diagnostic.message)};
+                    }
+                    binding.program = *compiled.value;
+                    if (!binding.program->inputs().size() || binding.program->outputs().size() != 1
+                        || !binding.program->parameters().empty()
+                        || binding.program->inputs().size() != 1)
+                        return {{}, invalid("Control Script must declare exactly INPUT Time: REAL, one REAL OUTPUT, and no parameters.")};
+                }
+                else return {{}, invalid("Control source must be lfo, envelope or script.")};
+                if (!prototype->initialControl(binding))
+                    return {{}, invalid("Control mapping is invalid, out of range, or targets a discrete parameter.")};
+                definition.controls.push_back(std::move(binding));
             }
         }
         result.nodes.push_back(definition);
@@ -144,7 +305,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         if (node.id == 0 || !nodes.emplace(node.id, &node).second || !std::isfinite(node.gain)
             || node.gain < 0 || node.gain > 4)
             return {{}, invalid("Duplicate/zero node ID or invalid gain (finite 0-4 required).")};
-        if (node.type < AudioNodeType::input || node.type > AudioNodeType::script)
+        if (node.type < AudioNodeType::input || node.type > AudioNodeType::dcGenerator)
             return {{}, invalid("Unsupported processor type.")};
         if (node.type == AudioNodeType::script)
         {
@@ -153,6 +314,13 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             if (scriptInstructions > 4096) return {{}, invalid("Graph script budget exceeds 4096 expanded instructions per frame.")};
         }
         else if (node.script) return {{}, invalid("A script artifact may only be attached to a Script processor.")};
+        for (const auto& control : node.controls)
+            if (control.program)
+            {
+                scriptInstructions += control.program->instructions().size();
+                if (scriptInstructions > 4096)
+                    return {{}, invalid("Graph Script/control budget exceeds 4096 expanded instructions per frame.")};
+            }
         if (node.capture)
         {
             capturedChannels += node.capture->channels();
@@ -174,6 +342,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     {
         if (!nodes.contains(edge.source) || !nodes.contains(edge.destination) || edge.source == edge.destination
             || nodes.at(edge.source)->type == AudioNodeType::output || nodes.at(edge.destination)->type == AudioNodeType::input
+            || isGenerator(nodes.at(edge.destination)->type)
             || !incoming.emplace(edge.destination, edge.source).second)
             return {{}, invalid("Invalid/missing endpoint, direction, self-link or multiple input sources.")};
         const auto& destination = *nodes.at(edge.destination);
@@ -215,6 +384,12 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         const auto destination = (plan->steps_.size() + 1) * stride;
         const auto source = incoming.contains(id) ? offsets.at(incoming.at(id)) : 0;
         auto processor = createProcessor(node.type, node.gain, node.script);
+        if (!node.userScale.empty())
+        {
+            auto* signal = dynamic_cast<SignalGeneratorNode*>(processor.get());
+            if (!signal || !signal->setUserScale(node.userScale))
+                return {{}, invalid("Signal Generator custom scale configuration is invalid.")};
+        }
         const ProcessingSpec spec{format.sampleRate, format.maxFrames, graph.channels};
         storageBytes += processor->requiredStorageBytes(spec);
         if (storageBytes > 128 * 1024 * 1024)
@@ -223,6 +398,9 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         for (const auto& [parameter, value] : node.parameters)
             if (!assigned.insert(parameter).second || !processor->initialParameter(parameter, value))
                 return {{}, invalid("Duplicate, unknown or out-of-range initial processor parameter.")};
+        for (const auto& control : node.controls)
+            if (!processor->initialControl(control))
+                return {{}, invalid("Invalid/duplicate/out-of-domain initial control mapping.")};
         if (node.bypassed && (node.type == AudioNodeType::input || node.type == AudioNodeType::output))
             return {{}, invalid("Device routing nodes do not support bypass.")};
         processor->initialBypass(node.bypassed);
@@ -251,7 +429,13 @@ void PreparedAudioGraph::capture(int frames, std::uint64_t epoch, std::uint64_t 
 {
     for (auto& step : steps_)
         if (step.capture)
-            step.capture->capture(scratch_.data() + step.destination, format_.maxFrames, frames, revision_, epoch, firstFrame);
+        {
+            const auto processed = step.processor->processedFrames();
+            const auto start = processed >= static_cast<std::uint64_t>(frames)
+                ? processed - static_cast<std::uint64_t>(frames) : 0;
+            step.capture->capture(scratch_.data() + step.destination, format_.maxFrames, frames,
+                                  revision_, epoch, firstFrame, start);
+        }
 }
 bool PreparedAudioGraph::parameterIndex(std::uint64_t node, std::uint16_t parameter, float value,
                                         ParameterAction action, std::size_t& index) const noexcept

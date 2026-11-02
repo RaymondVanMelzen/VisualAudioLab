@@ -84,6 +84,21 @@ void runVisualizationPresentationTests()
     inspector.plot(VisualizationKind::guitarTuner).update(tunerResult, "Live", 1.0e20 + 300, false);
     require(inspector.plot(VisualizationKind::guitarTuner).getDescription().contains("No stable note"),
             "Accessible tuner reports uncertain/noisy input without inventing a note.");
+    auto correlationResult = std::make_shared<SignalAnalysis>();
+    correlationResult->stamp.channels = 2;
+    correlationResult->correlationValid = true;
+    correlationResult->correlation = -0.5;
+    correlationResult->rmsFrames = 14400;
+    correlationResult->stamp.sampleRate = 48000;
+    inspector.plot(VisualizationKind::correlation).update(correlationResult, "Live", 1.0e20, false);
+    require(inspector.plot(VisualizationKind::correlation).getDescription().contains("-0.500")
+                && inspector.plot(VisualizationKind::correlation).getDescription().contains("0.30 seconds"),
+            "Correlation meter exposes its signed stereo reading and measurement window.");
+    correlationResult->correlationValid = false;
+    correlationResult->stamp.channels = 1;
+    inspector.plot(VisualizationKind::correlation).update(correlationResult, "Live", 1.0e20 + 100, false);
+    require(inspector.plot(VisualizationKind::correlation).getDescription().contains("choose a stereo source"),
+            "Correlation meter explains why a mono observation is unavailable.");
     shell.dockWorkspace().showPanel(PanelId::propertyInspector);
     juce::TabbedComponent* inspectorTabs{};
     for (auto* child : shell.dockWorkspace().panel(PanelId::propertyInspector).getChildren())
@@ -128,6 +143,17 @@ void runVisualizationPresentationTests()
                 && detail.plot(VisualizationKind::guitarTuner).getDescription().contains("Channel 1"),
             "Real visualization session routes its tuner profile to the shared worker's measured result: "
                 + detail.plot(VisualizationKind::guitarTuner).getDescription().toStdString());
+    require(detail.plot(VisualizationKind::correlation).getDescription().contains("Left/right correlation"),
+            "The same stereo capture reports a measured correlation in the independent monitor.");
+    auto correlationPreview = std::make_shared<SignalAnalysis>();
+    correlationPreview->stamp.channels = 2;
+    correlationPreview->stamp.sampleRate = 48000;
+    correlationPreview->rmsFrames = 14400;
+    correlationPreview->scopeFrames = 4096;
+    correlationPreview->correlationValid = true;
+    correlationPreview->correlation = -0.65;
+    detail.plot(VisualizationKind::correlation).update(
+        correlationPreview, "Synthetic stereo fixture | no hardware", juce::Time::getMillisecondCounterHiRes() + 1000, false);
     auto snapshot = detail.createComponentSnapshot(detail.getLocalBounds(), true, 1.0f, juce::SoftwareImageType{});
     require(snapshot.isValid(), "Actual calibrated JUCE scope/spectrum/meters and guitar tuner render.");
     const auto path = juce::SystemStats::getEnvironmentVariable("VAL_VISUALIZATION_SCREENSHOT", {});
@@ -202,7 +228,7 @@ void runVisualizationPresentationTests()
               << " observation_bytes=" << diagnostics.memoryBytes << '\n';
     double plotMax = 0;
     for (const auto& host : hosts)
-        for (int kind = 0; kind < 5; ++kind)
+        for (int kind = 0; kind < 6; ++kind)
             plotMax = std::max(plotMax, host->plot(static_cast<VisualizationKind>(kind)).maxPaintMilliseconds());
     std::cout << "individual_plot_max_ms=" << plotMax << " worker_jobs=" << diagnostics.jobs
               << " worker_max_ms=" << diagnostics.maxJobMilliseconds << " capture_drops=" << capture->drops() << '\n';

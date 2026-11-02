@@ -1,9 +1,9 @@
 # Visual Audio Lab — visual design language
 
-**Status:** proposed product direction, not a description of a shipped redesign.
-This document defines an audio-first visual system for future design and
-implementation work. It does not change application code or claim user-testing
-results.
+**Status:** the palette and shell direction below are active implementation;
+feature and future signal-semantics proposals are labeled separately. This
+document is the visual-language reference, not a claim of user-testing,
+hardware qualification or commercial-product parity.
 
 ## 1. Product premise: listen with your eyes
 
@@ -76,83 +76,92 @@ artwork, typography, curves, icons or signature visual treatments.
 
 Color has separate jobs: **surface depth**, **signal semantics**, **interaction
 state**, and **module identity**. Never ask one hue to communicate all four.
-Dark does not mean monochrome: surfaces are neutral blue-charcoal; audio
-measurements use warm gold; control information uses soft blue; MIDI uses
-green; processor families add restrained edge accents; and errors remain
-unmistakably red.
+The approved palette uses neutral charcoal surfaces, cyan audio identity,
+restrained semantic accents, crisp geometry and local, optional glow.
 
 ### Foundation tokens
 
 | Token | Hex | Role |
 |---|---|---|
-| `canvas.deep` | `#0B1118` | Main visualization/canvas background; deepest surface. |
-| `surface.panel` | `#121B24` | Default inspector, browser and shell surface. |
-| `surface.raised` | `#1B2834` | Floating editor, selected row, raised card; use sparingly. |
-| `surface.well` | `#0F171F` | Plot well, numeric readout well and text-entry field. |
-| `line.subtle` | `#31475B` | Low-priority grouping boundary, not text. |
-| `line.strong` | `#71869A` | Essential divider, control outline or graph support mark. |
-| `text.primary` | `#F1F4F7` | Labels and readings on dark surfaces. |
-| `text.secondary` | `#B2C0CC` | Supporting labels, units and explanations. |
-| `text.disabled` | `#8493A2` | Inactive controls; pair with shape/state cues, not the sole explanation. |
+| `background` | `#1B1D20` | Deep neutral shell and patch-canvas foundation. |
+| `surface.panel` | `#262A2D` | Default browser, inspector and panel surface. |
+| `surface.raised` | `#30363A` | Raised rows and transient controls; pair with clear boundaries. |
+| `surface.input` | `#17191C` | Text-entry wells and plot backgrounds. |
+| `border.structural` | `#73808A` | Crisp panel, control and graph boundary; not body text. |
+| `border.required` | `#91AAB2` | Required/invalid boundary paired with explicit text or state. |
+| `text.primary` | `#F2F1EE` | Primary text and readings. |
+| `text.secondary` | `#B7BDC1` | Supporting labels, units and instructions. |
+| `text.muted` | `#9AA3A9` | Lower-priority metadata and stale readings on approved surfaces. |
+| `text.disabled` | `#7B848A` | Disabled control only, with non-color state cues. |
 
 ### Signal, category and state tokens
 
 | Token | Hex | Meaning and use |
 |---|---|---|
-| `signal.audio` | `#FFD166` | Audio signal, waveform, spectrum trace and active audio route. Warm amber/gold. |
-| `signal.control` | `#8EC9FF` | Control-rate/modulation signal or control connection. Soft blue; distinguish from an audio wire with dash/shape. |
-| `signal.midi` | `#8FE0B3` | MIDI/event route. Green; pair with pulse/dot and a label, never hue alone. |
-| `family.source` | `#FFDA8A` | Source/generator identity rail and source glyph. |
-| `family.dynamics` | `#F28E6B` | Dynamics family rail; coral is an identity color here, not a warning state. |
-| `family.filter` | `#B7A1FF` | Filters/EQ family rail. |
-| `family.modulation` | `#67D6C1` | Modulation family rail. |
-| `family.delay` | `#6EB8C7` | Delay/time-based family rail. |
-| `family.analysis` | `#8EC9FF` | Analysis instrument rail, with a meter/plot glyph. |
-| `family.logic-script` | `#D5C4FF` | Logic and Script identity rail; pair with an explicit symbol/text. |
-| `state.good` | `#8FE0B3` | Connected/ready/running state, only when confirmed. |
-| `state.warning` | `#FFC078` | Degraded, stale or recoverable warning; label the reason. |
-| `state.error` | `#FF8A8A` | Failure, invalid route or stopped-on-fault state. |
-| `state.focus` | `#F4F7FA` | Keyboard focus ring. |
-| `docs.neutral` | `#B2C0CC` | Documentation/help content; never imply that docs are a live signal. |
+| `signal.audio` | `#00C2D1` | Audio ports, routes, waveforms and measurements; label direction and channel. |
+| `signal.midi` | `#CC5EFF` | Reserved event identity; use only if MIDI support ships. |
+| `signal.control` | `#E4793A` | Reserved modulation/control identity; never warning or success. |
+| `analysis` | `#9DDC4A` | Analyzer trace and valid measurement identity, not generic “ready” status. |
+| `state.selected` | `#F39A57` | Crisp selection outlines, handles and compact markers; not broad fills or signal recoloring. |
+| `state.warning` | `#D7A93F` | Warning icon/edge with labeled diagnostic; never the sole cue. |
+| `state.error` | `#D45353` | Error icon/marker and crisp accent, not normal-size text on the panel. |
+| `state.errorText` | `#FF8A8A` | Optional contrast-validated error copy. |
+| `state.hover` | `#343B40` | Neutral hover surface. |
+| `state.pressed` | `#3A4247` | Neutral pressed surface. |
+| `state.focus` | `#F2F1EE` | High-contrast keyboard focus ring, geometrically distinct from selection. |
+| `text.onAccent` | `#121416` | Foreground when a bright semantic accent is used as an opaque button fill. |
 
-Family colors appear as small rails, corner marks or glyphs—not broad,
-high-saturation card fills. Audio wires remain amber across the patch. A
-selected signal route may brighten and widen, but must not be recolored as a
-different signal type. State overlays (warning/error/stale) are orthogonal to
-family identity: for example, an EQ can have a violet family mark and an amber
-audio route plus an orange warning badge.
+The JUCE theme centralizes these roles in `ShellTheme`. The current shipped
+graph uses cyan for audio wires and ports, orange for selection geometry, and
+green for analyzer identity. MIDI and control are reserved and are not applied
+to imply unavailable capabilities. Analyzer green is not a generic success
+color; warnings and errors use their own tokens and explicit diagnostics.
 
 ### Contrast and color-vision rules
 
-Ratios below use WCAG relative luminance and are verified against the listed
-dark backgrounds. Text pairings exceed 4.5:1; large labels and non-text
-indicators still benefit from these strong pairings. `line.strong` is a
-non-text boundary, not body copy.
+Ratios use opaque sRGB relative luminance and are covered by focused
+automated theme checks. WCAG AA reference targets are **4.5:1 for normal
+text** and **3:1 for large text and necessary non-text graphics**. Decorative
+separators are not required to meet a threshold, but must not be the only way
+to locate an interactive control.
 
-| Foreground | `canvas.deep` `#0B1118` | `surface.panel` `#121B24` | `surface.raised` `#1B2834` |
-|---|---:|---:|---:|
-| `text.primary` `#F1F4F7` | 17.18:1 | 15.75:1 | 13.59:1 |
-| `text.secondary` `#B2C0CC` | 10.21:1 | 9.36:1 | 8.08:1 |
-| `signal.audio` `#FFD166` | 13.15:1 | 12.06:1 | 10.41:1 |
-| `signal.control` `#8EC9FF` | 10.79:1 | 9.89:1 | 8.54:1 |
-| `signal.midi` / `state.good` `#8FE0B3` | 12.17:1 | 11.16:1 | 9.63:1 |
-| `state.warning` `#FFC078` | 11.79:1 | 10.81:1 | 9.33:1 |
-| `state.error` `#FF8A8A` | 8.36:1 | 7.66:1 | 6.61:1 |
-| `family.source` `#FFDA8A` | 14.13:1 | 12.95:1 | 11.18:1 |
-| `family.dynamics` `#F28E6B` | 8.00:1 | 7.33:1 | 6.33:1 |
-| `family.filter` `#B7A1FF` | 8.63:1 | 7.91:1 | 6.83:1 |
-| `family.modulation` `#67D6C1` | 10.80:1 | 9.91:1 | 8.55:1 |
-| `family.delay` `#6EB8C7` | 8.44:1 | 7.74:1 | 6.68:1 |
-| `family.logic-script` `#D5C4FF` | 11.89:1 | 10.90:1 | 9.41:1 |
-| `state.focus` `#F4F7FA` | 17.63:1 | 16.17:1 | 13.95:1 |
+| Foreground / boundary | Surface | Ratio | Treatment |
+|---|---|---:|---|
+| `text.primary` `#F2F1EE` | `surface.panel` `#262A2D` | 12.81:1 | Normal text. |
+| `text.secondary` `#B7BDC1` | `surface.raised` `#30363A` | 6.45:1 | Supporting copy. |
+| `text.muted` `#9AA3A9` | `surface.raised` `#30363A` | 4.77:1 | Lowest normal-text pairing; validate rendered scale. |
+| `signal.midi` `#CC5EFF` | `surface.panel` `#262A2D` | 4.56:1 | Barely passes; never dim without revalidation. |
+| `state.error` `#D45353` | `surface.panel` `#262A2D` | 3.56:1 | Icon/edge only, not normal text. |
+| `state.errorText` `#FF8A8A` | `surface.panel` `#262A2D` | 6.38:1 | Optional error copy. |
+| `border.structural` `#73808A` | `surface.raised` `#30363A` | 3.02:1 | Necessary non-text boundary; use with shape/spacing. |
+| `text.onAccent` `#121416` | `state.error` `#D45353` | 4.54:1 | Dark text on an opaque destructive button if used. |
 
-Color alone never distinguishes a route, category, selection, clipping or
-staleness. Use words, glyphs, line patterns, port shapes, geometry and motion
-with color. Supply a high-contrast mode that increases boundary and focus
-weight without changing signal meaning. Validate final component states,
-including disabled, hover, selected, error, and overlays, not just tokens.
-Allow reduced-motion preferences; no essential diagnostic may be encoded only
-in flashing or animation.
+The panel/background pairing is only 1.17:1, so structure relies on spacing
+and crisp borders, not the slight surface change alone. Do not put normal-size
+text over translucent colors or glow. Accent-filled buttons use the dark
+foreground; off-white text does not sit on bright accent fills.
+
+Selection is geometry first: a selected node has a crisp orange outline and
+corner handles; a selected cable has an orange outer stroke while its cyan
+audio core remains visible. Keyboard focus adds a separate high-contrast
+outline. Hover and pressed states use neutral surface shifts, not signal hue.
+These distinctions remain available when glow is disabled.
+
+### Restrained glow and visual effects
+
+Selected nodes may use three local nested strokes extending at most 9 logical
+pixels, with 0.12/0.16/0.20 opacity. The crisp outline and handles carry the
+meaning without glow. `View > Reduced effects (no glow)` disables this optional
+decoration for the current run. No blurred panel effects, glowing text,
+blinking, continuous pulse or audio-callback work is used. Meter/scope
+animation remains tied to measured live data; stale and stopped data are
+labeled rather than made to look live.
+
+Color alone never distinguishes route, category, selection, clipping or
+staleness. Use words, glyphs, line patterns, port shape, geometry and position
+with color. Keep the shell neutral; use semantic color only for implemented
+meaning and local interaction feedback. Allow reduced-motion preferences; no
+essential diagnostic may be encoded only in flashing or animation.
 
 ## 3. Typography and spatial rhythm
 
@@ -450,10 +459,11 @@ teaching but consumes space needed to arrange large networks. Keep the patch
 canvas permanently visible and let contextual signal inspection emphasize
 measurements without replacing the graph.
 
-**Color identity versus color accessibility.** Warm audio, blue control and
-green MIDI make the graph easier to scan, but color perception varies and
-routes can cross. Redundant line patterns, glyphs, labels and port geometry
-preserve meaning without hue.
+**Color identity versus color accessibility.** Audio cyan and analyzer green
+make current signal meaning easier to scan, while MIDI and control remain
+reserved. Selection orange is close to the reserved control orange, so
+selection must use outlines/handles and focus a separate high-contrast ring.
+Redundant labels, line geometry and port shapes preserve meaning without hue.
 
 **Embedded visualization versus legibility/performance.** Miniature meters can
 make the patch feel alive, but only a few can be read at a time and many
@@ -465,9 +475,10 @@ but can conceal unfamiliar operations. Provide clear accessible collapse
 controls, visible transport state and Stop, and keep Audio Setup discoverable
 as a named Audio-menu item.
 
-**Family color versus semantic state color.** A coral Dynamics rail must not
-look like an error. Keep family marks small and stable; put status in a
-separate icon, text badge and border, and check their composite contrast.
+**Signal color versus semantic state color.** Analyzer green must not look
+like generic success, and warning/error cannot borrow audio or control colors.
+Keep signal marks small and stable; put status in a separate icon, text badge
+and border, and check their contrast on the rendered surface.
 
 **Editor richness versus product truth.** Transfer curves and plugin-like
 controls make a professional instrument, but require versioned parameter

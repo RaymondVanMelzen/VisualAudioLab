@@ -126,7 +126,7 @@ void CanvasView::paint(juce::Graphics& graphics)
     float grid = 32.0f;
     while (grid * zoom_ < 20.0f)
         grid *= 4.0f;
-    graphics.setColour(juce::Colour(0xff2a3442));
+    graphics.setColour(ShellTheme::border().withAlpha(0.18f));
     for (float x = std::floor(damaged.getX() / grid) * grid; x < damaged.getRight(); x += grid)
         for (float y = std::floor(damaged.getY() / grid) * grid; y < damaged.getBottom(); y += grid)
             graphics.fillRect(x, y, 1.0f / zoom_, 1.0f / zoom_);
@@ -162,14 +162,14 @@ void CanvasView::paint(juce::Graphics& graphics)
     }
     if (gesture_ == Gesture::marquee)
     {
-        graphics.setColour(ShellTheme::accent().withAlpha(0.12f));
+        graphics.setColour(ShellTheme::selected().withAlpha(0.12f));
         graphics.fillRect(marquee_);
-        graphics.setColour(ShellTheme::accent());
+        graphics.setColour(ShellTheme::selected());
         graphics.drawRect(marquee_, 1.0f / zoom_);
     }
     if (workspace_.graph().nodes.empty())
     {
-        graphics.setColour(juce::Colours::lightgrey);
+        graphics.setColour(ShellTheme::textSecondary());
         graphics.drawFittedText("Place module instances from Module Browser.\nRouting Draft (N) creates a structural utility, not an audio function.\n"
                                 "No DSP or audio processing.",
                                 visible.toNearestInt().reduced(8), juce::Justification::centred, 4);

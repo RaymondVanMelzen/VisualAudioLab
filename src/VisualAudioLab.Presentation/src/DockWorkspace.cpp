@@ -24,6 +24,7 @@ void WorkspacePanel::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(ShellTheme::surface());
     graphics.setColour(ShellTheme::border());
+    graphics.drawRect(getLocalBounds(), 1);
     graphics.drawHorizontalLine(36, 0.0f, static_cast<float>(getWidth()));
 }
 
@@ -59,8 +60,8 @@ DockWorkspace::Divider::Divider(std::function<void(int)> moved) : moved_(std::mo
 
 void DockWorkspace::Divider::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(hasKeyboardFocus(false) || isMouseOver()
-                         ? ShellTheme::accent() : ShellTheme::border());
+    graphics.fillAll(hasKeyboardFocus(false) ? ShellTheme::focus()
+                    : isMouseOver() ? ShellTheme::hover() : ShellTheme::border());
 }
 
 void DockWorkspace::Divider::mouseDown(const juce::MouseEvent& event)
@@ -139,7 +140,7 @@ DockWorkspace::~DockWorkspace()
 }
 
 DockWorkspace::SignalInspectorWindow::SignalInspectorWindow(VisualizationSession& session)
-    : juce::DocumentWindow("Signal Inspector", juce::Colour(0xff1a2532), juce::DocumentWindow::closeButton)
+    : juce::DocumentWindow("Signal Inspector", ShellTheme::background(), juce::DocumentWindow::closeButton)
 {
     setUsingNativeTitleBar(true);
     setContentOwned(new VisualizationWidgets(session, VisualizationHost::monitor), false);

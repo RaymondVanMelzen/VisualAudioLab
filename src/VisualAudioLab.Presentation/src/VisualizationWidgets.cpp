@@ -113,14 +113,14 @@ void VisualizationSession::bindCanvas(CanvasView* canvas)
         if (!source) return;
         if (source->error.isNotEmpty())
         {
-            g.setColour(juce::Colour(0xffffb454));
+            g.setColour(ShellTheme::warning());
             g.drawFittedText("Capture limit", area.toNearestInt(), juce::Justification::centred, 2);
             return;
         }
         if (!source->latest || !source->latest->scopeFrames) return;
         const auto& data = *source->latest;
         const bool stale = juce::Time::getMillisecondCounterHiRes() - source->received > 500;
-        g.setColour(stale ? juce::Colour(0xff88929e) : juce::Colour(0xff65d6c4));
+        g.setColour(stale ? ShellTheme::textMuted() : ShellTheme::analyzer());
         juce::Path envelope;
         for (int pixel = 0; pixel < 48; ++pixel)
         {
@@ -253,9 +253,9 @@ void VisualizationWidget::update(std::shared_ptr<const audio::SignalAnalysis> re
 void VisualizationWidget::paint(juce::Graphics& g)
 {
     const auto began = std::chrono::steady_clock::now();
-    g.fillAll(juce::Colour(0xff121923));
-    g.setColour(juce::Colour(0xff344251)); g.drawRect(getLocalBounds());
-    g.setColour(juce::Colour(0xffe6edf3)); g.setFont(14.0f);
+    g.fillAll(ShellTheme::input());
+    g.setColour(ShellTheme::border()); g.drawRect(getLocalBounds());
+    g.setColour(ShellTheme::textPrimary()); g.setFont(14.0f);
     g.drawText(title(kind_), 9, 4, getWidth() - 95, 25, juce::Justification::centredLeft);
     auto area = getLocalBounds().reduced(9).withTrimmedTop(31).withTrimmedBottom(43).toFloat();
     g.setFont(11.0f);
@@ -272,13 +272,13 @@ void VisualizationWidget::paint(juce::Graphics& g)
         {
             if (data.pitchSilence)
             {
-                g.setColour(juce::Colour(0xffa7b5c5));
+                g.setColour(ShellTheme::textSecondary());
                 g.setFont(18.0f);
                 g.drawFittedText("No signal", area.toNearestInt(), juce::Justification::centred, 1);
             }
             else if (!data.pitchValid || data.pitchHz <= 0)
             {
-                g.setColour(juce::Colour(0xffffb454));
+                g.setColour(ShellTheme::warning());
                 g.setFont(18.0f);
                 g.drawFittedText("Uncertain signal", area.removeFromTop(area.getHeight() * 0.55f).toNearestInt(),
                                  juce::Justification::centred, 1);
@@ -292,20 +292,20 @@ void VisualizationWidget::paint(juce::Graphics& g)
                 const auto reading = tuningReading(data.pitchHz);
                 const auto inTune = !stale_ && !status_.startsWith("Frozen") && std::abs(reading.cents) <= 5.0;
                 auto noteArea = area.removeFromTop(area.getHeight() * 0.56f);
-                g.setColour(juce::Colour(0xffe6edf3).withAlpha(opacity));
+                g.setColour(stale_ ? ShellTheme::textMuted() : ShellTheme::textPrimary());
                 g.setFont(juce::FontOptions(std::min(32.0f, noteArea.getHeight() * 0.68f)));
                 g.drawText(reading.note, noteArea.toNearestInt(), juce::Justification::centred);
                 g.setFont(11.0f);
-                g.setColour(juce::Colour(0xffa7b5c5).withAlpha(opacity));
+                g.setColour(stale_ ? ShellTheme::textMuted() : ShellTheme::textSecondary());
                 g.drawText(juce::String(data.pitchHz, 1) + " Hz | " + signedCents(reading.cents)
                                + " | Ch " + juce::String(data.stamp.firstChannel + data.pitchChannel + 1)
                                + " | " + juce::String(data.pitchConfidence * 100.0f, 0) + "% confidence",
                            area.removeFromTop(17).toNearestInt(), juce::Justification::centred);
                 auto scale = area.reduced(3.0f, 5.0f);
                 const auto centre = scale.getCentreX();
-                g.setColour(juce::Colour(0xff354151));
+                g.setColour(ShellTheme::border().withAlpha(0.35f));
                 g.fillRoundedRectangle(scale.withHeight(8.0f).withY(scale.getCentreY() - 4.0f), 4.0f);
-                g.setColour(juce::Colour(0xff65d6c4).withAlpha(opacity));
+                g.setColour(ShellTheme::analyzer().withAlpha(opacity));
                 g.drawVerticalLine(static_cast<int>(centre), scale.getY(), scale.getBottom());
                 for (int step = -2; step <= 2; ++step)
                 {
@@ -315,10 +315,12 @@ void VisualizationWidget::paint(juce::Graphics& g)
                 }
                 const auto position = juce::jlimit(-1.0f, 1.0f, static_cast<float>(reading.cents / 50.0));
                 const auto markerX = centre + position * scale.getWidth() * 0.5f;
-                g.setColour(stale_ || status_.startsWith("Frozen") ? juce::Colour(0xffa7b5c5)
-                    : inTune ? juce::Colour(0xff65d6c4) : juce::Colour(0xffffb454));
+                g.setColour(stale_ || status_.startsWith("Frozen") ? ShellTheme::textMuted()
+                    : inTune ? ShellTheme::analyzer() : ShellTheme::warning());
                 g.fillEllipse(markerX - 5.0f, scale.getCentreY() - 5.0f, 10.0f, 10.0f);
                 g.setFont(10.0f);
+                g.setColour(stale_ || status_.startsWith("Frozen")
+                                ? ShellTheme::textMuted() : ShellTheme::textPrimary());
                 g.drawText(stale_ || status_.startsWith("Frozen") ? "STALE MEASUREMENT"
                                : inTune ? "IN TUNE" : "TUNE TOWARD CENTER",
                            scale.withTrimmedTop(12.0f).toNearestInt(), juce::Justification::centredTop);
@@ -326,12 +328,12 @@ void VisualizationWidget::paint(juce::Graphics& g)
         }
         else if (kind_ == VisualizationKind::oscilloscope)
         {
-            g.setColour(juce::Colour(0xff354151));
+            g.setColour(ShellTheme::border().withAlpha(0.35f));
             for (int i = 0; i <= 4; ++i)
                 g.drawHorizontalLine(static_cast<int>(area.getY() + area.getHeight() * static_cast<float>(i) / 4), area.getX(), area.getRight());
             for (int channel = 0; channel < data.stamp.channels; ++channel)
             {
-                g.setColour((channel ? juce::Colour(0xffffb454) : juce::Colour(0xff65d6c4)).withAlpha(opacity));
+                g.setColour(ShellTheme::audio().withAlpha(channel == 0 ? opacity : opacity * 0.68f));
                 juce::Path envelope;
                 const int pixels = juce::jlimit(1, 512, static_cast<int>(area.getWidth()));
                 for (int pixel = 0; pixel < pixels; ++pixel)
@@ -350,7 +352,7 @@ void VisualizationWidget::paint(juce::Graphics& g)
                 }
                 g.strokePath(envelope, juce::PathStrokeType(1.0f));
             }
-            g.setColour(juce::Colours::lightgrey);
+            g.setColour(ShellTheme::textSecondary());
             g.drawText("+1", static_cast<int>(area.getX()), static_cast<int>(area.getY()), 24, 16, juce::Justification::left);
             g.drawText("-1", static_cast<int>(area.getX()), static_cast<int>(area.getBottom()) - 16, 24, 16, juce::Justification::left);
         }
@@ -359,8 +361,8 @@ void VisualizationWidget::paint(juce::Graphics& g)
             for (int level = 0; level >= -120; level -= 30)
             {
                 const auto y = area.getY() + area.getHeight() * static_cast<float>(-level) / 120;
-                g.setColour(juce::Colour(0xff354151)); g.drawHorizontalLine(static_cast<int>(y), area.getX(), area.getRight());
-                g.setColour(juce::Colours::lightgrey); g.drawText(juce::String(level), static_cast<int>(area.getX()), static_cast<int>(y), 30, 13, juce::Justification::left);
+                g.setColour(ShellTheme::border().withAlpha(0.35f)); g.drawHorizontalLine(static_cast<int>(y), area.getX(), area.getRight());
+                g.setColour(ShellTheme::textSecondary()); g.drawText(juce::String(level), static_cast<int>(area.getX()), static_cast<int>(y), 30, 13, juce::Justification::left);
             }
             for (int channel = 0; channel < data.stamp.channels; ++channel)
             {
@@ -372,7 +374,7 @@ void VisualizationWidget::paint(juce::Graphics& g)
                     const auto y = area.getBottom() - area.getHeight() * (120 + juce::jlimit(-120.0f, 0.0f, data.amplitudeDb[channel][bin])) / 120;
                     if (bin == 1) path.startNewSubPath(x, y); else path.lineTo(x, y);
                 }
-                g.setColour((channel ? juce::Colour(0xffffb454) : juce::Colour(0xff65d6c4)).withAlpha(opacity));
+                g.setColour(ShellTheme::audio().withAlpha(channel == 0 ? opacity : opacity * 0.68f));
                 g.strokePath(path, juce::PathStrokeType(1.3f));
             }
         }
@@ -384,23 +386,23 @@ void VisualizationWidget::paint(juce::Graphics& g)
                                .withHeight(area.getHeight() / data.stamp.channels).reduced(0, 7);
                 const auto amplitude = kind_ == VisualizationKind::peak ? data.displayedPeak[channel] : data.rms[channel];
                 const auto fraction = (60 + juce::jlimit(-60.0f, 0.0f, audio::AnalyzerEngine::decibels(amplitude))) / 60;
-                g.setColour(juce::Colour(0xff253140)); g.fillRect(bar);
-                g.setColour((data.overRange[channel] ? juce::Colour(0xffef7777) : juce::Colour(0xff65d6c4)).withAlpha(opacity));
+                g.setColour(ShellTheme::raised()); g.fillRect(bar);
+                g.setColour((data.overRange[channel] ? ShellTheme::error() : ShellTheme::analyzer()).withAlpha(opacity));
                 g.fillRect(bar.withWidth(bar.getWidth() * fraction));
                 if (kind_ == VisualizationKind::peak)
                 {
                     const auto held = (60 + juce::jlimit(-60.0f, 0.0f, audio::AnalyzerEngine::decibels(data.heldPeak[channel]))) / 60;
-                    g.setColour(juce::Colours::white);
+                    g.setColour(ShellTheme::textPrimary());
                     g.drawVerticalLine(static_cast<int>(bar.getX() + bar.getWidth() * held), bar.getY(), bar.getBottom());
                 }
-                g.setColour(juce::Colours::white);
+                g.setColour(ShellTheme::textPrimary());
                 const auto reported = kind_ == VisualizationKind::peak ? data.peak[channel] : data.rms[channel];
                 g.drawText("Ch " + juce::String(data.stamp.firstChannel + channel + 1) + "   " + db(reported) + " dBFS",
                            bar.toNearestInt(), juce::Justification::centred);
             }
         }
     }
-    g.setColour(stale_ ? juce::Colour(0xffffb454) : juce::Colour(0xffa7b5c5));
+    g.setColour(stale_ ? ShellTheme::warning() : ShellTheme::textSecondary());
     if (waiting) g.drawFittedText(result_ ? (kind_ == VisualizationKind::guitarTuner
                                                     ? "Preparing pitch window" : "Preparing contiguous analysis window")
                                           : status_.isEmpty() ? "Waiting for contiguous samples" : status_,
@@ -446,7 +448,7 @@ VisualizationWidgets::VisualizationWidgets(VisualizationSession& session, Visual
     {
         plots_[i] = std::make_unique<VisualizationWidget>(static_cast<VisualizationKind>(i), host);
         if (host == VisualizationHost::monitor || (host == VisualizationHost::embedded && i == 0)) addAndMakeVisible(*plots_[i]);
-        else tabs_.addTab(title(static_cast<VisualizationKind>(i)), juce::Colour(0xff1a2532), plots_[i].get(), false);
+        else tabs_.addTab(title(static_cast<VisualizationKind>(i)), ShellTheme::surface(), plots_[i].get(), false);
     }
     if (host == VisualizationHost::inspector) addAndMakeVisible(tabs_);
     if (host == VisualizationHost::embedded)
@@ -486,7 +488,7 @@ void VisualizationWidgets::resized()
     }
     else tabs_.setBounds(bounds);
 }
-void VisualizationWidgets::paint(juce::Graphics& g) { g.fillAll(juce::Colour(0xff1a2532)); }
+void VisualizationWidgets::paint(juce::Graphics& g) { g.fillAll(ShellTheme::surface()); }
 void VisualizationWidgets::releaseDemand()
 {
     if (!demand_) return;

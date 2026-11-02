@@ -20,7 +20,12 @@ bool ConnectionView::hit(juce::Point<float> point, float tolerance) const
 
 void ConnectionView::paint(juce::Graphics& graphics, bool selected) const
 {
-    graphics.setColour(selected ? juce::Colours::yellow : ShellTheme::accent().withAlpha(0.75f));
-    graphics.strokePath(path_, juce::PathStrokeType(selected ? 3.5f : 2.0f));
+    if (selected)
+    {
+        graphics.setColour(ShellTheme::selected());
+        graphics.strokePath(path_, juce::PathStrokeType(4.5f));
+    }
+    graphics.setColour(ShellTheme::audio());
+    graphics.strokePath(path_, juce::PathStrokeType(selected ? 2.0f : 2.5f));
 }
 }

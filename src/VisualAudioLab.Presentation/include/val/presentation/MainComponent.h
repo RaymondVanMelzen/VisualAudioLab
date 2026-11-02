@@ -60,7 +60,7 @@ private:
     /** Stable, presentation-only command identities, separate from persisted user content. */
     enum CommandId
     {
-        rename = 0x2100, undo, redo, toggleInspector, resetLayout,
+        rename = 0x2100, undo, redo, toggleInspector, toggleReducedEffects, resetLayout,
         showModules, showProperties, showAudioSettings, quit,
         saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport
     };

@@ -1,5 +1,12 @@
 # Visual Audio Lab
 
+The [typography and routing implementation plan](docs/plans/07-TypographyAndRoutingImplementation.md)
+records the current delivery boundary: embedded Inter/JetBrains Mono and a
+shared-width graph with explicit Sum, multiple roots, fan-out and inert
+disconnected nodes. The full fixed-endpoint/multi-port redesign remains staged;
+independent bus widths, layout adapters and multiple destinations are not shipped.
+Font sources and redistribution notices are in [resources/fonts](resources/fonts/README.md).
+
 C++20 / JUCE / CMake application for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full product vision: it contains a dark dockable workspace, node editor, versioned `.valab` persistence, native audio configuration and explicit transport, seven DSP processors, calibrated visualizers and a bounded VAL Script editor/compiler. Plugin hosting/export is not implemented. Audio never starts automatically.
 
 ## Structure and dependencies

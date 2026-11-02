@@ -1,4 +1,5 @@
 #include <val/presentation/MainComponent.h>
+#include <val/presentation/Typography.h>
 #include <ValResources.h>
 
 namespace val::presentation
@@ -9,6 +10,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     setLookAndFeel(&theme_);
     setName("Visual Audio Lab application shell");
     setWantsKeyboardFocus(true);
+    if (!Typography::bundledFontsAvailable() || !Typography::tabularFiguresAvailable())
+        juce::Logger::writeToLog("Typography: bundled font or tabular feature unavailable; using explicit platform fallback. Numeric fields retain fixed bounds.");
     banner_.setText("Explicit Start routes audio. Offline preview uses no device. Invalid edits keep last accepted audio; Stop is always available.",
                    juce::dontSendNotification);
     banner_.setColour(juce::Label::textColourId, ShellTheme::textSecondary());

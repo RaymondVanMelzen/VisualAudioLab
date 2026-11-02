@@ -1,7 +1,11 @@
 # Typography and Font System
 
-**Status:** design specification only. No implementation is implied or
-shipped by this document. It complements `docs/VisualDesignLanguage.md` and
+**Status:** target specification; partially implemented. Bundled faces, shared
+role helpers, OpenType numeric/code features, theme fonts and canvas text tiers
+are shipped by [implementation layer 1](plans/07-TypographyAndRoutingImplementation.md).
+The accessibility/reflow preferences, richer editor and Glance-mode proposals
+below remain targets, not a claim of completion or cross-platform qualification.
+It complements `docs/VisualDesignLanguage.md` and
 `docs/plans/01-VisualDesignGuidelines.md`.
 
 ## 1. Principles

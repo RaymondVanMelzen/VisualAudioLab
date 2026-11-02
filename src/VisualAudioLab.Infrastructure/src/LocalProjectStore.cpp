@@ -1,4 +1,5 @@
 #include <val/infrastructure/LocalProjectStore.h>
+#include <val/domain/Routing.h>
 #include <juce_core/juce_core.h>
 #include <charconv>
 #include <algorithm>
@@ -271,8 +272,9 @@ application::ProjectReadResult LocalProjectStore::decode(const std::string& sour
         const auto& reader = field(root, "minimumReader");
         check(integer(field(reader, "major")) == 1 && integer(field(reader, "minor")) == 0,
               "Project requires a newer reader. It will not be opened or overwritten.");
-        check(array(field(root, "requiredFeatures")).isEmpty(),
-              "Project requires unsupported features. It will not be opened or overwritten.");
+        for (const auto& feature : array(field(root, "requiredFeatures")))
+            check(text(feature) == "audio.explicit-sum.v1",
+                  "Project requires unsupported features. It will not be opened or overwritten.");
         ProjectState state;
         state.workspace.name = text(field(root, "name"));
         state.activePatch = identity(field(root, "activePatch"));
@@ -366,6 +368,17 @@ application::Result LocalProjectStore::encode(application::ProjectFile& file)
         put(reader, "major", 1); put(reader, "minor", 0);
         put(root, "requiredFeatures", juce::Array<var>{});
     }
+    bool usesSum{};
+    for (const auto& [id, patch] : file.state.patches)
+    {
+        (void) id;
+        for (const auto& [nodeId, node] : patch.graph.nodes)
+        {
+            (void) nodeId;
+            usesSum = usesSum || domain::isSumPort(node);
+        }
+    }
+    put(root, "requiredFeatures", usesSum ? juce::Array<var>{"audio.explicit-sum.v1"} : juce::Array<var>{});
     put(root, "format", "VisualAudioLab");
     put(root, "name", juce::String::fromUTF8(file.state.workspace.name.c_str()));
     put(root, "activePatch", idValue(file.state.activePatch));

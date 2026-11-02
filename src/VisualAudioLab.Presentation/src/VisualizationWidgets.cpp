@@ -1,5 +1,6 @@
 #include <val/presentation/VisualizationWidgets.h>
 #include <val/presentation/ShellTheme.h>
+#include <val/presentation/Typography.h>
 #include <val/presentation/CanvasView.h>
 #include <algorithm>
 #include <chrono>
@@ -22,11 +23,6 @@ const char* title(VisualizationKind kind)
         case VisualizationKind::correlation: return "Correlation Meter";
     }
     return "";
-}
-juce::String db(float value)
-{
-    const auto level = audio::AnalyzerEngine::decibels(value);
-    return std::isfinite(level) ? juce::String(level, 2) : juce::String("-inf");
 }
 struct TuningReading
 {
@@ -269,10 +265,10 @@ void VisualizationWidget::paint(juce::Graphics& g)
     const auto began = std::chrono::steady_clock::now();
     g.fillAll(ShellTheme::input());
     g.setColour(ShellTheme::border()); g.drawRect(getLocalBounds());
-    g.setColour(ShellTheme::textPrimary()); g.setFont(14.0f);
+    g.setColour(ShellTheme::textPrimary()); g.setFont(Typography::font(TextRole::panelTitle));
     g.drawText(title(kind_), 9, 4, getWidth() - 95, 25, juce::Justification::centredLeft);
     auto area = getLocalBounds().reduced(9).withTrimmedTop(31).withTrimmedBottom(43).toFloat();
-    g.setFont(11.0f);
+    g.setFont(Typography::font(TextRole::status));
     const bool waiting = !result_ || (kind_ == VisualizationKind::guitarTuner && !result_->pitchReady)
         || (kind_ == VisualizationKind::spectrum && !result_->spectrumValid)
         || (kind_ == VisualizationKind::peak && !result_->peakValid)
@@ -288,16 +284,16 @@ void VisualizationWidget::paint(juce::Graphics& g)
             if (data.pitchSilence)
             {
                 g.setColour(ShellTheme::textSecondary());
-                g.setFont(18.0f);
+                g.setFont(Typography::ui(18, true));
                 g.drawFittedText("No signal", area.toNearestInt(), juce::Justification::centred, 1);
             }
             else if (!data.pitchValid || data.pitchHz <= 0)
             {
                 g.setColour(ShellTheme::warning());
-                g.setFont(18.0f);
+                g.setFont(Typography::ui(18, true));
                 g.drawFittedText("Uncertain signal", area.removeFromTop(area.getHeight() * 0.55f).toNearestInt(),
                                  juce::Justification::centred, 1);
-                g.setFont(11.0f);
+                g.setFont(Typography::font(TextRole::status));
                 g.drawFittedText("Isolate one string | confidence "
                                      + juce::String(data.pitchConfidence * 100.0f, 0) + "%",
                                  area.toNearestInt(), juce::Justification::centred, 1);
@@ -308,11 +304,11 @@ void VisualizationWidget::paint(juce::Graphics& g)
                 const auto inTune = !stale_ && !status_.startsWith("Frozen") && std::abs(reading.cents) <= 5.0;
                 auto noteArea = area.removeFromTop(area.getHeight() * 0.56f);
                 g.setColour(stale_ ? ShellTheme::textMuted() : ShellTheme::textPrimary());
-                g.setFont(juce::FontOptions(std::min(32.0f, noteArea.getHeight() * 0.68f)));
+                g.setFont(Typography::numeric(std::min(32.0f, noteArea.getHeight() * 0.68f)));
                 g.drawText(reading.note, noteArea.toNearestInt(), juce::Justification::centred);
-                g.setFont(11.0f);
+                g.setFont(Typography::font(TextRole::status));
                 g.setColour(stale_ ? ShellTheme::textMuted() : ShellTheme::textSecondary());
-                g.drawText(juce::String(data.pitchHz, 1) + " Hz | " + signedCents(reading.cents)
+                g.drawText(Typography::frequency(data.pitchHz) + " | " + signedCents(reading.cents)
                                + " | Ch " + juce::String(data.stamp.firstChannel + data.pitchChannel + 1)
                                + " | " + juce::String(data.pitchConfidence * 100.0f, 0) + "% confidence",
                            area.removeFromTop(17).toNearestInt(), juce::Justification::centred);
@@ -333,7 +329,7 @@ void VisualizationWidget::paint(juce::Graphics& g)
                 g.setColour(stale_ || status_.startsWith("Frozen") ? ShellTheme::textMuted()
                     : inTune ? ShellTheme::analyzer() : ShellTheme::warning());
                 g.fillEllipse(markerX - 5.0f, scale.getCentreY() - 5.0f, 10.0f, 10.0f);
-                g.setFont(10.0f);
+                g.setFont(Typography::font(TextRole::label));
                 g.setColour(stale_ || status_.startsWith("Frozen")
                                 ? ShellTheme::textMuted() : ShellTheme::textPrimary());
                 g.drawText(stale_ || status_.startsWith("Frozen") ? "STALE MEASUREMENT"
@@ -361,10 +357,10 @@ void VisualizationWidget::paint(juce::Graphics& g)
             g.setColour(ShellTheme::audio().withAlpha(opacity));
             g.fillRoundedRectangle(bar, 4.0f);
             g.setColour(ShellTheme::textPrimary());
-            g.setFont(juce::FontOptions(22.0f));
-            g.drawText(juce::String(data.correlation, 3), area.withHeight(32.0f).toNearestInt(),
+            g.setFont(Typography::numeric(24));
+            g.drawText(Typography::number(data.correlation, 3), area.withHeight(32.0f).toNearestInt(),
                        juce::Justification::centred);
-            g.setFont(11.0f);
+            g.setFont(Typography::font(TextRole::status));
             g.setColour(ShellTheme::textSecondary());
             g.drawText("-1   Out of phase", static_cast<int>(area.getX()), static_cast<int>(track.getBottom() + 8.0f),
                        static_cast<int>(area.getWidth() * 0.4f), 18, juce::Justification::left);
@@ -446,12 +442,16 @@ void VisualizationWidget::paint(juce::Graphics& g)
                 }
                 g.setColour(ShellTheme::textPrimary());
                 const auto reported = kind_ == VisualizationKind::peak ? data.peak[channel] : data.rms[channel];
-                g.drawText("Ch " + juce::String(data.stamp.firstChannel + channel + 1) + "   " + db(reported) + " dBFS",
-                           bar.toNearestInt(), juce::Justification::centred);
+                g.setFont(Typography::font(TextRole::label));
+                g.drawText("Ch " + juce::String(data.stamp.firstChannel + channel + 1),
+                           bar.withWidth(45), juce::Justification::centredLeft);
+                Typography::drawQuantity(g, audio::AnalyzerEngine::decibels(reported), 1, "dBFS",
+                                         bar.withTrimmedLeft(48), 15);
             }
         }
     }
     g.setColour(stale_ ? ShellTheme::warning() : ShellTheme::textSecondary());
+    g.setFont(Typography::font(TextRole::status));
     if (waiting) g.drawFittedText(result_ ? (kind_ == VisualizationKind::correlation
                                                     ? result_->stamp.channels < 2 ? "Requires a stereo source"
                                                         : "No stereo variation in the analysis window"
@@ -496,10 +496,10 @@ VisualizationWidgets::VisualizationWidgets(VisualizationSession& session, Visual
     for (auto* child : std::initializer_list<juce::Component*>{&target_, &pin_, &freeze_, &details_, &reset_, &status_})
         addAndMakeVisible(child);
     addAndMakeVisible(generatorInfo_);
-    generatorInfo_.setFont(juce::FontOptions(12.0f));
+    generatorInfo_.setFont(Typography::font(TextRole::status));
     generatorInfo_.setColour(juce::Label::textColourId, ShellTheme::textPrimary());
     status_.setText("No target. Structural nodes are not automatically processing.", juce::dontSendNotification);
-    status_.setFont(juce::FontOptions(11.0f));
+    status_.setFont(Typography::font(TextRole::status));
     for (std::size_t i = 0; i < plots_.size(); ++i)
     {
         plots_[i] = std::make_unique<VisualizationWidget>(static_cast<VisualizationKind>(i), host);

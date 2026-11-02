@@ -101,5 +101,23 @@ int main()
             require(journal.redo().succeeded && journal.graph() == snapshots[step],
                     "Every content command redoes its exact following snapshot.");
         require(!journal.canRedo(), "Redo reaches the accepted final graph.");
+        application::WorkspaceService sum;
+        require(sum.createNode({0, 0}, "Input", {{"audio.type", std::string("Input")}}).succeeded, "Create input source.");
+        const auto input = sum.lastCreatedNode();
+        require(sum.createNode({0, 100}, "DC", {{"audio.type", std::string("DC Generator")}}).succeeded, "Create generator source.");
+        const auto dc = sum.lastCreatedNode();
+        require(sum.createNode({250, 40}, "Sum", {{"audio.type", std::string("Sum")}}).succeeded, "Create explicit Sum.");
+        const auto mixer = sum.lastCreatedNode();
+        require(sum.connect({input, Port::output}, {mixer, Port::input}).succeeded
+                && sum.connect({dc, Port::output}, {mixer, Port::input}).succeeded,
+                "Only a designated Sum input admits multiple sources.");
+        const auto mixed = sum.graph();
+        require(!sum.connect({dc, Port::output}, {mixer, Port::input}).succeeded && sum.graph() == mixed,
+                "Duplicate Sum connections are rejected atomically.");
+        require(!sum.connect({mixer, Port::output}, {input, Port::input}).succeeded,
+                "Input endpoint has no processor input.");
+        require(sum.undo().succeeded && sum.graph().connections.size() == 1
+                && sum.redo().succeeded && sum.graph() == mixed, "Explicit summing is undoable without changing identities.");
+        require(application::validateProject(sum.project()).succeeded, "Project validation agrees with editing Sum fan-in.");
     });
 }

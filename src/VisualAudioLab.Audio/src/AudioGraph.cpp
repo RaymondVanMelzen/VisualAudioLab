@@ -40,6 +40,7 @@ std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1, s
         case AudioNodeType::chirpGenerator: return std::make_unique<ChirpGeneratorNode>();
         case AudioNodeType::noiseGenerator: return std::make_unique<NoiseGeneratorNode>();
         case AudioNodeType::dcGenerator: return std::make_unique<DcGeneratorNode>();
+        case AudioNodeType::sum: return std::make_unique<SumNode>();
     }
     return {};
 }
@@ -96,6 +97,7 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
         else if (*type == "Chirp Generator") definition.type = AudioNodeType::chirpGenerator;
         else if (*type == "Noise Generator") definition.type = AudioNodeType::noiseGenerator;
         else if (*type == "DC Generator") definition.type = AudioNodeType::dcGenerator;
+        else if (*type == "Sum") definition.type = AudioNodeType::sum;
         else return {{}, invalid("Unsupported audio.type on node " + std::to_string(id) + ".")};
         if (const auto gain = node.parameters.find("audio.gain"); gain != node.parameters.end())
         {
@@ -278,6 +280,23 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
     return {std::move(result), {}};
 }
 
+std::vector<std::uint64_t> AudioGraph::outputDependencies() const
+{
+    std::set<std::uint64_t> visited;
+    std::vector<std::uint64_t> pending;
+    for (const auto& node : nodes)
+        if (node.type == AudioNodeType::output) pending.push_back(node.id);
+    while (!pending.empty())
+    {
+        const auto id = pending.back();
+        pending.pop_back();
+        if (!visited.insert(id).second) continue;
+        for (const auto& edge : connections)
+            if (edge.destination == id) pending.push_back(edge.source);
+    }
+    return {visited.begin(), visited.end()};
+}
+
 AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     const AudioGraph& graph, AudioStreamFormat format, std::uint64_t revision) try
 {
@@ -294,7 +313,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         return {{}, invalid("Prepared scratch exceeds the 64 MiB runtime budget.")};
 
     std::map<std::uint64_t, const AudioNodeDefinition*> nodes;
-    std::map<std::uint64_t, std::uint64_t> incoming;
+    std::map<std::uint64_t, std::vector<std::uint64_t>> incoming;
     std::map<std::uint64_t, std::vector<std::uint64_t>> outgoing;
     std::uint64_t output{};
     int capturedChannels{};
@@ -305,7 +324,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         if (node.id == 0 || !nodes.emplace(node.id, &node).second || !std::isfinite(node.gain)
             || node.gain < 0 || node.gain > 4)
             return {{}, invalid("Duplicate/zero node ID or invalid gain (finite 0-4 required).")};
-        if (node.type < AudioNodeType::input || node.type > AudioNodeType::dcGenerator)
+        if (node.type < AudioNodeType::input || node.type > AudioNodeType::sum)
             return {{}, invalid("Unsupported processor type.")};
         if (node.type == AudioNodeType::script)
         {
@@ -338,38 +357,39 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     }
     if (!nodes.empty() && output == 0)
         return {{}, invalid("A nonempty runtime graph requires one Output node.")};
+    std::set<std::pair<std::uint64_t, std::uint64_t>> edges;
     for (const auto& edge : graph.connections)
     {
         if (!nodes.contains(edge.source) || !nodes.contains(edge.destination) || edge.source == edge.destination
             || nodes.at(edge.source)->type == AudioNodeType::output || nodes.at(edge.destination)->type == AudioNodeType::input
             || isGenerator(nodes.at(edge.destination)->type)
-            || !incoming.emplace(edge.destination, edge.source).second)
+            || !edges.emplace(edge.source, edge.destination).second
+            || (incoming.contains(edge.destination) && nodes.at(edge.destination)->type != AudioNodeType::sum))
             return {{}, invalid("Invalid/missing endpoint, direction, self-link or multiple input sources.")};
         const auto& destination = *nodes.at(edge.destination);
         if (destination.type == AudioNodeType::script && destination.script->inputs().empty())
             return {{}, invalid("A zero-input Script generator cannot accept an upstream connection.")};
+        incoming[edge.destination].push_back(edge.source);
         outgoing[edge.source].push_back(edge.destination);
     }
     std::priority_queue<std::uint64_t, std::vector<std::uint64_t>, std::greater<>> ready;
+    std::map<std::uint64_t, std::size_t> degrees;
     for (const auto& [id, node] : nodes)
-        if (!incoming.contains(id)) ready.push(id);
+    {
+        degrees[id] = incoming[id].size();
+        if (degrees[id] == 0) ready.push(id);
+    }
     std::vector<std::uint64_t> order;
     while (!ready.empty())
     {
         const auto id = ready.top(); ready.pop();
         order.push_back(id);
-        for (const auto next : outgoing[id]) ready.push(next); // At most one upstream per input.
+        for (const auto next : outgoing[id])
+            if (--degrees.at(next) == 0) ready.push(next);
     }
     if (order.size() != nodes.size()) return {{}, invalid("Runtime graph contains a directed cycle.")};
-    std::set<std::uint64_t> reachable;
-    for (auto id = output; id != 0;)
-    {
-        reachable.insert(id);
-        const auto found = incoming.find(id);
-        id = found == incoming.end() ? 0 : found->second;
-    }
-    if (reachable.size() != nodes.size())
-        return {{}, invalid("Every basic runtime node must feed the Output; disconnected/dead branches are rejected.")};
+    const auto dependencies = graph.outputDependencies();
+    const std::set<std::uint64_t> reachable(dependencies.begin(), dependencies.end());
 
     auto plan = std::unique_ptr<PreparedAudioGraph>(new PreparedAudioGraph);
     plan->format_ = format;
@@ -382,7 +402,8 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     {
         const auto& node = *nodes.at(id);
         const auto destination = (plan->steps_.size() + 1) * stride;
-        const auto source = incoming.contains(id) ? offsets.at(incoming.at(id)) : 0;
+        const auto& upstream = incoming.at(id);
+        const auto source = upstream.empty() ? 0 : offsets.at(upstream.front());
         auto processor = createProcessor(node.type, node.gain, node.script);
         if (!node.userScale.empty())
         {
@@ -395,6 +416,8 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         if (storageBytes > 128 * 1024 * 1024)
             return {{}, invalid("Prepared DSP storage exceeds the 128 MiB graph budget.")};
         std::set<std::uint16_t> assigned;
+        if (node.type == AudioNodeType::sum && (!node.parameters.empty() || !node.controls.empty() || node.bypassed))
+            return {{}, invalid("Sum is a unity-coefficient routing utility with no gain, control or bypass parameters.")};
         for (const auto& [parameter, value] : node.parameters)
             if (!assigned.insert(parameter).second || !processor->initialParameter(parameter, value))
                 return {{}, invalid("Duplicate, unknown or out-of-range initial processor parameter.")};
@@ -408,7 +431,11 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             return {{}, invalid(prepared.error)};
         if (node.type == AudioNodeType::analyzer)
             static_cast<AnalyzerNode*>(processor.get())->bindCapture(node.capture);
-        plan->steps_.push_back({id, node.type, std::move(processor), source, destination, node.capture});
+        std::vector<std::size_t> sumSources;
+        if (node.type == AudioNodeType::sum)
+            for (auto upstreamId : upstream) sumSources.push_back(offsets.at(upstreamId));
+        plan->steps_.push_back({id, node.type, std::move(processor), source, destination, node.capture,
+                                std::move(sumSources), reachable.contains(id)});
         offsets.emplace(id, destination);
     }
     return {std::move(plan), {}};
@@ -422,13 +449,29 @@ void PreparedAudioGraph::process(const AudioBuffer& buffer, int offset, int fram
 {
     if (frames < 0) frames = buffer.frames;
     for (auto& step : steps_)
-        step.processor->process({scratch_.data() + step.source + offset, scratch_.data() + step.destination + offset,
-                                 channels_, format_.maxFrames, frames, buffer, offset});
+    {
+        if (!step.active) continue;
+        if (step.type == AudioNodeType::sum)
+        {
+            for (int channel = 0; channel < channels_; ++channel)
+            {
+                auto* destination = scratch_.data() + step.destination + channel * format_.maxFrames + offset;
+                std::fill_n(destination, frames, 0.0f);
+                for (auto source : step.sumSources)
+                    for (int frame = 0; frame < frames; ++frame)
+                        destination[frame] += scratch_[source + channel * format_.maxFrames + offset + frame];
+            }
+            step.processor->process({scratch_.data() + step.destination + offset, scratch_.data() + step.destination + offset,
+                                      channels_, format_.maxFrames, frames, buffer, offset});
+        }
+        else step.processor->process({scratch_.data() + step.source + offset, scratch_.data() + step.destination + offset,
+                                      channels_, format_.maxFrames, frames, buffer, offset});
+    }
 }
 void PreparedAudioGraph::capture(int frames, std::uint64_t epoch, std::uint64_t firstFrame) noexcept
 {
     for (auto& step : steps_)
-        if (step.capture)
+        if (step.capture && step.active)
         {
             const auto processed = step.processor->processedFrames();
             const auto start = processed >= static_cast<std::uint64_t>(frames)
@@ -442,6 +485,7 @@ bool PreparedAudioGraph::parameterIndex(std::uint64_t node, std::uint16_t parame
 {
     for (std::size_t i = 0; i < steps_.size(); ++i)
         if (steps_[i].id == node && steps_[i].type != AudioNodeType::input && steps_[i].type != AudioNodeType::output
+            && steps_[i].type != AudioNodeType::sum
             && steps_[i].processor->accepts(parameter, value, action)) { index = i; return true; }
     return false;
 }

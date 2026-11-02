@@ -40,6 +40,14 @@ target_link_libraries(VisualAudioLab.Project.Tests PRIVATE
 val_configure_target(VisualAudioLab.Project.Tests)
 add_test(NAME Persistence.Projects COMMAND VisualAudioLab.Project.Tests)
 
+add_executable(VisualAudioLab.ToolkitProjects.Tests ToolkitProjectTests.cpp)
+target_link_libraries(VisualAudioLab.ToolkitProjects.Tests PRIVATE
+    VisualAudioLab.Infrastructure VisualAudioLab.Audio juce::juce_core val_juce_options)
+target_compile_definitions(VisualAudioLab.ToolkitProjects.Tests PRIVATE
+    VAL_EXAMPLE_PROJECT_DIR="${PROJECT_SOURCE_DIR}/examples/projects")
+val_configure_target(VisualAudioLab.ToolkitProjects.Tests)
+add_test(NAME Toolkit.Examples COMMAND VisualAudioLab.ToolkitProjects.Tests)
+
 add_executable(VisualAudioLab.Infrastructure.Tests InfrastructureTests.cpp)
 target_link_libraries(VisualAudioLab.Infrastructure.Tests PRIVATE
     VisualAudioLab.Infrastructure juce::juce_core val_juce_options)

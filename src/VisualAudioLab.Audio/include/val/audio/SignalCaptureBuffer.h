@@ -14,6 +14,7 @@ struct CaptureStamp
     std::uint64_t source{}, revision{}, epoch{}, firstFrame{}, sequence{}, drops{};
     double sampleRate{};
     int channels{}, frames{}, firstChannel{};
+    std::uint64_t nodeFrame{};
 };
 
 /** Worker-published legacy meter observation; raw RMS reference is amplitude 1. */
@@ -46,7 +47,7 @@ public:
     SignalCaptureBuffer(std::uint64_t source, double sampleRate, int channels, int firstChannel = 0);
     /** Bounded to two slots/4096 frames. Disabled demand skips all sample copies. */
     void capture(const float* planar, int stride, int frames, std::uint64_t revision,
-                 std::uint64_t epoch, std::uint64_t firstFrame) noexcept;
+                 std::uint64_t epoch, std::uint64_t firstFrame, std::uint64_t firstNodeFrame = 0) noexcept;
     [[nodiscard]] const Slot* acquire() const noexcept;
     void release() noexcept;
     /** Demand may change on control/UI; this never owns/destroys callback resources. */

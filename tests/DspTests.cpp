@@ -1,9 +1,15 @@
 #include "TestSupport.h"
 #include "AudioAllocationProbe.h"
 #include <val/audio/AudioEngine.h>
+#include <val/audio/AudioGraph.h>
+#include <val/audio/GeneratorNodes.h>
+#include <val/script/Compiler.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <iostream>
 #include <limits>
 #include <numbers>
 #include <type_traits>
@@ -39,7 +45,8 @@ void event(AudioNode& node, std::uint16_t parameter, float value, ParameterActio
     require(accepted, "Accept valid parameter transition.");
 }
 void initial(AudioNode& node, std::uint16_t parameter, float value)
-{ require(node.initialParameter(parameter, value), "Validate initial physical-domain parameter."); }
+{ require(node.initialParameter(parameter, value), "Validate initial physical-domain parameter "
+          + std::to_string(parameter) + "=" + std::to_string(value) + "."); }
 void prepare(AudioNode& node, double rate = 48000, int channels = 1)
 { require(node.prepare({rate, 512, channels}).succeeded, "Prepare actual processor."); }
 
@@ -58,6 +65,22 @@ double rms(const std::vector<float>& values, std::size_t start, std::size_t end)
     double sum{};
     for (auto i = start; i < end; ++i) sum += static_cast<double>(values[i]) * values[i];
     return std::sqrt(sum / static_cast<double>(end - start));
+}
+double binPower(const std::vector<float>& values, std::size_t start, int count, int bin)
+{
+    const auto angle = 2.0 * std::numbers::pi * bin / static_cast<double>(count);
+    const auto stepCos = std::cos(angle), stepSin = std::sin(angle);
+    double cosine = 1, sine{}, real{}, imaginary{};
+    for (int i = 0; i < count; ++i)
+    {
+        const auto sample = values[start + static_cast<std::size_t>(i)];
+        real += sample * cosine;
+        imaginary -= sample * sine;
+        const auto nextCosine = cosine * stepCos - sine * stepSin;
+        sine = sine * stepCos + cosine * stepSin;
+        cosine = nextCosine;
+    }
+    return (real * real + imaginary * imaginary) / (static_cast<double>(count) * count);
 }
 
 void testGainAndLayers()
@@ -334,6 +357,250 @@ void testProtection()
     }
 }
 
+std::vector<float> renderSource(AudioNode& node, int frames, int block)
+{
+    std::vector<float> output(static_cast<std::size_t>(frames), 99.0f);
+    const AudioBuffer hardware{};
+    for (int offset = 0; offset < frames; offset += block)
+        process(node, {nullptr, output.data() + offset, 1, frames, std::min(block, frames - offset), hardware, offset});
+    return output;
+}
+
+void testGeneratorSources()
+{
+    const auto hzEntry = parseFrequencyEntry("440 Hz", 440);
+    const auto midiEntry = parseFrequencyEntry("MIDI 69", 440);
+    const auto noteEntry = parseFrequencyEntry("a4", 440);
+    const auto tunedEntry = parseFrequencyEntry("A4 (A=442 Hz)", 440);
+    require(hzEntry && midiEntry && noteEntry && tunedEntry
+            && std::abs(hzEntry.hertz - 440) < 1.0e-9
+            && std::abs(midiEntry.hertz - 440) < 1.0e-9
+            && std::abs(noteEntry.hertz - 440) < 1.0e-9
+            && std::abs(tunedEntry.hertz - 442) < 1.0e-9,
+            "Frequency entry converts Hz, MIDI and explicit note-reference tuning unambiguously.");
+    require(!parseFrequencyEntry("A442", 440) && !parseFrequencyEntry("MIDI 69.5", 440)
+            && !parseFrequencyEntry("C11", 440),
+            "Ambiguous note spellings, fractional MIDI notes and out-of-range note octaves are rejected.");
+
+    SignalGeneratorNode oscillator;
+    initial(oscillator, signalFrequency, 1000);
+    initial(oscillator, signalLevelDb, -6.0205999f);
+    prepare(oscillator, 48000, 1);
+    const auto tone = renderSource(oscillator, 480, 17);
+    require(std::abs(tone[12] - 0.5f) < 1.0e-5f && std::abs(tone[24]) < 1.0e-5f,
+            "Signal Generator produces the requested 1 kHz sine at a -6.0206 dBFS peak.");
+
+    const auto configuredSweep = [](SignalGeneratorNode& node)
+    {
+        initial(node, signalMode, static_cast<float>(SignalMode::sweep));
+        initial(node, signalStartFrequency, 100);
+        initial(node, signalEndFrequency, 5000);
+        initial(node, signalDuration, 0.25f);
+        initial(node, signalSweepCurve, static_cast<float>(SweepCurve::exponential));
+        initial(node, signalCurvature, 4);
+        initial(node, signalTransport, static_cast<float>(GeneratorTransport::loop));
+        prepare(node, 48000, 1);
+    };
+    SignalGeneratorNode sweepA, sweepB;
+    configuredSweep(sweepA); configuredSweep(sweepB);
+    const auto a = renderSource(sweepA, 24000, 64);
+    const auto b = renderSource(sweepB, 24000, 127);
+    require(a == b, "Analytic sweep phase and loop boundaries are invariant to arbitrary processing blocks.");
+    for (const auto rate : {44100.0, 48000.0, 96000.0, 192000.0})
+        for (const auto curve : {SweepCurve::linear, SweepCurve::logarithmic, SweepCurve::exponential})
+        {
+            SignalGeneratorNode left, right;
+            const auto configure = [&](SignalGeneratorNode& node)
+            {
+                initial(node, signalMode, static_cast<float>(SignalMode::sweep));
+                initial(node, signalStartFrequency, 200);
+                initial(node, signalEndFrequency, 12000);
+                initial(node, signalDuration, 0.125f);
+                initial(node, signalSweepCurve, static_cast<float>(curve));
+                initial(node, signalCurvature, 3.0f);
+                initial(node, signalTransport, static_cast<float>(GeneratorTransport::loop));
+                prepare(node, rate, 1);
+            };
+            configure(left); configure(right);
+            const auto frames = static_cast<int>(rate * 0.25);
+            require(renderSource(left, frames, 97) == renderSource(right, frames, 511),
+                    "All sweep curves preserve phase and loop boundaries across rates and block partitions.");
+        }
+
+    SignalGeneratorNode oneShot;
+    initial(oneShot, signalMode, static_cast<float>(SignalMode::sweep));
+    initial(oneShot, signalStartFrequency, 440);
+    initial(oneShot, signalEndFrequency, 880);
+    initial(oneShot, signalDuration, 0.01f);
+    initial(oneShot, signalTransport, static_cast<float>(GeneratorTransport::oneShot));
+    prepare(oneShot, 48000, 1);
+    const auto oneShotSamples = renderSource(oneShot, 700, 73);
+    require(std::any_of(oneShotSamples.begin(), oneShotSamples.begin() + 480, [](float sample) { return sample != 0; })
+            && std::all_of(oneShotSamples.begin() + 480, oneShotSamples.end(), [](float sample) { return sample == 0; }),
+            "One-shot sweep renders exactly its nearest-sample duration, then remains silent.");
+
+    SignalGeneratorNode customScale;
+    constexpr int scaleOffsets[]{0, 2, 7};
+    require(customScale.setUserScale(scaleOffsets) && !customScale.setUserScale(std::array{0, 2, 2}),
+            "Custom musical scales require ascending unique semitone offsets.");
+    initial(customScale, signalMode, static_cast<float>(SignalMode::musical));
+    initial(customScale, signalTransport, static_cast<float>(GeneratorTransport::oneShot));
+    initial(customScale, signalScale, static_cast<float>(MusicalScale::user));
+    initial(customScale, signalRootMidi, 60);
+    initial(customScale, signalStepSeconds, 0.01f);
+    initial(customScale, signalDuration, 1);
+    initial(customScale, signalLevelDb, 0);
+    initial(customScale, signalReferenceAHz, 442);
+    prepare(customScale, 48000, 1);
+    const auto scaleSignal = renderSource(customScale, 1101, 73);
+    const auto midiFrequency = [](int midi) { return 442.0 * std::exp2((midi - 69) / 12.0); };
+    const auto expectedPhase = (480.0 * midiFrequency(60) + 480.0 * midiFrequency(62)
+                                + 140.0 * midiFrequency(67)) / 48000.0;
+    require(std::abs(scaleSignal[1100] - std::sin(2.0 * std::numbers::pi * expectedPhase)) < 1.0e-4,
+            "User musical scale steps use the configured root, exact semitone set, A-reference and sample timing.");
+
+    DcGeneratorNode dc;
+    initial(dc, 0, 0.25f);
+    prepare(dc);
+    const auto constant = renderSource(dc, 257, 31);
+    require(std::all_of(constant.begin(), constant.end(), [](float sample) { return sample == 0.25f; }),
+            "DC output is an exact stable value, not inferred from a frequency or dB control.");
+    require(dc.parameterEvent(1, 1, ParameterAction::base), "DC mute is a discrete parameter.");
+    const auto mutedDc = renderSource(dc, 32, 7);
+    require(std::all_of(mutedDc.begin(), mutedDc.end(), [](float sample) { return sample == 0.0f; }),
+            "Muted DC emits exact digital silence.");
+
+    ImpulseGeneratorNode impulse;
+    initial(impulse, 0, 0);
+    initial(impulse, 1, 0.002f);
+    initial(impulse, 2, 1);
+    prepare(impulse);
+    const auto impulses = renderSource(impulse, 256, 19);
+    require(impulses[0] == 1 && impulses[96] == 1 && impulses[192] == 1
+            && impulses[1] == 0 && impulses[95] == 0,
+            "Periodic impulse placement is sample-exact at the rounded 2 ms interval.");
+
+    ClickGeneratorNode clickA, clickB;
+    initial(clickA, 0, 300);
+    initial(clickA, 2, 0.005f);
+    initial(clickA, 3, 0);
+    initial(clickB, 0, 300);
+    initial(clickB, 2, 0.005f);
+    initial(clickB, 3, 0);
+    prepare(clickA); prepare(clickB);
+    const auto clicksA = renderSource(clickA, 19202, 97);
+    const auto clicksB = renderSource(clickB, 19202, 511);
+    require(clicksA == clicksB && clicksA[0] == 0 && clicksA[1] > 0
+            && clicksA[9600] == 0 && clicksA[9601] > 0,
+            "BPM clicks retrigger at their exact sample interval independent of host block size.");
+
+    BurstGeneratorNode burst;
+    initial(burst, 0, 1000);
+    initial(burst, 1, 0.01f);
+    initial(burst, 2, 0.02f);
+    initial(burst, 3, 0);
+    initial(burst, 4, 0.001f);
+    prepare(burst);
+    const auto burstSamples = renderSource(burst, 600, 73);
+    require(burstSamples[0] == 0 && std::abs(burstSamples[36]) > 0.5f
+            && std::all_of(burstSamples.begin() + 480, burstSamples.end(), [](float sample) { return sample == 0; }),
+            "Burst is finite, edge-shaped, and exactly silent after its 10 ms one-shot duration.");
+    BurstGeneratorNode overlappingBurst;
+    initial(overlappingBurst, 1, 0.02f);
+    initial(overlappingBurst, 2, 0.01f);
+    initial(overlappingBurst, 5, 1);
+    require(!overlappingBurst.prepare({48000, 512, 1}).succeeded,
+            "Periodic burst setup rejects a duration that would overlap its interval.");
+
+    ChirpGeneratorNode chirpA, chirpB;
+    const auto configureChirp = [](ChirpGeneratorNode& node)
+    {
+        initial(node, 0, 200);
+        initial(node, 1, 8000);
+        initial(node, 2, 0.1f);
+        initial(node, 3, static_cast<float>(SweepCurve::logarithmic));
+        initial(node, 5, -12);
+        initial(node, 6, static_cast<float>(GeneratorTransport::loop));
+        prepare(node);
+    };
+    configureChirp(chirpA); configureChirp(chirpB);
+    require(renderSource(chirpA, 12000, 89) == renderSource(chirpB, 12000, 512),
+            "Chirp phase remains continuous and partition-invariant through repeated log sweeps.");
+
+    NoiseGeneratorNode noise;
+    initial(noise, 0, 0);
+    initial(noise, 1, -20);
+    initial(noise, 2, 7331);
+    prepare(noise);
+    const auto white = renderSource(noise, 65536, 113);
+    const auto whiteRms = rms(white, 0, white.size());
+    noise.reset();
+    require(white == renderSource(noise, 65536, 127), "A seed reset reproduces the exact per-instance white-noise sequence.");
+    require(std::abs(whiteRms - 0.1) < 0.002,
+            "White noise level is calibrated to its declared -20 dBFS RMS expectation.");
+    require(noise.parameterEvent(0, 1, ParameterAction::base), "Pink noise selection is a discrete validated choice.");
+    const auto pink = renderSource(noise, 65536, 257);
+    const auto pinkRms = rms(pink, 0, pink.size());
+    require(std::isfinite(pinkRms) && pinkRms > 0.05 && pinkRms < 0.15,
+            "Pink-noise output is finite and remains near its requested RMS level (measured "
+                + std::to_string(pinkRms) + ").");
+    const int pinkWindow = 32768;
+    double previousOctaveDensity{};
+    std::array<double, 7> adjacentOctaveDb{};
+    std::size_t octavePair{};
+    for (int centreBin : {32, 64, 128, 256, 512, 1024, 2048, 4096})
+    {
+        double bandPower{};
+        for (int bin = centreBin - 2; bin <= centreBin + 2; ++bin)
+            bandPower += binPower(pink, 0, pinkWindow, bin);
+        const auto octaveDensity = bandPower * centreBin / 5.0;
+        if (previousOctaveDensity > 0)
+        {
+            const auto deviationDb = 10.0 * std::log10(octaveDensity / previousOctaveDensity);
+            adjacentOctaveDb[octavePair++] = deviationDb;
+            require(std::abs(deviationDb) < 6.0,
+                    "Measured filtered-pink noise remains within 6 dB per octave ("
+                        + std::to_string(deviationDb) + " dB).");
+        }
+        previousOctaveDensity = octaveDensity;
+    }
+    std::cout << std::setprecision(8) << std::scientific
+              << "SYNTHETIC_NOISE rate=48000 seed=7331 frames=65536 white_rms=" << whiteRms
+              << " pink_rms=" << pinkRms << " adjacent_octave_density_dB=";
+    for (std::size_t index = 0; index < adjacentOctaveDb.size(); ++index)
+        std::cout << (index == 0 ? "" : ",") << adjacentOctaveDb[index];
+    std::cout << std::defaultfloat << '\n';
+
+    auto sourceCapture = std::make_shared<SignalCaptureBuffer>(11, 48000, 1);
+    sourceCapture->setEnabled(true);
+    AudioGraph outputOnly{1, {{11, AudioNodeType::signalGenerator}, {12, AudioNodeType::output}}, {{11, 12}}};
+    outputOnly.nodes[0].capture = sourceCapture;
+    AudioEngine engine;
+    require(engine.startOffline({48000, 64, 256, 0, 1}, outputOnly, 1).succeeded,
+            "A zero-input signal generator can prepare and start an output-only graph.");
+    std::array<float, 64> output{};
+    float* outputs[]{output.data()};
+    engine.process({nullptr, outputs, 0, 1, static_cast<int>(output.size())});
+    require(std::any_of(output.begin(), output.end(), [](float sample) { return sample != 0; }),
+            "Output-only generator graph produces signal without a device input.");
+    const auto* firstCapture = sourceCapture->acquire();
+    require(firstCapture && firstCapture->stamp.nodeFrame == 0,
+            "Captured generator progress begins at the exact prepared-node frame zero.");
+    sourceCapture->release();
+    engine.process({nullptr, outputs, 0, 1, static_cast<int>(output.size())});
+    const auto* nextCapture = sourceCapture->acquire();
+    require(nextCapture && nextCapture->stamp.firstFrame == 64 && nextCapture->stamp.nodeFrame == 64,
+            "Captured progress distinguishes node-relative sweep time from session-relative sample position.");
+    sourceCapture->release();
+    require(engine.stop().succeeded, "Stop output-only offline test explicitly.");
+
+    AudioGraph invalidSource{1,
+        {{1, AudioNodeType::input}, {2, AudioNodeType::signalGenerator}, {3, AudioNodeType::output}},
+        {{1, 2}, {2, 3}}};
+    require(!PreparedAudioGraph::prepare(invalidSource, {48000, 64, 256, 1, 1}, 2).value,
+            "Generator modules reject upstream audio rather than silently ignoring a connection.");
+}
+
 AudioGraph graph(AudioNodeType effect = AudioNodeType::gain, float gain = 0)
 { return {1, {{1, AudioNodeType::input}, {2, effect, gain}, {3, AudioNodeType::output}}, {{1, 2}, {2, 3}}}; }
 
@@ -429,6 +696,22 @@ void testAutomationAndGraph()
             "Persisted typed effect parameters and bypass map explicitly.");
     structural.nodes.at(1).parameters["audio.param.seconds"] = 3.0;
     require(!AudioGraph::fromStructural(structural, 1).value, "Out-of-range persisted effect data is rejected.");
+    structural.nodes.clear();
+    structural.nodes.emplace(7, val::domain::Node{7, "User-scale source"});
+    structural.nodes.at(7).parameters["audio.type"] = std::string("Signal Generator");
+    structural.nodes.at(7).parameters["audio.param.scale"] = 5.0;
+    structural.nodes.at(7).parameters["audio.param.rootMidi"] = 60.0;
+    structural.nodes.at(7).parameters["audio.scaleIntervals"] = std::string("0, 2, 7");
+    const auto customScaleGraph = AudioGraph::fromStructural(structural, 1);
+    require(customScaleGraph.value && customScaleGraph.value->nodes[0].userScale == std::vector<int>{0, 2, 7},
+            "Saved custom scales map into a validated source-node definition.");
+    structural.nodes.at(7).parameters["audio.scaleIntervals"] = std::string("0, 2, 2");
+    require(!AudioGraph::fromStructural(structural, 1).value,
+            "Invalid saved custom scale offsets are rejected instead of falling back to chromatic.");
+    structural.nodes.at(7).parameters["audio.scaleIntervals"] = std::string("0, 8");
+    structural.nodes.at(7).parameters["audio.param.rootMidi"] = 120.0;
+    require(!AudioGraph::fromStructural(structural, 1).value,
+            "A custom scale cannot transpose beyond MIDI note 127.");
     auto invalid = graph(); invalid.nodes[1].parameters = {{std::uint16_t{0}, 0.5f}, {std::uint16_t{0}, 0.25f}};
     require(!PreparedAudioGraph::prepare(invalid, {48000, 128, 512, 1, 1}, 1).value, "Duplicate initial parameters cannot hide conflicting values.");
     auto expensive = graph(AudioNodeType::delay);
@@ -438,6 +721,120 @@ void testAutomationAndGraph()
     require(!PreparedAudioGraph::prepare(expensive, {384000, 128, 512, 32, 32}, 1).value,
             "DSP delay storage is bounded by the aggregate prepared-plan budget.");
 }
+
+void testTypedParameterControls()
+{
+    const auto configureGainControl = [](GainNode& gain, ParameterControlBinding binding)
+    {
+        const auto source = static_cast<int>(binding.source);
+        require(gain.initialControl(std::move(binding)),
+                "Accept valid typed scalar control mapping source " + std::to_string(source) + ".");
+        prepare(gain);
+    };
+
+    GainNode lfoA(0.5f), lfoB(0.5f);
+    ParameterControlBinding lfo;
+    lfo.parameter = 0;
+    lfo.source = ParameterControlSource::lfo;
+    lfo.depth = 0.25f;
+    lfo.rateHz = 1;
+    configureGainControl(lfoA, lfo);
+    configureGainControl(lfoB, lfo);
+    const std::vector<float> unity(48001, 1);
+    const auto lfoFirst = render(lfoA, unity, 1, 127);
+    const auto lfoSecond = render(lfoB, unity, 1, 509);
+    require(lfoFirst == lfoSecond && near(lfoFirst[0], 0.5)
+            && near(lfoFirst[12000], 0.75) && near(lfoFirst[36000], 0.25),
+            "LFO control is sample-time deterministic and independent of host block partitioning.");
+
+    GainNode envelope(0);
+    ParameterControlBinding env;
+    env.parameter = 0;
+    env.source = ParameterControlSource::envelope;
+    env.depth = 1;
+    env.sourceMinimum = 0;
+    env.sourceMaximum = 1;
+    env.attackSeconds = 0.01f;
+    env.holdSeconds = 0.01f;
+    env.releaseSeconds = 0.01f;
+    configureGainControl(envelope, env);
+    const auto envelopeOutput = render(envelope, std::vector<float>(2400, 1), 1, 73);
+    require(envelopeOutput[0] == 0 && near(envelopeOutput[240], 0.5)
+            && near(envelopeOutput[960], 1) && near(envelopeOutput[1200], 0.5)
+            && envelopeOutput[1920] == 0,
+            "One-shot Envelope control follows exact prepared attack, hold and release sample times ("
+                + std::to_string(envelopeOutput[0]) + ", " + std::to_string(envelopeOutput[240]) + ", "
+                + std::to_string(envelopeOutput[960]) + ", " + std::to_string(envelopeOutput[1200]) + ", "
+                + std::to_string(envelopeOutput[1920]) + ").");
+
+    const auto script = val::script::Compiler::compile(
+        "NODE ScalarControl AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\n"
+        "BEGIN\n  Value := Time;\nEND.");
+    require(script.value.has_value(), "Compile stateless Time-to-scalar VAL Script control off callback.");
+    GainNode scripted(0);
+    ParameterControlBinding scriptBinding;
+    scriptBinding.parameter = 0;
+    scriptBinding.source = ParameterControlSource::script;
+    scriptBinding.depth = 1;
+    scriptBinding.sourceMinimum = 0;
+    scriptBinding.sourceMaximum = 1;
+    scriptBinding.program = *script.value;
+    configureGainControl(scripted, std::move(scriptBinding));
+    const auto scriptedOutput = render(scripted, std::vector<float>(32, 1), 1, 7);
+    require(scriptedOutput[0] == 0 && scriptedOutput[1] > 0
+            && near(scriptedOutput[31], 31.0 / 48000.0, 1.0e-8),
+            "Stateless Script scalar control executes against monotonic sample time without audio inputs.");
+    const auto invalidScript = val::script::Compiler::compile(
+        "NODE BadControl AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\n"
+        "BEGIN\n  Value := 2.0;\nEND.");
+    require(invalidScript.value.has_value(), "Compile the deliberately out-of-range Script-control test.");
+    GainNode failedControl(0.5f);
+    auto invalidBinding = ParameterControlBinding{};
+    invalidBinding.parameter = 0;
+    invalidBinding.source = ParameterControlSource::script;
+    invalidBinding.depth = 1;
+    invalidBinding.sourceMinimum = 0;
+    invalidBinding.sourceMaximum = 1;
+    invalidBinding.program = *invalidScript.value;
+    require(failedControl.initialControl(std::move(invalidBinding)),
+            "Accept Script control with an explicit declared output range.");
+    prepare(failedControl);
+    const auto failedOutput = render(failedControl, std::vector<float>(32, 1), 1, 7);
+    require(std::all_of(failedOutput.begin(), failedOutput.end(), [](float sample) { return sample == 0; })
+            && failedControl.numericalFaults() == 1,
+            "Out-of-range Script control latches a visible numerical fault and silences the affected processor instead of falling back.");
+
+    GainNode outOfRange(0.5f);
+    lfo.depth = 1;
+    require(!outOfRange.initialControl(lfo),
+            "Control mapping whose declared source range exceeds the target parameter domain is rejected before prepare.");
+
+    val::domain::Graph structural;
+    val::domain::Node gainNode{1, "Gain"};
+    gainNode.parameters["audio.type"] = std::string("Gain");
+    gainNode.parameters["audio.param.gain"] = 0.5;
+    gainNode.parameters["audio.control.gain.source"] = std::string("lfo");
+    gainNode.parameters["audio.control.gain.offset"] = 0.0;
+    gainNode.parameters["audio.control.gain.depth"] = 0.2;
+    gainNode.parameters["audio.control.gain.rateHz"] = 2.0;
+    val::domain::Node outputNode{2, "Output"};
+    outputNode.parameters["audio.type"] = std::string("Output");
+    structural.nodes.emplace(1, std::move(gainNode));
+    structural.nodes.emplace(2, std::move(outputNode));
+    structural.connections.emplace(3, val::domain::Connection{
+        3, {1, val::domain::Port::output}, {2, val::domain::Port::input}});
+    const auto mapped = AudioGraph::fromStructural(structural, 1);
+    bool planReady{};
+    if (mapped.value)
+    {
+        const auto mappedPlan = PreparedAudioGraph::prepare(*mapped.value, {48000, 64, 1, 1, 1}, 1);
+        planReady = mappedPlan.value != nullptr;
+    }
+    require(mapped.value && mapped.value->nodes[0].controls.size() == 1
+            && planReady,
+            "Project metadata restores and prepares a typed parameter-control mapping.");
+}
+
 void testLiveScheduledOrdering()
 {
     AudioEngine engine;
@@ -518,8 +915,8 @@ int main()
     return runTests([]
     {
         testGainAndLayers(); testEq(); testDelay(); testCompressor(); testDistortion();
-        testChorus(); testReverb(); testBypassAndBases(); testProtection(); testAutomationAndGraph();
-        testLiveScheduledOrdering(); testAllProcessorWorkload();
+        testChorus(); testReverb(); testBypassAndBases(); testProtection(); testGeneratorSources(); testAutomationAndGraph();
+        testTypedParameterControls(); testLiveScheduledOrdering(); testAllProcessorWorkload();
         std::cout << "Seven real processors, unified bases, automation, bypass, rates, state and callback allocations verified offline.\n";
     });
 }

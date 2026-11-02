@@ -156,9 +156,13 @@ void DockWorkspace::showSignalInspector()
         signalWindow_ = std::make_unique<SignalInspectorWindow>(visualizations_);
         signalWindow_->setLookAndFeel(&getLookAndFeel());
         signalWindow_->view().setTarget(signalPreview_.target());
+        signalWindow_->view().setGeneratorContext(signalPreview_.generatorContext());
     }
     else
+    {
         signalWindow_->view().followSelection(signalPreview_.target());
+        signalWindow_->view().setGeneratorContext(signalPreview_.generatorContext());
+    }
     signalWindow_->setVisible(true);
     signalWindow_->toFront(true);
 }

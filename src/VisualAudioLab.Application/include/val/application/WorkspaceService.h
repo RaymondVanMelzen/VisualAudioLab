@@ -47,6 +47,8 @@ public:
     [[nodiscard]] Result addPatch(std::string name);
     [[nodiscard]] Result selectPatch(domain::GraphId id);
     [[nodiscard]] Result setParameter(domain::GraphId node, std::string key, domain::Parameter value);
+    /** Atomically applies a related scalar-parameter group as one undoable node edit. */
+    [[nodiscard]] Result setParameters(domain::GraphId node, std::map<std::string, domain::Parameter> values);
     /** Navigation/layout are captured separately from the content-edit journal. */
     void setLayout(const ProjectLayout& layout) { state_.layout = layout; }
     void setViewport(PatchViewport viewport) { state_.patches.at(state_.activePatch).viewport = viewport; }

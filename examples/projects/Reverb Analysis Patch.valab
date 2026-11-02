@@ -1,0 +1,60 @@
+{
+  "version": { "major": 1, "minor": 0 },
+  "minimumReader": { "major": 1, "minor": 0 },
+  "requiredFeatures": [],
+  "format": "VisualAudioLab",
+  "name": "Reverb Analysis Patch",
+  "activePatch": "1",
+  "patches": [
+    {
+      "id": "1",
+      "name": "Impulse through reverb",
+      "viewport": { "zoom": 1.0, "x": 40.0, "y": 40.0 },
+      "graph": {
+        "nodes": [
+          {
+            "id": "1", "name": "Quiet impulse",
+            "position": { "x": 40.0, "y": 160.0 },
+            "parameters": {
+              "audio.type": "Impulse Generator",
+              "audio.param.levelDb": -40.0,
+              "audio.param.mode": 0.0
+            }
+          },
+          {
+            "id": "2", "name": "Reverb",
+            "position": { "x": 300.0, "y": 160.0 },
+            "parameters": { "audio.type": "Reverb", "audio.param.mix": 0.5 }
+          },
+          {
+            "id": "3", "name": "Oscilloscope",
+            "position": { "x": 560.0, "y": 160.0 },
+            "parameters": { "audio.type": "Analyzer", "visualization.kind": "Oscilloscope" }
+          },
+          {
+            "id": "4", "name": "Output",
+            "position": { "x": 820.0, "y": 160.0 },
+            "parameters": { "audio.type": "Output" }
+          }
+        ],
+        "connections": [
+          { "id": "5", "source": { "node": "1", "port": "out" }, "destination": { "node": "2", "port": "in" } },
+          { "id": "6", "source": { "node": "2", "port": "out" }, "destination": { "node": "3", "port": "in" } },
+          { "id": "7", "source": { "node": "3", "port": "out" }, "destination": { "node": "4", "port": "in" } }
+        ]
+      }
+    }
+  ],
+  "layout": {
+    "window": { "x": 80, "y": 80, "width": 1200, "height": 780 },
+    "panels": [
+      { "id": "canvas", "dock": 1, "visible": true },
+      { "id": "modules", "dock": 0, "visible": true },
+      { "id": "explorer", "dock": 0, "visible": true },
+      { "id": "properties", "dock": 2, "visible": true },
+      { "id": "audio", "dock": 3, "visible": false }
+    ],
+    "ratios": [0.22, 0.24, 0.26],
+    "selectedPanels": [1, 0, 3, -1]
+  }
+}

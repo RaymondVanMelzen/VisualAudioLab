@@ -1,0 +1,54 @@
+{
+  "version": { "major": 1, "minor": 0 },
+  "minimumReader": { "major": 1, "minor": 0 },
+  "requiredFeatures": [],
+  "format": "VisualAudioLab",
+  "name": "Sine Wave Test",
+  "activePatch": "1",
+  "patches": [
+    {
+      "id": "1",
+      "name": "Sine to scope",
+      "viewport": { "zoom": 1.0, "x": 40.0, "y": 40.0 },
+      "graph": {
+        "nodes": [
+          {
+            "id": "1", "name": "440 Hz sine",
+            "position": { "x": 80.0, "y": 160.0 },
+            "parameters": {
+              "audio.type": "Signal Generator",
+              "audio.param.frequencyHz": 440.0,
+              "audio.param.levelDb": -40.0
+            }
+          },
+          {
+            "id": "2", "name": "Oscilloscope",
+            "position": { "x": 360.0, "y": 160.0 },
+            "parameters": { "audio.type": "Analyzer", "visualization.kind": "Oscilloscope" }
+          },
+          {
+            "id": "3", "name": "Output",
+            "position": { "x": 640.0, "y": 160.0 },
+            "parameters": { "audio.type": "Output" }
+          }
+        ],
+        "connections": [
+          { "id": "4", "source": { "node": "1", "port": "out" }, "destination": { "node": "2", "port": "in" } },
+          { "id": "5", "source": { "node": "2", "port": "out" }, "destination": { "node": "3", "port": "in" } }
+        ]
+      }
+    }
+  ],
+  "layout": {
+    "window": { "x": 80, "y": 80, "width": 1200, "height": 780 },
+    "panels": [
+      { "id": "canvas", "dock": 1, "visible": true },
+      { "id": "modules", "dock": 0, "visible": true },
+      { "id": "explorer", "dock": 0, "visible": true },
+      { "id": "properties", "dock": 2, "visible": true },
+      { "id": "audio", "dock": 3, "visible": false }
+    ],
+    "ratios": [0.22, 0.24, 0.26],
+    "selectedPanels": [1, 0, 3, -1]
+  }
+}

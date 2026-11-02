@@ -59,6 +59,7 @@ struct AnalyzerEngine::State
     std::size_t position{}, hop{};
     int demands{}, rmsLength{}, peakLength{};
     std::array<double, 2> squares{}, sums{};
+    double crossProducts{};
     std::array<float, 2> held{}, displayed{};
     std::array<std::uint64_t, 2> holdUntil{};
     std::array<double, pitchWindowSize> pitchSamples{};
@@ -102,11 +103,13 @@ struct AnalyzerEngine::State
     {
         ++segment;
         count = position = hop = pitchFramesSinceUpdate = 0;
-        squares = {}; sums = {}; held = {}; displayed = {}; holdUntil = {};
+        squares = {}; sums = {}; crossProducts = 0; held = {}; displayed = {}; holdUntil = {};
         averaged = false;
-        current.spectrumValid = current.rmsValid = current.peakValid = current.pitchReady = current.pitchValid
+        current.spectrumValid = current.rmsValid = current.peakValid = current.correlationValid
+            = current.pitchReady = current.pitchValid
             = current.pitchSilence = current.nonFinite = false;
         current.pitchHz = 0;
+        current.correlation = 0;
         current.pitchConfidence = current.pitchRms = 0;
         current.pitchChannel = 0;
         current.scopeFrames = 0;
@@ -292,6 +295,17 @@ struct AnalyzerEngine::State
                 current.nonFinite = true; current.gap = true;
                 continue;
             }
+            if (stamp.channels == 2)
+            {
+                const auto left = packet.samples[frame];
+                const auto right = packet.samples[SignalCaptureBuffer::slotFrames + frame];
+                const auto oldLeft = count >= static_cast<std::uint64_t>(rmsLength)
+                    ? past(0, static_cast<std::size_t>(rmsLength)) : 0.0f;
+                const auto oldRight = count >= static_cast<std::uint64_t>(rmsLength)
+                    ? past(1, static_cast<std::size_t>(rmsLength)) : 0.0f;
+                crossProducts += static_cast<double>(left) * right
+                    - static_cast<double>(oldLeft) * oldRight;
+            }
             for (int channel = 0; channel < stamp.channels; ++channel)
             {
                 const auto x = packet.samples[channel * SignalCaptureBuffer::slotFrames + frame];
@@ -384,6 +398,21 @@ struct AnalyzerEngine::State
             }
             current.minimum[channel] = minimum; current.maximum[channel] = maximum;
             meters.peak[channel] = peak; meters.rms[channel] = current.rms[channel];
+        }
+        current.correlationValid = false;
+        current.correlation = 0;
+        if (stamp.channels == 2 && current.rmsValid)
+        {
+            const auto meanLeft = static_cast<double>(current.mean[0]);
+            const auto meanRight = static_cast<double>(current.mean[1]);
+            const auto varianceLeft = squares[0] / rmsLength - meanLeft * meanLeft;
+            const auto varianceRight = squares[1] / rmsLength - meanRight * meanRight;
+            if (varianceLeft > 1.0e-12 && varianceRight > 1.0e-12)
+            {
+                const auto covariance = crossProducts / rmsLength - meanLeft * meanRight;
+                current.correlation = std::clamp(covariance / std::sqrt(varianceLeft * varianceRight), -1.0, 1.0);
+                current.correlationValid = std::isfinite(current.correlation);
+            }
         }
         current.resultVersion = jobs;
         capture->publishMeters(meters);

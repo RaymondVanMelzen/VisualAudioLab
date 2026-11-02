@@ -74,6 +74,7 @@ private:
     void confirmReplace(std::function<void()> continuation);
     void loadWithConsent(std::filesystem::path path);
     void updateProjectChrome();
+    void updateGeneratorDisplay();
     void showAudioSetup();
     application::WorkspaceService& workspace_;
     application::ProjectSession* project_{};

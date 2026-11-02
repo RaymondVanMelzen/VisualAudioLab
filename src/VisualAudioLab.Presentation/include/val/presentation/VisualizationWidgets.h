@@ -12,8 +12,14 @@ class CanvasView;
 enum class ObservationState { waiting, processing, stopped, removed, unsupported };
 /** Host-specific refresh ceilings and geometry; no independent worker or timer per preview. */
 enum class VisualizationHost { embedded, inspector, monitor };
+struct GeneratorDisplayInfo
+{
+    juce::String summary;
+    double durationSeconds{};
+    int transport{};
+};
 /** Calibrated analysis displays, all derived from the same immutable worker result. */
-enum class VisualizationKind { oscilloscope, spectrum, peak, rms, guitarTuner };
+enum class VisualizationKind { oscilloscope, spectrum, peak, rms, guitarTuner, correlation };
 
 /**
  * Message-thread observation service: one analysis worker, one 30 Hz UI scheduler.
@@ -89,7 +95,7 @@ private:
 };
 
 /**
- * Shared inspector/embedded/pinned host. Inspector and embedded use tabs; monitor lays out five plots.
+ * Shared inspector/embedded/pinned host. Inspector and embedded use tabs; monitor lays out six plots.
  * Pin holds target identity, not transport storage. Freeze owns a bounded UI copy and suspends demand.
  * Target changes and unfreeze clear old values. Session must outlive all registered hosts.
  */
@@ -105,6 +111,8 @@ public:
     void visibilityChanged() override;
     void setTarget(std::uint64_t source);
     void followSelection(std::uint64_t source);
+    void setGeneratorContext(GeneratorDisplayInfo info);
+    [[nodiscard]] GeneratorDisplayInfo generatorContext() const { return generatorInfoData_; }
     [[nodiscard]] std::uint64_t target() const noexcept { return source_; }
     void setPinned(bool pinned);
     [[nodiscard]] bool pinned() const noexcept { return pin_.getToggleState(); }
@@ -124,12 +132,14 @@ private:
     std::uint64_t resumeAfterSequence_{};
     bool demand_{};
     juce::String admissionError_;
-    std::array<std::unique_ptr<VisualizationWidget>, 5> plots_;
+    std::array<std::unique_ptr<VisualizationWidget>, 6> plots_;
     std::shared_ptr<const audio::SignalAnalysis> frozenResult_;
     juce::ComboBox target_;
     juce::ToggleButton pin_{"Pin"}, freeze_{"Freeze"};
     juce::TextButton details_{"Signal Inspector"}, reset_{"Reset hold"};
     juce::Label status_;
+    juce::Label generatorInfo_;
+    GeneratorDisplayInfo generatorInfoData_;
     juce::TabbedComponent tabs_{juce::TabbedButtonBar::TabsAtTop};
 };
 }

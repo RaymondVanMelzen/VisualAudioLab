@@ -23,7 +23,8 @@ void SignalCaptureBuffer::drop() noexcept
     if (value != std::numeric_limits<std::uint64_t>::max()) drops_.store(value + 1, std::memory_order_relaxed);
 }
 void SignalCaptureBuffer::capture(const float* planar, int stride, int frames, std::uint64_t revision,
-                                 std::uint64_t epoch, std::uint64_t firstFrame) noexcept
+                                 std::uint64_t epoch, std::uint64_t firstFrame,
+                                 std::uint64_t firstNodeFrame) noexcept
 {
     if (!enabled_.load(std::memory_order_acquire) || frames == 0) return;
     if (!planar || frames < 0 || frames > 4096 || stride < frames) { drop(); return; }
@@ -34,7 +35,8 @@ void SignalCaptureBuffer::capture(const float* planar, int stride, int frames, s
         auto& page = pages_[write % slots];
         const auto count = std::min(slotFrames, frames - offset);
         page.stamp = {source_, revision, epoch, firstFrame + static_cast<std::uint64_t>(offset),
-                      write + 1, drops_.load(std::memory_order_relaxed), rate_, channels_, count, firstChannel_};
+                      write + 1, drops_.load(std::memory_order_relaxed), rate_, channels_, count, firstChannel_,
+                      firstNodeFrame + static_cast<std::uint64_t>(offset)};
         for (int channel = 0; channel < channels_; ++channel)
             std::copy_n(planar + (firstChannel_ + channel) * stride + offset, count, page.samples.data() + channel * slotFrames);
         captured_.store(captured_.load(std::memory_order_relaxed) + count, std::memory_order_relaxed);

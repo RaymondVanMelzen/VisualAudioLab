@@ -2,25 +2,25 @@
 
 ## Delivered scope and relationship to the engine
 
-The existing device-independent C++20 Audio library now supplies seven built-in processors: Gain, EQ, Delay, Compressor, Distortion, Chorus and Reverb. `AudioNode` is the single processor base. **`AudioProcessorNode` is a legacy-name alias for `AudioNode`**, not a second hierarchy; the original `GainNode` now derives from `EffectNode` and uses the common parameter/smoothing/bypass implementation. Input/Output routing and the engine's prepared-plan publication, native lifecycle and off-thread reclamation remain in place. Custom node subclasses must follow the new prepare/sample/reset extension contract; this is not a binary or arbitrary external-subclass compatibility guarantee.
+The existing device-independent C++20 Audio library supplies seven effects (Gain, EQ, Delay, Compressor, Distortion, Chorus and Reverb), seven zero-input source generators, and pass-through analysis/routing nodes. The generator module set and its equations, defaults and limits are specified in [Signal Generator and Test & Measurement Toolkit](modules/SignalGeneratorToolkit.md). `AudioNode` is the single processor base. **`AudioProcessorNode` is a legacy-name alias for `AudioNode`**, not a second hierarchy; the original `GainNode` now derives from `EffectNode` and uses the common parameter/smoothing/bypass implementation. Input/Output routing and the engine's prepared-plan publication, native lifecycle and off-thread reclamation remain in place. Custom node subclasses must follow the new prepare/sample/reset extension contract; this is not a binary or arbitrary external-subclass compatibility guarantee.
 
 | Class | Responsibility |
 |---|---|
 | `AudioNode` | Prepared limits, immutable parameter definitions, render-owned base/automation/override layers, smoothing, numerical protection, latency-aligned bypass and bounded processing. |
 | `EffectNode` | Audio-to-audio extension point; receives immutable upstream samples and owns wet processing state. |
-| `GeneratorNode` | Source extension point; ignores upstream audio, fades to silence on bypass. No product oscillator was added. |
+| `GeneratorNode` | Zero-input source base; ignores upstream audio and fades to silence on bypass. Seven product generators derive from it. |
 | `AnalyzerNode` | Pass-through observation endpoint; explicit bounded capture feeds the shared off-audio-thread [visualization worker](SignalVisualization.md), not callback peak/RMS accumulation. |
 | `ParameterSmoother` | Resettable linear physical-domain ramps measured in samples rather than callbacks. Inputs must be validated by parameter metadata before use. |
 
-The [desktop workflow](DesktopWorkflow.md) now exposes these processors through module insertion, saved parameter targets, bypass and transient automation controls. Generic canvas names still have no DSP meaning; opening/loading a project never starts audio, while valid edits can update an explicitly started graph. [VAL Script](ValScript.md) uses the same base/graph lifecycle. Plugin hosting/export, MIDI, editable/recorded automation lanes, seek/loop, modulators, feedback graphs, mixing, control-rate nodes and parallel scheduling remain outside the implemented scope. The control grid described in `DspArchitecture.md` remains a proposed separate capability; these processors are audio-rate. No deviation from its target-then-smooth or frame/acceptance-order semantics is needed.
+The [desktop workflow](DesktopWorkflow.md) exposes processors and generators through module insertion, saved base parameters, bypass, transient automation and typed scalar parameter mappings. Generic canvas names still have no DSP meaning; opening/loading a project never starts audio, while valid edits can update an explicitly started graph. [VAL Script](ValScript.md) uses the same base/graph lifecycle. Plugin hosting/export, MIDI, editable/recorded automation lanes, seek/loop, draggable control wires/independent control nodes, feedback graphs, mixing and parallel scheduling remain outside the implemented scope. Scalar LFO, one-shot Envelope and stateless VAL Script sources may instead be bound directly to a continuous target parameter; see below.
 
 ## Lifecycle and realtime ownership
 
 All preparation, buffer resizing, initial-value edits and destruction occur off the callback, with rendering quiescent. `prepare(ProcessingSpec)` validates 8-384 kHz, 1-4096 frame capacity, 1-32 channels and processor-specific domains, allocates state and calls reset. A sample-rate/layout change requires stop/reprepare/restart, starting a new engine epoch; it does not reinterpret existing automation timestamps. `reset()` requires exclusive node access and clears filters, delay/reverb/chorus history, LFO phase, detector state, transient parameter layers and bypass ramps to the prepared initial values. Worker observation windows instead reset on capture continuity/epoch/revision changes. Reset is not a concurrent control-thread operation on live nodes. Applications should reset large delay-based plans off-callback.
 
-Standalone node users must prepare the intended channel layout before processing and provide valid planar spans. A constructor alone does not negotiate a mono/stereo host layout. `GainNode(gain, sampleRate)` retains its legacy constructor and default stereo preparation, but explicit prepare is the normal lifecycle.
+Standalone node users must prepare the intended channel layout before processing and provide valid planar spans. A constructor alone does not negotiate a mono/stereo host layout. `GainNode(gain, sampleRate)` retains its legacy constructor and default stereo preparation; an initial control mapping may be attached before the first processed frame and causes a control-thread reprepare.
 
-Parameters use at most eight fixed slots per node; bypass has reserved identity 255. Node definitions use immutable static-lifetime metadata. Only the serial render owner changes parameter layers, smoothing or processor history. The control thread validates events using immutable definitions/specs, never reading live filter/delay state. No callback owns/free-releases a graph, constructs an event container, logs, locks, dispatches UI or grows memory.
+Parameters use at most twenty-four fixed slots per node; bypass has reserved identity 255. Node definitions use immutable static-lifetime metadata. Only the serial render owner changes parameter layers, smoothing or processor history. The control thread validates events using immutable definitions/specs, never reading live filter/delay state. No callback owns/free-releases a graph, constructs an event container, logs, locks, dispatches UI or grows memory.
 
 Graph scratch retains its 64 MiB limit. Combined scratch plus declared processor/dry-alignment buffers is capped at **128 MiB per prepared plan**, with additional bounded object/queue overhead and engine input staging. Delay reserves two seconds/channel; Chorus reserves forty milliseconds/channel; Reverb reserves six fixed sample-rate-derived lines/channel. Prepared active/pending/retired plans can coexist, so this is not a total-process memory limit. Preparation failure does not replace the active plan.
 
@@ -51,6 +51,36 @@ Analyzer has no scalar effect parameters. All Effect/Generator/Analyzer nodes ad
 Layer precedence is live override > enabled automation > saved base. `base` updates the base without overwriting active automation/override. `automation` enables/updates its target. `overrideValue` sets a temporary live override; `releaseOverride` resumes the latest automation or base, and `disableAutomation` restores base unless an override remains. Repeated identical targets do not restart ramps. A new target during a ramp starts from the current effective value. Reset discards transient runtime layers rather than persisting them.
 
 `setGain()` remains available and delegates to the common live parameter queue as an explicit override; it does not introduce a second gain smoother. `setParameter()` handles all other live transitions. Persisting a live change remains an explicit workspace/history operation, not a hidden consequence of the renderer.
+
+## Typed scalar parameter mappings
+
+A mapping names one destination parameter and a source type in the selected
+module editor. It is not an audio connection and does not add an audio input to
+a generator. Its scalar fields persist as
+`audio.control.<parameter>.<field>` project parameters and are applied as one
+undoable workspace edit. The effective value is
+`smoothedBase + offset + depth * source`; mapping extrema are rejected if they
+would exceed the destination parameter's declared range. Only parameters with
+a declared continuous smoothing policy accept mappings. Discrete waveform,
+mode, scale, mute, seed and transport parameters reject them.
+
+* **LFO:** sample-time sine in [-1, 1], 0.01-20 Hz, phase reset on explicit
+  Start; mapping is sample-rate and block-partition independent.
+* **Envelope:** one-shot linear 0..1 attack, hold, and linear release from
+  explicit Start. Timing uses prepared sample frames; there is no UI timer,
+  external gate port or retrigger input.
+* **VAL Script:** compiled before graph activation, one `INPUT Time: REAL`,
+  one REAL output and no parameters. `Time` is elapsed seconds from explicit
+  Start. Its declared output range is validated per sample. Compiler/runtime
+  faults or range violations latch a numerical fault and silence the affected
+  processor until graph reset/replacement; there is no fallback to base audio.
+
+Each source is instance-local and prepared off callback. Script scratch is
+allocated before plan publication. Callbacks run bounded scalar evaluation
+with no allocation, deallocation, lock, compile, log or UI call. Modulation
+values do not use UI refresh or host block length as a clock. Runtime base and
+automation target admission validates the full declared modulation range;
+mapped discrete parameters and unsupported sources return explicit errors.
 
 ## Automation timing and bounded delivery
 
@@ -94,7 +124,7 @@ graph.nodes[1].parameters = {
 // Check every Result before proceeding. No device opens merely by creating a graph.
 ```
 
-For generic project nodes: exact `audio.type` strings are `Input`, `Output`, `Gain`, `EQ`, `Delay`, `Compressor`, `Distortion`, `Chorus`, `Reverb`, `Analyzer`; `audio.param.<name>` stores a finite scalar parameter and `audio.bypass` stores a boolean. Gain's existing `audio.gain` remains supported, but supplying both it and `audio.param.gain` is rejected. Unknown/out-of-range processor parameters fail mapping/preparation. Existing project persistence already round-trips these scalar fields; no breaking schema change or automatic UI processor creation is required.
+For generic project nodes: `audio.type` names the explicit module; `audio.param.<name>` stores a finite base parameter; `audio.bypass` stores a boolean; and `audio.control.<name>.<field>` stores typed source configuration. Supported generator types are `Signal Generator`, `Impulse Generator`, `Click Generator`, `Burst Generator`, `Chirp Generator`, `Noise Generator` and `DC Generator`. Gain's existing `audio.gain` remains supported, but supplying both it and `audio.param.gain` is rejected. Unknown/out-of-range processor parameters or invalid control bindings fail mapping/preparation. Existing project persistence round-trips these scalar fields; no typed collections or breaking schema change are required.
 
 ## Processor algorithms and intentional limits
 

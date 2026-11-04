@@ -26,6 +26,19 @@ single-instance, uses a responsive compact layout when needed, and is fitted
 to the usable area of the display containing the main window. Dismiss it with
 its Close button, Escape, or the native window close control.
 
+The main window is positioned and constrained in JUCE's display coordinate
+system using the monitor's usable `userArea`, which excludes reserved work-area
+space such as the taskbar. Saved project and machine-local window bounds need
+only have positive dimensions; they are fitted to the current monitor when
+opened. The shell's resize floor is 640×380 logical units and is reduced when
+the usable area is smaller. On a 1920×1080 display at 175% Windows scaling,
+logical bounds are roughly 1097×617 before work-area insets; the app keeps the
+Windows scale and fonts and fits the window to the reported usable area rather
+than requiring 800×600. The 125%, 150%, 175% and 200% work-area geometries are
+covered by simulated layout tests; actual high-DPI monitor/taskbar behavior
+still depends on Windows/JUCE display reporting and must be qualified on the
+target PC.
+
 1. Windows offers **ASIO**, **WASAPI Shared**, **WASAPI Exclusive** and **DirectSound**; macOS
    offers **CoreAudio**. Offline preview is separate. Foreign APIs are not
    offered. Windows defaults to ASIO; macOS defaults to CoreAudio, without fallback.

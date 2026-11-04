@@ -44,9 +44,9 @@ struct SettingsLoadResult final
 /** Validates the shell's supported preference ranges before accepting or persisting them. */
 [[nodiscard]] inline Result validateSettings(const Settings& settings)
 {
-    if (settings.windowWidth < 800 || settings.windowWidth > 7680
-        || settings.windowHeight < 600 || settings.windowHeight > 4320)
-        return Result::failure("Window size must be within 800x600 and 7680x4320.");
+    if (settings.windowWidth < 1 || settings.windowWidth > 7680
+        || settings.windowHeight < 1 || settings.windowHeight > 4320)
+        return Result::failure("Window bounds must have positive dimensions no larger than 7680x4320.");
     if (settings.audioSetup)
     {
         const auto& audio = *settings.audioSetup;

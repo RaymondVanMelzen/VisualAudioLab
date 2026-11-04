@@ -19,8 +19,8 @@ struct WindowPlacement final
 
     const auto maximumWidth = juce::jmin(7680, userArea.getWidth());
     const auto maximumHeight = juce::jmin(4320, userArea.getHeight());
-    const auto minimumWidth = juce::jmin(800, maximumWidth);
-    const auto minimumHeight = juce::jmin(600, maximumHeight);
+    const auto minimumWidth = juce::jmin(640, maximumWidth);
+    const auto minimumHeight = juce::jmin(380, maximumHeight);
     const auto width = juce::jlimit(minimumWidth, maximumWidth,
                                     desired.getWidth() > 0 ? desired.getWidth() : 1100);
     const auto height = juce::jlimit(minimumHeight, maximumHeight,

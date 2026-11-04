@@ -78,7 +78,7 @@ void testProjects(const ProjectDirectory& directory)
             && workspace.redo().succeeded, "Undo/redo follows its owning patch across navigation.");
     workspace.setViewport({0.5, 600, -200});
     auto layout = workspace.project().layout;
-    layout.x = -800; layout.y = 170; layout.width = 1450; layout.height = 950;
+    layout.x = -800; layout.y = 170; layout.width = 1097; layout.height = 577;
     layout.docks[2] = 2; layout.visible[4] = false; layout.selectedPanels[3] = -1;
     layout.ratios = {0.25, 0.30, 0.40};
     workspace.setLayout(layout);

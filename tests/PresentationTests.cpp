@@ -138,7 +138,7 @@ int main(int argc, char** argv)
 
         juce::Array<juce::CommandID> commands;
         shell.getAllCommands(commands);
-        require(commands.size() == 16, "Shell registers fixed-panel, project, effects and explicit transport commands.");
+        require(commands.size() == 17, "Shell registers fixed-panel, project, effects, transport and About commands.");
         auto commandId = [&](const juce::String& name)
         {
             for (const auto id : commands)
@@ -152,6 +152,8 @@ int main(int argc, char** argv)
         };
         require(menuContains(shell.getMenuForIndex(3, "Audio"), "Audio Setup"),
                 "Audio menu contains the sole Audio Setup entry.");
+        require(menuContains(shell.getMenuForIndex(4, "Help"), "About Visual Audio Lab"),
+                "Help menu exposes About Visual Audio Lab.");
         require(menuContains(shell.getMenuForIndex(2, "View"), "Reduced effects (no glow)"),
                 "View menu exposes a discoverable reduced-effects mode.");
         const auto reducedEffects = commandId("Reduced effects (no glow)");
@@ -259,7 +261,7 @@ int main(int argc, char** argv)
                 && fixed.panel(PanelId::patchCanvas).isVisible(),
                 "Patch Canvas cannot be collapsed.");
 
-        require(shell.getMenuBarNames() == juce::StringArray{"File", "Edit", "View", "Audio"},
+        require(shell.getMenuBarNames() == juce::StringArray{"File", "Edit", "View", "Audio", "Help"},
                 "All shell menu groups are discoverable.");
         for (int index = 0; index < shell.getMenuBarNames().size(); ++index)
             require(shell.getMenuForIndex(index, {}).getNumItems() > 0, "Menus contain framework entries.");

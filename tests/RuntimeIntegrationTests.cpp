@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include <val/presentation/BuildInfo.h>
 #include <val/presentation/MainComponent.h>
 #include <val/infrastructure/LocalProjectStore.h>
 #include <val/application/ProjectSession.h>
@@ -41,6 +42,17 @@ template <typename T> T* control(juce::Component& parent, const juce::String& na
             else if constexpr (std::is_same_v<T, juce::TextButton>) { if (typed->getButtonText() == name) return typed; }
         }
         if (auto* nested = control<T>(*child, name)) return nested;
+    }
+    return nullptr;
+}
+juce::Component* namedComponent(juce::Component& parent, const juce::String& name)
+{
+    for (auto* child : parent.getChildren())
+    {
+        if (child->getName() == name)
+            return child;
+        if (auto* nested = namedComponent(*child, name))
+            return nested;
     }
     return nullptr;
 }
@@ -508,6 +520,51 @@ void runRuntimeIntegrationTests()
     window.setSize(640, 480);
     screenshot(shell, "desktop-compact-window-controls.png");
     window.centreWithSize(1600, 1000);
+    auto aboutCommand = juce::CommandID{};
+    juce::Array<juce::CommandID> shellCommands;
+    shell.getAllCommands(shellCommands);
+    for (const auto id : shellCommands)
+    {
+        juce::ApplicationCommandInfo info(id);
+        shell.getCommandInfo(id, info);
+        if (info.shortName == "About Visual Audio Lab")
+            aboutCommand = id;
+    }
+    require(aboutCommand != 0
+                && shell.perform(juce::ApplicationCommandTarget::InvocationInfo(aboutCommand)),
+            "The About command opens its application information dialog.");
+    juce::DocumentWindow* aboutWindow{};
+    for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
+        if (auto* candidate = dynamic_cast<juce::DocumentWindow*>(juce::Desktop::getInstance().getComponent(i));
+            candidate && candidate->getName() == "About Visual Audio Lab")
+            aboutWindow = candidate;
+    require(aboutWindow && aboutWindow->isVisible(), "About opens a visible native-titled window.");
+    const auto& aboutDisplays = juce::Desktop::getInstance().getDisplays();
+    const auto* aboutDisplay = aboutDisplays.getDisplayForRect(aboutWindow->getBounds());
+    require(aboutDisplay && aboutDisplay->userArea.contains(aboutWindow->getBounds()),
+            "About bounds remain inside the target display's usable area.");
+    shell.perform(juce::ApplicationCommandTarget::InvocationInfo(aboutCommand));
+    int aboutWindowCount{};
+    for (int i = 0; i < juce::Desktop::getInstance().getNumComponents(); ++i)
+        if (auto* candidate = dynamic_cast<juce::DocumentWindow*>(juce::Desktop::getInstance().getComponent(i));
+            candidate && candidate->getName() == "About Visual Audio Lab")
+            ++aboutWindowCount;
+    require(aboutWindowCount == 1, "Repeated About commands focus the existing dialog instead of creating duplicates.");
+    auto* logo = aboutWindow ? dynamic_cast<juce::ImageComponent*>(
+        namedComponent(*aboutWindow, "Visual Audio Lab application logo")) : nullptr;
+    auto* version = aboutWindow ? dynamic_cast<juce::Label*>(
+        namedComponent(*aboutWindow, "About product version")) : nullptr;
+    auto* revision = aboutWindow ? dynamic_cast<juce::Label*>(
+        namedComponent(*aboutWindow, "About build revision")) : nullptr;
+    require(logo && logo->getImage().isValid()
+                && version && version->getText() == "Version " + juce::String(productVersion)
+                && revision && revision->getText() == "Build " + juce::String(buildRevision),
+            "About uses the bundled application artwork and generated product version/source revision.");
+    screenshot(*aboutWindow, "desktop-about-dialog.png");
+    auto* aboutContent = aboutWindow->getContentComponent();
+    require(aboutContent && aboutContent->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey))
+                && !aboutWindow->isVisible() && shell.hasKeyboardFocus(true),
+            "Escape dismisses About and returns focus to the application shell.");
     require(creations == 1 && mock->scans == 1 && mock->probes == 0 && mock->opens == 0,
             "Opening desktop automatically enumerates the selected API, without probing unselected endpoints or opening audio.");
     auto& runtime = shell.runtime();

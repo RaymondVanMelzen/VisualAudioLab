@@ -18,6 +18,14 @@ in place using their header controls and reopen from the small edge controls;
 they cannot be dragged, floated or docked elsewhere. Legacy saved dock
 positions are ignored while panel visibility is retained.
 
+The **Help > About Visual Audio Lab** dialog displays the bundled application
+logo, the product version from the CMake project metadata and the source
+revision captured when CMake configures the build. Reconfigure after changing
+the source revision to refresh the displayed build identifier. The dialog is
+single-instance, uses a responsive compact layout when needed, and is fitted
+to the usable area of the display containing the main window. Dismiss it with
+its Close button, Escape, or the native window close control.
+
 1. Windows offers **ASIO**, **WASAPI Shared**, **WASAPI Exclusive** and **DirectSound**; macOS
    offers **CoreAudio**. Offline preview is separate. Foreign APIs are not
    offered. Windows defaults to ASIO; macOS defaults to CoreAudio, without fallback.

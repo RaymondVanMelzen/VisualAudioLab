@@ -1,4 +1,5 @@
 #include <val/presentation/MainComponent.h>
+#include <val/presentation/BuildInfo.h>
 #include <val/presentation/Typography.h>
 #include <val/presentation/WindowPlacement.h>
 #include <ValResources.h>
@@ -6,6 +7,103 @@
 
 namespace val::presentation
 {
+namespace
+{
+class AboutContent final : public juce::Component, private juce::KeyListener
+{
+public:
+    explicit AboutContent(std::function<void()> dismiss) : dismiss_(std::move(dismiss))
+    {
+        setName("About Visual Audio Lab");
+        setWantsKeyboardFocus(true);
+        logo_.setName("Visual Audio Lab application logo");
+        logo_.setImage(juce::ImageCache::getFromMemory(val_resources::VAL_256x256_png,
+                                                       val_resources::VAL_256x256_pngSize));
+        logo_.setImagePlacement(juce::RectanglePlacement::centred
+                                | juce::RectanglePlacement::onlyReduceInSize);
+        addAndMakeVisible(logo_);
+        product_.setName("About product name");
+        product_.setText("Visual Audio Lab", juce::dontSendNotification);
+        product_.setFont(Typography::ui(24, true));
+        product_.setColour(juce::Label::textColourId, ShellTheme::textPrimary());
+        product_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(product_);
+        version_.setName("About product version");
+        version_.setText("Version " + juce::String(productVersion), juce::dontSendNotification);
+        version_.setFont(Typography::numeric(18));
+        version_.setColour(juce::Label::textColourId, ShellTheme::textPrimary());
+        version_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(version_);
+        revision_.setName("About build revision");
+        revision_.setText("Build " + juce::String(buildRevision), juce::dontSendNotification);
+        revision_.setFont(Typography::font(TextRole::status));
+        revision_.setColour(juce::Label::textColourId, ShellTheme::textSecondary());
+        revision_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(revision_);
+        close_.setButtonText("Close");
+        close_.setTitle("Close About dialog");
+        close_.setTooltip("Close this dialog and return to Visual Audio Lab.");
+        close_.onClick = [this] { dismiss_(); };
+        close_.addKeyListener(this);
+        addAndMakeVisible(close_);
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        graphics.fillAll(ShellTheme::background());
+        graphics.setColour(ShellTheme::border());
+        graphics.drawRect(getLocalBounds(), 1);
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds().reduced(22);
+        auto footer = bounds.removeFromBottom(42);
+        close_.setBounds(footer.removeFromRight(112).reduced(2, 4));
+        if (getWidth() < 460 || getHeight() < 270)
+        {
+            auto main = bounds.reduced(0, 6);
+            const auto logoSize = juce::jmin(96, juce::jmax(64, main.getHeight() / 2));
+            logo_.setBounds(main.removeFromTop(logoSize).withSizeKeepingCentre(logoSize, logoSize));
+            product_.setBounds(main.removeFromTop(36));
+            version_.setBounds(main.removeFromTop(30));
+            revision_.setBounds(main.removeFromTop(26));
+            return;
+        }
+        auto main = bounds.reduced(0, 10);
+        const auto logoWidth = juce::jmin(190, main.getHeight());
+        logo_.setBounds(main.removeFromLeft(logoWidth).withSizeKeepingCentre(logoWidth, logoWidth));
+        auto information = main.reduced(24, 0);
+        product_.setBounds(information.removeFromTop(48));
+        version_.setBounds(information.removeFromTop(36));
+        revision_.setBounds(information.removeFromTop(30));
+    }
+
+    void focusCloseButton() { close_.grabKeyboardFocus(); }
+
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        if (key == juce::KeyPress::escapeKey)
+        {
+            dismiss_();
+            return true;
+        }
+        return false;
+    }
+
+private:
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        return keyPressed(key);
+    }
+
+    std::function<void()> dismiss_;
+    juce::ImageComponent logo_;
+    juce::Label product_, version_, revision_;
+    juce::TextButton close_;
+};
+}
+
 MainComponent::MainComponent(application::WorkspaceService& workspace, application::ProjectSession* project, RuntimePanel::BackendFactory backends)
     : workspace_(workspace), project_(project)
 {
@@ -162,6 +260,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
 MainComponent::~MainComponent()
 {
+    aboutWindow_.reset();
     audioSetupWindow_.reset();
     dockWorkspace_.canvas().onObservationTarget = nullptr;
     dockWorkspace_.canvas().onModuleDropped = nullptr;
@@ -188,6 +287,51 @@ MainComponent::AudioSetupWindow::AudioSetupWindow(RuntimePanel& runtime)
     centreWithSize(720, 440);
 }
 
+MainComponent::AboutWindow::AboutWindow(MainComponent& owner)
+    : juce::DocumentWindow("About Visual Audio Lab", ShellTheme::background(), closeButton),
+      owner_(&owner)
+{
+    setUsingNativeTitleBar(true);
+    auto safe = juce::Component::SafePointer<AboutWindow>(this);
+    setContentOwned(new AboutContent([safe]
+    {
+        if (safe)
+            safe->dismiss();
+    }), true);
+    setResizable(false, false);
+    fitToOwnerDisplay();
+}
+
+void MainComponent::AboutWindow::closeButtonPressed()
+{
+    setVisible(false);
+    if (owner_)
+        owner_->grabKeyboardFocus();
+}
+
+void MainComponent::AboutWindow::dismiss()
+{
+    closeButtonPressed();
+}
+
+void MainComponent::AboutWindow::fitToOwnerDisplay()
+{
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    auto* display = owner_ ? displays.getDisplayForRect(owner_->getScreenBounds()) : nullptr;
+    if (display == nullptr)
+        display = displays.getPrimaryDisplay();
+    if (display == nullptr)
+    {
+        centreWithSize(560, 320);
+        return;
+    }
+
+    const auto area = display->userArea;
+    const auto width = juce::jmin(560, area.getWidth());
+    const auto height = juce::jmin(320, area.getHeight());
+    setBounds(juce::Rectangle<int>(0, 0, width, height).withCentre(area.getCentre()));
+}
+
 void MainComponent::showAudioSetup()
 {
     if (!audioSetupWindow_)
@@ -197,6 +341,20 @@ void MainComponent::showAudioSetup()
     }
     audioSetupWindow_->setVisible(true);
     audioSetupWindow_->toFront(true);
+}
+
+void MainComponent::showAbout()
+{
+    if (!aboutWindow_)
+    {
+        aboutWindow_ = std::make_unique<AboutWindow>(*this);
+        aboutWindow_->setLookAndFeel(&theme_);
+    }
+    aboutWindow_->fitToOwnerDisplay();
+    aboutWindow_->setVisible(true);
+    aboutWindow_->toFront(true);
+    if (auto* content = dynamic_cast<AboutContent*>(aboutWindow_->getContentComponent()))
+        content->focusCloseButton();
 }
 
 void MainComponent::paint(juce::Graphics& graphics)
@@ -510,7 +668,7 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID>& result)
 {
     result.addArray({rename, undo, redo, toggleInspector, toggleReducedEffects, resetLayout,
                      showModules, showProperties, showAudioSettings, quit,
-                     saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport});
+                     saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport, about});
 }
 
 void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCommandInfo& info)
@@ -562,6 +720,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
         case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
         case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
         case showAudioSettings: info.setInfo("Audio Setup", "Configure audio devices and capabilities. Playback remains explicit.", "Audio", 0); break;
+        case about: info.setInfo("About Visual Audio Lab", "Show application logo and build information", "Help", 0); break;
         case quit:
             info.setInfo("Quit", "Close Visual Audio Lab", "File", 0);
             info.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
@@ -592,6 +751,7 @@ bool MainComponent::perform(const InvocationInfo& invocation)
         case showModules: dockWorkspace_.showPanel(PanelId::moduleBrowser); return true;
         case showProperties: dockWorkspace_.showPanel(PanelId::propertyInspector); return true;
         case showAudioSettings: showAudioSetup(); return true;
+        case about: showAbout(); return true;
         case saveProject: chooseSave(false); return true;
         case saveProjectAs: chooseSave(true); return true;
         case loadProject: chooseLoad(); return true;
@@ -609,7 +769,7 @@ bool MainComponent::perform(const InvocationInfo& invocation)
 
 juce::StringArray MainComponent::getMenuBarNames()
 {
-    return {"File", "Edit", "View", "Audio"};
+    return {"File", "Edit", "View", "Audio", "Help"};
 }
 
 juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
@@ -661,6 +821,8 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
         menu.addSeparator();
         menu.addCommandItem(&commands_, showAudioSettings);
     }
+    else if (index == 4)
+        menu.addCommandItem(&commands_, about);
     return menu;
 }
 

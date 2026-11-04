@@ -5,6 +5,7 @@
 #include <val/infrastructure/LocalProjectStore.h>
 #include <val/infrastructure/AudioBackends.h>
 #include <val/presentation/MainComponent.h>
+#include <val/presentation/BuildInfo.h>
 #include <val/presentation/WindowPlacement.h>
 #include <ValResources.h>
 #include <iostream>
@@ -96,7 +97,7 @@ class DesktopApplication final : public juce::JUCEApplication
 {
 public:
     const juce::String getApplicationName() override { return "Visual Audio Lab"; }
-    const juce::String getApplicationVersion() override { return "0.0.1"; }
+    const juce::String getApplicationVersion() override { return val::presentation::productVersion; }
     bool moreThanOneInstanceAllowed() override { return false; }
 
     void initialise(const juce::String& commandLine) override

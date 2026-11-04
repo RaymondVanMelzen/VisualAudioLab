@@ -32,7 +32,7 @@ public:
                                                 val_resources::VAL_256x256_pngSize));
         setUsingNativeTitleBar(true);
         setResizable(true, false);
-        setResizeLimits(800, 600, 7680, 4320);
+        setResizeLimits(640, 380, 7680, 4320);
         content_ = new presentation::MainComponent(workspace, &project, [](application::AudioBackendKind kind) -> std::unique_ptr<application::IAudioBackend>
         {
             switch (kind)
@@ -63,7 +63,7 @@ public:
         }
         else
         {
-            setResizeLimits(800, 600, 7680, 4320);
+            setResizeLimits(640, 380, 7680, 4320);
             centreWithSize(settings.windowWidth, settings.windowHeight);
         }
         setVisible(true);

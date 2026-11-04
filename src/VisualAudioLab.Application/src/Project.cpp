@@ -56,7 +56,7 @@ Result validateProject(const ProjectState& state)
     if (!label(state.workspace.name) || state.patches.empty() || !state.patches.contains(state.activePatch))
         return Result::failure("Project needs a valid name, at least one patch and an existing active patch.");
     const auto& layout = state.layout;
-    if (layout.width < 800 || layout.height < 600 || layout.width > 7680 || layout.height > 4320
+    if (layout.width < 1 || layout.height < 1 || layout.width > 7680 || layout.height > 4320
         || std::abs(static_cast<std::int64_t>(layout.x)) > 1000000
         || std::abs(static_cast<std::int64_t>(layout.y)) > 1000000 || !layout.visible[0])
         return Result::failure("Project window bounds are invalid or the Patch Canvas is hidden.");

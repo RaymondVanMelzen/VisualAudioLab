@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include <val/presentation/MainComponent.h>
 #include <val/presentation/WindowPlacement.h>
+#include <array>
 
 template <typename ComponentType>
 ComponentType* findControl(juce::Component& parent)
@@ -106,13 +107,36 @@ int main(int argc, char** argv)
         ShellTheme::setGlowEnabled(true);
         const auto placement = fitWindowToUserArea({-600, -400, 1800, 1200}, {100, 50, 1280, 720});
         require(placement.bounds == juce::Rectangle<int>(100, 50, 1280, 720)
-                    && placement.minimumWidth == 800 && placement.minimumHeight == 600
+                    && placement.minimumWidth == 640 && placement.minimumHeight == 380
                     && placement.maximumWidth == 1280 && placement.maximumHeight == 720,
                 "Oversized and off-screen window bounds fit the logical usable display area.");
         const auto smallDisplayPlacement = fitWindowToUserArea({-50, 20, 1000, 700}, {-1280, 100, 640, 480});
         require(smallDisplayPlacement.bounds == juce::Rectangle<int>(-1280, 100, 640, 480)
-                    && smallDisplayPlacement.minimumWidth == 640 && smallDisplayPlacement.minimumHeight == 480,
+                    && smallDisplayPlacement.minimumWidth == 640 && smallDisplayPlacement.minimumHeight == 380,
                 "Small-display fitting adapts resize minima to keep the full usable area reachable.");
+        const std::array<juce::Rectangle<int>, 4> scaledWorkAreas{{
+            {0, 0, 1536, 834}, // 1920x1080 at 125%, less logical taskbar/work-area insets.
+            {0, 0, 1280, 693}, // 150%.
+            {0, 0, 1097, 577}, // 175%, including a logical taskbar inset.
+            {0, 0, 960, 520}   // 200%.
+        }};
+        for (const auto area : scaledWorkAreas)
+        {
+            const auto fitted = fitWindowToUserArea({0, 0, 1100, 720}, area);
+            require(fitted.bounds.getWidth() <= area.getWidth()
+                        && fitted.bounds.getHeight() <= area.getHeight()
+                        && fitted.bounds.getX() >= area.getX()
+                        && fitted.bounds.getY() >= area.getY()
+                        && fitted.bounds.getRight() <= area.getRight()
+                        && fitted.bounds.getBottom() <= area.getBottom()
+                        && fitted.minimumWidth <= fitted.bounds.getWidth()
+                        && fitted.minimumHeight <= fitted.bounds.getHeight(),
+                    "Scaled logical work areas, including 1920x1080 at 175%, fit without a 800x600 minimum.");
+        }
+        const auto highDpi175 = fitWindowToUserArea({0, 0, 1100, 720}, scaledWorkAreas[2]);
+        require(highDpi175.bounds == juce::Rectangle<int>(0, 0, 1097, 577)
+                    && highDpi175.minimumWidth == 640 && highDpi175.minimumHeight == 380,
+                "The 175% work-area regression preserves usable bounds and product-sized resize minima.");
         const auto& displays = juce::Desktop::getInstance().getDisplays();
         if (const auto* primary = displays.getPrimaryDisplay())
             require(displayForRestoredBounds(displays, {100000, 100000, 800, 600}) == primary,
@@ -132,6 +156,17 @@ int main(int argc, char** argv)
                     && shell.getChildComponent(5)->getY()
                         >= shell.getChildComponent(2)->getBottom(),
                 "Compact windows reflow toolbar actions and transport/patch controls into reachable rows.");
+        shell.setSize(1097, 577);
+        for (int i = 0; i < shell.getNumChildComponents(); ++i)
+        {
+            const auto bounds = shell.getChildComponent(i)->getBounds();
+            require(bounds.getY() >= 0 && bounds.getBottom() <= shell.getHeight(),
+                    "Essential shell and workspace components remain inside a 175%-scaled logical work area.");
+        }
+        const auto* startAtHighDpi = findButton(shell, "Start (F5)");
+        require(startAtHighDpi != nullptr && startAtHighDpi->isVisible()
+                    && !startAtHighDpi->getLocalBounds().isEmpty(),
+                "The transport action remains available at 175%-geometry logical dimensions.");
         shell.setSize(800, 600);
         shell.setInspectorVisible(true);
         shell.showStatus("Test status");

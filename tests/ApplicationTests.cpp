@@ -85,7 +85,12 @@ void testSettings()
     require(service.load().succeeded && service.current() == Settings{}, "Missing file chooses explicit defaults.");
     Settings edited{1200, 800, false};
     require(service.save(edited).succeeded && service.current() == edited, "Valid save is accepted.");
-    require(!service.save({10, 10, true}).succeeded && service.current() == edited, "Invalid values preserve settings.");
+    const Settings scaledWindow{1097, 577, true};
+    require(service.save(scaledWindow).succeeded && service.current() == scaledWindow,
+            "A valid work-area-sized window from a 1920x1080 display at 175% scaling is accepted.");
+    require(!service.save({0, 0, true}).succeeded && service.current() == scaledWindow,
+            "Nonpositive bounds preserve settings.");
+    require(service.save(edited).succeeded && service.current() == edited, "Valid settings can be restored.");
     store.saved = Result::failure("Injected write failure.");
     require(!service.save({1300, 900, true}).succeeded && service.current() == edited,
             "Failed save preserves accepted preferences.");
@@ -93,7 +98,7 @@ void testSettings()
     require(!service.load().succeeded && service.current() == edited, "Failed load preserves preferences.");
     const auto writes = store.saves;
     require(!service.save(edited).succeeded && writes == store.saves, "Failed load inhibits overwrites.");
-    store.next = {SettingsLoadState::loaded, {1, 1, true}, {}};
+    store.next = {SettingsLoadState::loaded, {0, 0, true}, {}};
     require(!service.load().succeeded, "Adapter values must also pass application validation.");
     store.next = {SettingsLoadState::loaded, edited, {}};
     store.saved = Result::success();

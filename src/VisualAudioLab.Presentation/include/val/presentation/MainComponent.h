@@ -57,13 +57,28 @@ private:
         explicit AudioSetupWindow(RuntimePanel& runtime);
         void closeButtonPressed() override { setVisible(false); }
     };
+    class AboutWindow final : public juce::DocumentWindow
+    {
+    public:
+        explicit AboutWindow(MainComponent& owner);
+        void closeButtonPressed() override;
+        void dismiss();
+        void fitToOwnerDisplay();
+    private:
+        juce::Component::SafePointer<MainComponent> owner_;
+    };
     /** Stable, presentation-only command identities, separate from persisted user content. */
     enum CommandId
     {
         rename = 0x2100, undo, redo, toggleInspector, toggleReducedEffects, resetLayout,
         showModules, showProperties, showAudioSettings, quit,
-        saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport
+        saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport, about
     };
+    void toggleTransportAction();
+    void stopTransportAction();
+    void showStartFailure(const std::string& detail);
+    void updateTransportControls();
+    [[nodiscard]] juce::String startFailureGuidance(const std::string& detail) const;
     void refresh();
     void report(const application::Result& result);
     void captureProjectView();
@@ -76,10 +91,12 @@ private:
     void updateProjectChrome();
     void updateGeneratorDisplay();
     void showAudioSetup();
+    void showAbout();
     application::WorkspaceService& workspace_;
     application::ProjectSession* project_{};
     std::unique_ptr<juce::FileChooser> chooser_;
     bool fileWorkflow_{};
+    bool transportTransitionPending_{}, startFailureDialogPending_{};
     domain::GraphId displayedPatch_{1};
     std::vector<std::filesystem::path> recentMenu_;
     ShellTheme theme_;
@@ -93,6 +110,7 @@ private:
     DockWorkspace dockWorkspace_{workspace_};
     std::unique_ptr<RuntimePanel> runtime_;
     std::unique_ptr<AudioSetupWindow> audioSetupWindow_;
+    std::unique_ptr<AboutWindow> aboutWindow_;
     std::unique_ptr<ModuleCatalog> catalog_;
     std::unique_ptr<ModuleEditor> editor_;
     juce::TabbedComponent inspectorTabs_{juce::TabbedButtonBar::TabsAtTop};

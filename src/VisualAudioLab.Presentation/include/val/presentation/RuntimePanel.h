@@ -30,6 +30,11 @@ public:
     /** Restore hints and revalidate automatically; never start playback on launch. */
     void restoreSetup(std::optional<application::AudioSetupPreference> preference);
     [[nodiscard]] std::optional<application::AudioSetupPreference> setupPreference() const;
+    [[nodiscard]] std::vector<std::string> endpointChannelNames(domain::EndpointRole role) const;
+    [[nodiscard]] std::vector<int> selectedEndpointChannelIndices(domain::GraphId endpoint) const;
+    [[nodiscard]] application::Result assignEndpointChannels(domain::GraphId endpoint,
+                                                               const std::vector<int>& channelIndices);
+    [[nodiscard]] juce::String endpointReadiness(domain::GraphId endpoint) const;
     [[nodiscard]] juce::String compactStatus() const;
     void parameter(std::uint64_t node, std::uint16_t index, float value, audio::ParameterAction action);
     void schedule(std::uint64_t node, std::uint16_t index, float value, double seconds);
@@ -42,6 +47,11 @@ public:
     std::function<void()> onStarted;
     std::function<void()> onDismissSetup;
 private:
+    struct ResolvedAudioSetup
+    {
+        application::AudioStreamRequest stream;
+        std::map<std::uint64_t, std::vector<int>> endpointChannelMaps;
+    };
     void timerCallback() override;
     void selectBackend();
     void scan();
@@ -52,12 +62,12 @@ private:
     void clearConfiguration(juce::String placeholder);
     void populateConfiguration();
     void configurationChanged();
-    void updateChannelTooltips();
     void controlPanel();
     void message(juce::String text);
     void enableControls();
-    [[nodiscard]] application::AudioQuery<audio::AudioGraph> compileGraph(bool captures);
-    [[nodiscard]] application::AudioQuery<application::AudioStreamRequest> request() const;
+    [[nodiscard]] application::AudioQuery<audio::AudioGraph> compileGraph(
+        bool captures, const std::map<std::uint64_t, std::vector<int>>& endpointChannelMaps = {});
+    [[nodiscard]] application::AudioQuery<ResolvedAudioSetup> request() const;
     [[nodiscard]] bool parameterOnly(const domain::Graph& next) const;
     [[nodiscard]] application::Result attachCaptures(audio::AudioGraph& graph, std::vector<std::uint64_t>& added);
     [[nodiscard]] application::Result applyParameters(const domain::Graph& next);
@@ -67,7 +77,6 @@ private:
     std::unique_ptr<application::IAudioBackend> backend_;
     audio::AudioEngine engine_;
     std::vector<application::AudioDeviceInfo> inputs_, outputs_;
-    std::vector<std::vector<int>> inputPorts_, outputPorts_;
     std::optional<application::AudioDeviceCapabilities> inputCaps_, outputCaps_;
     std::uint64_t probeSerial_{}, revision_{};
     domain::Graph accepted_;
@@ -81,10 +90,9 @@ private:
     int block_{512}, width_{2};
     std::array<float, 4096 * 32> offlineOutput_{};
     std::array<float*, 32> offlinePointers_{};
-    juce::ComboBox api_, input_, output_, rateChoice_, buffer_, inputCount_, outputCount_;
+    juce::ComboBox api_, input_, output_, rateChoice_, buffer_;
     juce::TextButton scan_{"Refresh / Retry"}, panel_{"Control Panel"}, start_{"Start"}, stop_{"Stop"}, done_{"Done"};
-    juce::ToggleButton advanced_{"Advanced ports"};
-    std::array<juce::Label, 7> labels_;
+    std::array<juce::Label, 5> labels_;
     juce::Label notice_, state_;
     juce::String lastStatus_{"Stopped. Discovering devices; choose endpoints and ports. Start is explicit."};
     juce::String graphWarning_;

@@ -19,10 +19,34 @@ CanvasView::CanvasView(application::WorkspaceService& workspace) : workspace_(wo
     minus_.onClick = [this] { zoomAt(zoom_ / 1.2f, viewport().getCentre().toFloat()); };
     plus_.onClick = [this] { zoomAt(zoom_ * 1.2f, viewport().getCentre().toFloat()); };
     for (auto* child : std::initializer_list<juce::Component*>{
-             &add_, &remove_, &fit_, &minus_, &plus_, &zoomLabel_, &help_})
+             &add_, &addInput_, &addOutput_, &remove_, &fit_, &minus_, &plus_, &zoomLabel_, &help_})
         addAndMakeVisible(child);
-    for (auto* button : {&add_, &remove_, &fit_, &minus_, &plus_})
+    for (auto* button : {&add_, &addInput_, &addOutput_, &remove_, &fit_, &minus_, &plus_})
         button->setWantsKeyboardFocus(false);
+    addInput_.setTooltip("Add an unassigned hardware input row. Nothing is selected or connected.");
+    addOutput_.setTooltip("Add an unassigned hardware output row. Nothing is selected or connected.");
+    addInput_.onClick = [this]
+    {
+        std::size_t count{};
+        for (const auto& [id, endpoint] : workspace_.graph().endpoints)
+        {
+            juce::ignoreUnused(id);
+            if (endpoint.role == domain::EndpointRole::hardwareInput) ++count;
+        }
+        finish(workspace_.addHardwareEndpoint(domain::EndpointRole::hardwareInput,
+                                               "Hardware Input " + std::to_string(count + 1)));
+    };
+    addOutput_.onClick = [this]
+    {
+        std::size_t count{};
+        for (const auto& [id, endpoint] : workspace_.graph().endpoints)
+        {
+            juce::ignoreUnused(id);
+            if (endpoint.role == domain::EndpointRole::hardwareOutput) ++count;
+        }
+        finish(workspace_.addHardwareEndpoint(domain::EndpointRole::hardwareOutput,
+                                               "Output " + std::to_string(count + 1)));
+    };
     help_.setText("N: add | Drag ports: wire | Wheel: zoom | Middle/Space-drag: pan",
                    juce::dontSendNotification);
     help_.setFont(Typography::font(TextRole::status));
@@ -104,6 +128,9 @@ juce::Rectangle<int> CanvasView::destinationRailBounds() const
 std::vector<domain::GraphId> CanvasView::sourceEndpointIds() const
 {
     std::vector<domain::GraphId> result;
+    for (const auto& [id, endpoint] : workspace_.graph().endpoints)
+        if (endpoint.role == domain::EndpointRole::hardwareInput)
+            result.push_back(id);
     for (const auto& [id, node] : workspace_.graph().nodes)
         if (domain::isFixedEndpoint(node) && domain::audioType(node) != "Output")
             result.push_back(id);
@@ -113,6 +140,9 @@ std::vector<domain::GraphId> CanvasView::sourceEndpointIds() const
 std::vector<domain::GraphId> CanvasView::destinationEndpointIds() const
 {
     std::vector<domain::GraphId> result;
+    for (const auto& [id, endpoint] : workspace_.graph().endpoints)
+        if (endpoint.role == domain::EndpointRole::hardwareOutput)
+            result.push_back(id);
     for (const auto& [id, node] : workspace_.graph().nodes)
         if (domain::audioType(node) == "Output")
             result.push_back(id);
@@ -121,6 +151,8 @@ std::vector<domain::GraphId> CanvasView::destinationEndpointIds() const
 
 bool CanvasView::fixedEndpoint(domain::GraphId id) const
 {
+    if (workspace_.graph().endpoints.contains(id))
+        return true;
     const auto found = workspace_.graph().nodes.find(id);
     return found != workspace_.graph().nodes.end() && domain::isFixedEndpoint(found->second);
 }
@@ -145,6 +177,16 @@ juce::Rectangle<int> CanvasView::endpointCardBounds(domain::GraphId id) const
 
 std::optional<juce::Point<float>> CanvasView::endpointPortPosition(domain::GraphId id, domain::Port direction) const
 {
+    if (const auto endpoint = workspace_.graph().endpoints.find(id); endpoint != workspace_.graph().endpoints.end())
+    {
+        const bool source = endpoint->second.role == domain::EndpointRole::hardwareInput;
+        if ((source && direction != domain::Port::output) || (!source && direction != domain::Port::input))
+            return std::nullopt;
+        const auto card = endpointCardBounds(id);
+        return juce::Point<float>{source ? static_cast<float>(card.getRight() - 1)
+                                         : static_cast<float>(card.getX() + 1),
+                                  static_cast<float>(card.getCentreY())};
+    }
     const auto found = workspace_.graph().nodes.find(id);
     if (found == workspace_.graph().nodes.end())
         return std::nullopt;
@@ -180,6 +222,10 @@ void CanvasView::resized()
     zoomLabel_.setBounds(row.removeFromLeft(55));
     plus_.setBounds(row.removeFromLeft(28));
     help_.setBounds(getLocalBounds().removeFromBottom(24));
+    const auto source = sourceRailBounds();
+    const auto destination = destinationRailBounds();
+    addInput_.setBounds(source.withTrimmedTop(54).withHeight(24).reduced(6, 0));
+    addOutput_.setBounds(destination.withTrimmedTop(54).withHeight(24).reduced(6, 0));
 }
 
 juce::Point<float> CanvasView::toPatch(juce::Point<float> screen) const
@@ -295,9 +341,9 @@ void CanvasView::paint(juce::Graphics& graphics)
     {
         graphics.setFont(Typography::ui(Typography::canvasHeight(15, zoom_, 14)));
         graphics.setColour(ShellTheme::textSecondary());
-        graphics.drawFittedText("Add a source from the left rail and Main Output from Module Browser.\n"
-                                "The centre patch area is for user processors.\n"
-                                "Routing Draft (N) remains structural only; it performs no DSP.",
+        graphics.drawFittedText("Choose a hardware input or built-in generator from Sources.\n"
+                                "Assign a named output channel in the Destinations lane.\n"
+                                "Processors stay in the centre; connect the ports to build a route.",
                                 visible.toNearestInt().reduced(8), juce::Justification::centred, 4);
     }
     }
@@ -325,9 +371,10 @@ void CanvasView::paintEndpointRails(juce::Graphics& graphics)
                           rail.withTrimmedTop(8).withHeight(23).reduced(8, 0), juce::Justification::centredLeft);
         graphics.setColour(ShellTheme::textSecondary());
         graphics.setFont(Typography::font(TextRole::status));
-        graphics.drawFittedText("Device +\nchannel names:\nAudio Setup",
-                               rail.withTrimmedTop(32).withHeight(48).reduced(8, 0),
-                               juce::Justification::topLeft, 3);
+        graphics.drawFittedText(source ? "Hardware input and built-in generators"
+                                       : "Hardware output rows",
+                               rail.withTrimmedTop(32).withHeight(20).reduced(8, 0),
+                               juce::Justification::centredLeft, 1);
 
         const auto& endpoints = source ? sources : destinations;
         if (endpoints.empty())
@@ -337,12 +384,12 @@ void CanvasView::paintEndpointRails(juce::Graphics& graphics)
             graphics.fillRoundedRectangle(placeholder.toFloat(), 5);
             graphics.setColour(ShellTheme::textPrimary());
             graphics.setFont(Typography::ui(15, true));
-            graphics.drawText(source ? "Hardware Input" : "Main Output",
+            graphics.drawText(source ? "No source rows" : "No output rows",
                               placeholder.reduced(7, 5).withHeight(22), juce::Justification::centredLeft);
             graphics.setColour(ShellTheme::textSecondary());
             graphics.setFont(Typography::ui(14));
-            graphics.drawFittedText(source ? "Add Input; set exact channels in Audio Setup."
-                                          : "Add Output; select named channels in Audio Setup.",
+            graphics.drawFittedText(source ? "Add an input row or generator."
+                                          : "Add an output row and assign channels.",
                                    placeholder.reduced(7, 27), juce::Justification::topLeft, 3);
             return;
         }
@@ -351,23 +398,45 @@ void CanvasView::paintEndpointRails(juce::Graphics& graphics)
             const auto card = endpointCardBounds(id);
             if (!rail.intersects(card))
                 continue;
-            const auto& node = workspace_.graph().nodes.at(id);
-            const auto type = domain::audioType(node);
-            const bool hardware = type == "Input";
-            const auto title = hardware ? juce::String("Hardware Input")
-                : type == "Output" ? juce::String("Main Output") : juce::String::fromUTF8(node.name.c_str());
+            const auto hardware = workspace_.graph().endpoints.find(id);
+            const auto node = workspace_.graph().nodes.find(id);
+            const bool isHardware = hardware != workspace_.graph().endpoints.end();
+            const auto type = node != workspace_.graph().nodes.end() ? domain::audioType(node->second) : std::string_view{};
+            const auto title = isHardware ? juce::String::fromUTF8(hardware->second.name.c_str())
+                : juce::String::fromUTF8(node->second.name.c_str());
             graphics.setColour(ShellTheme::raised());
             graphics.fillRoundedRectangle(card.toFloat(), 5);
             graphics.setColour(ShellTheme::border());
             graphics.drawRoundedRectangle(card.toFloat(), 5, 1);
             graphics.setColour(ShellTheme::textPrimary());
-            graphics.setFont(Typography::ui(15, true));
-            graphics.drawFittedText(title, card.reduced(7, 4).withHeight(34),
-                                    juce::Justification::centredLeft, 2);
+            graphics.setFont(Typography::ui(14, true));
+            graphics.drawFittedText(title, card.reduced(7, 3).withHeight(19),
+                                    juce::Justification::centredLeft, 1);
             graphics.setColour(ShellTheme::textSecondary());
-            graphics.setFont(Typography::ui(14));
-            graphics.drawText(hardware || type == "Output" ? "Audio Setup" : "Built-in source",
-                              card.reduced(7, 39).withHeight(20), juce::Justification::centredLeft);
+            graphics.setFont(Typography::ui(12));
+            juce::String channelSummary;
+            juce::String readiness;
+            if (isHardware)
+            {
+                juce::StringArray names;
+                for (const auto& channel : hardware->second.channelNames)
+                    names.add(juce::String::fromUTF8(channel.c_str()));
+                channelSummary = names.isEmpty() ? juce::String::fromUTF8("Unassigned · ")
+                    + juce::String(hardware->second.layoutChannels) + " ch"
+                                                  : names.joinIntoString(" / ");
+                readiness = endpointStatus ? endpointStatus(id) : "Device status unavailable";
+                if (!hardware->second.enabled) readiness = "Disabled";
+            }
+            else
+            {
+                channelSummary = type == "Input" ? "Legacy input endpoint"
+                    : type == "Output" ? "Legacy output endpoint" : "Built-in generator";
+            }
+            graphics.drawFittedText(channelSummary, card.reduced(7, 23).withHeight(17),
+                                    juce::Justification::centredLeft, 1);
+            graphics.setFont(Typography::ui(11));
+            graphics.drawFittedText(readiness, card.reduced(7, 41).withHeight(16),
+                                    juce::Justification::centredLeft, 1);
             if (const auto port = endpointPortPosition(id, source ? domain::Port::output : domain::Port::input))
             {
                 graphics.setColour(ShellTheme::audio());
@@ -439,9 +508,9 @@ void CanvasView::synchronise()
 {
     cancelGesture();
     const auto& graph = workspace_.graph();
-    std::erase_if(selected_, [&](auto id) { return !graph.nodes.contains(id); });
+    std::erase_if(selected_, [&](auto id) { return !graph.nodes.contains(id) && !graph.endpoints.contains(id); });
     clampRailScroll();
-    if (!graph.nodes.contains(focusedNode_))
+    if (!graph.nodes.contains(focusedNode_) && !graph.endpoints.contains(focusedNode_))
         focusedNode_ = selected_.empty() ? 0 : *selected_.begin();
     if (!graph.connections.contains(selectedWire_))
         selectedWire_ = 0;
@@ -639,6 +708,12 @@ void CanvasView::mouseDown(const juce::MouseEvent& event)
     down_ = pointer_ = event.position;
     if (event.mods.isPopupMenu())
     {
+        const auto row = nodeAt(event.position);
+        if (workspace_.graph().endpoints.contains(row))
+        {
+            endpointMenu(row);
+            return;
+        }
         contextMenu(event.position);
         return;
     }
@@ -657,6 +732,11 @@ void CanvasView::mouseDown(const juce::MouseEvent& event)
     const auto node = nodeAt(event.position);
     if (node == 0 && !viewport().contains(event.position.toInt()))
         return;
+    if (workspace_.graph().endpoints.contains(node))
+    {
+        endpointMenu(node);
+        return;
+    }
     const bool toggle = event.mods.isCommandDown();
     if (node != 0)
     {
@@ -1048,6 +1128,97 @@ void CanvasView::contextMenu(juce::Point<float> screen)
             else if (result == 4) safe->fitGraph();
             else if (result >= 101 && result < 101 + static_cast<int>(wires.size()))
                 safe->finish(safe->workspace_.disconnect(wires[static_cast<std::size_t>(result - 101)]));
+        });
+}
+
+void CanvasView::endpointMenu(domain::GraphId id)
+{
+    const auto found = workspace_.graph().endpoints.find(id);
+    if (found == workspace_.graph().endpoints.end()) return;
+    const auto endpoint = found->second;
+    const auto channels = endpointChannels ? endpointChannels(endpoint.role) : std::vector<std::string>{};
+    const auto selectedChannels = selectedEndpointChannels ? selectedEndpointChannels(id) : std::vector<int>{};
+    const auto selected = [&](int index)
+    {
+        return std::find(selectedChannels.begin(), selectedChannels.end(), index) != selectedChannels.end();
+    };
+    juce::PopupMenu menu, mono, stereo, advanced;
+    for (int i = 0; i < static_cast<int>(channels.size()); ++i)
+    {
+        const auto label = juce::String(i + 1) + juce::String::fromUTF8(" · ")
+            + juce::String::fromUTF8(channels[static_cast<std::size_t>(i)].c_str());
+        mono.addItem(10000 + i, label, true, selectedChannels.size() == 1 && selected(i));
+        if (i + 1 < static_cast<int>(channels.size()))
+            stereo.addItem(20000 + i, label + " + " + juce::String(i + 2) + juce::String::fromUTF8(" · ")
+                + juce::String::fromUTF8(channels[static_cast<std::size_t>(i + 1)].c_str()),
+                true, selectedChannels.size() == 2 && selected(i) && selected(i + 1));
+        advanced.addItem(30000 + i, label, true, selected(i));
+    }
+    menu.addSectionHeader(juce::String::fromUTF8(endpoint.name.c_str()));
+    menu.addSubMenu("Mono channel", mono);
+    menu.addSubMenu("Adjacent stereo pair", stereo);
+    menu.addSubMenu(juce::String::fromUTF8("Advanced · choose any channels"), advanced);
+    menu.addItem(1, "Unassign channels", true, endpoint.channelNames.empty());
+    if (channels.empty())
+        menu.addItem(6, "Select and inspect a device in Audio Setup first", false);
+    menu.addSeparator();
+    menu.addItem(2, endpoint.enabled ? "Disable row" : "Enable row");
+    menu.addItem(3, "Rename row...");
+    menu.addItem(4, "Remove row");
+    const juce::Component::SafePointer<CanvasView> safe(this);
+    const auto anchor = localPointToGlobal(endpointCardBounds(id).getCentre());
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({anchor.x, anchor.y, 1, 1})
+                          .withParentComponent(getTopLevelComponent()),
+        [safe, id, endpoint, selectedChannels](int result)
+        {
+            if (!safe) return;
+            if (result == 1)
+            {
+                if (safe->assignEndpointChannels)
+                    safe->finish(safe->assignEndpointChannels(id, {}));
+            }
+            else if (result >= 10000 && result < 11024)
+            {
+                if (safe->assignEndpointChannels)
+                    safe->finish(safe->assignEndpointChannels(id, {result - 10000}));
+            }
+            else if (result >= 20000 && result < 21024)
+            {
+                if (safe->assignEndpointChannels)
+                    safe->finish(safe->assignEndpointChannels(id, {result - 20000, result - 20000 + 1}));
+            }
+            else if (result >= 30000 && result < 31024)
+            {
+                auto next = selectedChannels;
+                const auto channel = result - 30000;
+                if (const auto current = std::find(next.begin(), next.end(), channel); current != next.end())
+                    next.erase(current);
+                else if (next.size() < 32)
+                    next.push_back(channel);
+                std::sort(next.begin(), next.end());
+                if (safe->assignEndpointChannels)
+                    safe->finish(safe->assignEndpointChannels(id, next));
+            }
+            else if (result == 2)
+                safe->finish(safe->workspace_.editHardwareEndpoint(id, endpoint.name, !endpoint.enabled,
+                    endpoint.layoutChannels, endpoint.channelNames));
+            else if (result == 4)
+                safe->finish(safe->workspace_.removeHardwareEndpoint(id));
+            else if (result == 3)
+            {
+                auto* alert = new juce::AlertWindow("Rename endpoint row", "Keep its channel assignment; change only the friendly name.",
+                                                     juce::AlertWindow::NoIcon);
+                alert->addTextEditor("name", juce::String::fromUTF8(endpoint.name.c_str()), "Row name");
+                alert->addButton("Cancel", 0);
+                alert->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+                alert->enterModalState(true, juce::ModalCallbackFunction::create(
+                    [safe, id, endpoint, alert](int accepted)
+                    {
+                        if (!safe || accepted != 1) return;
+                        safe->finish(safe->workspace_.editHardwareEndpoint(id, alert->getTextEditorContents("name").toStdString(),
+                            endpoint.enabled, endpoint.layoutChannels, endpoint.channelNames));
+                    }), true);
+            }
         });
 }
 }

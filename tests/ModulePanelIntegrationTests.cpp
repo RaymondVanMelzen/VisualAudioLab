@@ -176,7 +176,7 @@ void runModulePanelIntegrationTests()
 
     add([&]
     {
-        require(list.getListBoxModel()->getNumRows() == 24 && list.getSelectedRow() >= 0
+        require(list.getListBoxModel()->getNumRows() == 22 && list.getSelectedRow() >= 0
                     && category.getNumItems() == 6,
                 "The actual catalog exposes the delivered modules and their populated categories.");
         category.setSelectedId(2, juce::sendNotificationSync);
@@ -189,8 +189,9 @@ void runModulePanelIntegrationTests()
         require(list.getListBoxModel()->getNumRows() == 7,
                 "Generators category exposes the seven separately insertable signal sources.");
         category.setSelectedId(5, juce::sendNotificationSync);
-        require(list.getListBoxModel()->getNumRows() == 3,
-                "Routing category contains Input, Output and explicit Sum utilities.");
+        require(list.getListBoxModel()->getNumRows() == 1
+                    && list.getListBoxModel()->getTooltipForRow(0).contains("Explicit unity sum"),
+                "Routing utilities keep explicit Sum; hardware endpoints are configured in fixed canvas lanes.");
         category.setSelectedId(6, juce::sendNotificationSync);
         require(list.getListBoxModel()->getNumRows() == 1
                     && list.getListBoxModel()->getTooltipForRow(0).contains("User-authored"),
@@ -233,8 +234,8 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        const std::array<std::string, 24> names{
-            "Input", "Output", "Sum", "Gain", "EQ", "Delay", "Compressor", "Distortion",
+        const std::array<std::string, 22> names{
+            "Sum", "Gain", "EQ", "Delay", "Compressor", "Distortion",
             "Chorus", "Reverb", "Signal Generator", "Impulse Generator", "Click Generator", "Burst Generator",
             "Chirp Generator", "Noise Generator", "DC Generator", "Oscilloscope", "Spectrum Analyzer",
             "Peak Meter", "RMS Meter", "Correlation Meter", "Guitar Tuner", "Script"};
@@ -247,11 +248,11 @@ void runModulePanelIntegrationTests()
             inserted.push_back(std::move(type));
         };
     });
-    for (int row = 0; row < 24; ++row)
+    for (int row = 0; row < 22; ++row)
         add([&, row] { list.selectRow(row); button(catalog, "Insert selected module").triggerClick(); });
     add([&]
     {
-        require(inserted.size() == 26 && catalogMatched,
+        require(inserted.size() == 24 && catalogMatched,
                 "Every actual catalog row can be selected and emits its module type through the insertion button.");
         catalog.onInsert = {};
         require(workspace.createNode({10, 20}, "EQ under test",

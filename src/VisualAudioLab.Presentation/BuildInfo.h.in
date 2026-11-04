@@ -1,0 +1,7 @@
+#pragma once
+
+namespace val::presentation
+{
+inline constexpr char productVersion[] = "@PROJECT_VERSION@";
+inline constexpr char buildRevision[] = "@VAL_BUILD_REVISION@";
+}

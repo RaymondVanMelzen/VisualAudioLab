@@ -35,10 +35,17 @@ public:
         std::map<std::string, domain::Parameter> parameters = {});
     [[nodiscard]] Result deleteNodes(const std::vector<domain::GraphId>& nodes);
     [[nodiscard]] Result moveNodes(const std::map<domain::GraphId, domain::Position>& positions);
-    [[nodiscard]] Result connect(domain::Endpoint source, domain::Endpoint destination);
+    [[nodiscard]] Result connect(domain::Endpoint source, domain::Endpoint destination,
+                                 domain::AudioAdapter adapter = domain::AudioAdapter::none);
     [[nodiscard]] Result disconnect(domain::GraphId connection);
+    [[nodiscard]] Result addHardwareEndpoint(domain::EndpointRole role, std::string name);
+    [[nodiscard]] Result removeHardwareEndpoint(domain::GraphId endpoint);
+    [[nodiscard]] Result editHardwareEndpoint(domain::GraphId endpoint, std::string name, bool enabled,
+                                               int layoutChannels, std::vector<std::string> channelNames);
+    [[nodiscard]] domain::GraphId lastCreatedEndpoint() const noexcept { return lastCreatedEndpoint_; }
     /** Validates endpoints, direction, duplicate/fan-in rules and cycles without mutation. */
-    [[nodiscard]] Result canConnect(domain::Endpoint source, domain::Endpoint destination) const;
+    [[nodiscard]] Result canConnect(domain::Endpoint source, domain::Endpoint destination,
+                                    domain::AudioAdapter adapter = domain::AudioAdapter::none) const;
     /** Identity of the most recently accepted insertion (not selection or history state). */
     [[nodiscard]] domain::GraphId lastCreatedNode() const noexcept { return lastCreatedNode_; }
     [[nodiscard]] const ProjectState& project() const noexcept { return state_; }
@@ -56,7 +63,7 @@ public:
 private:
     domain::Graph& activeGraph() { return state_.patches.at(state_.activePatch).graph; }
     ProjectState state_;
-    domain::GraphId nextId_{1}, lastCreatedNode_{}, nextPatchId_{2};
+    domain::GraphId nextId_{4}, lastCreatedNode_{}, lastCreatedEndpoint_{}, nextPatchId_{2};
     CommandHistory history_;
 };
 }

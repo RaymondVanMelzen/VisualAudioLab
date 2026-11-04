@@ -24,6 +24,19 @@ ShellToolbar::ShellToolbar(juce::ApplicationCommandManager& commands, juce::Comm
 void ShellToolbar::resized()
 {
     auto bounds = getLocalBounds().reduced(4);
+    if (bounds.getWidth() < 610)
+    {
+        auto identity = bounds.removeFromTop(30);
+        const auto nameWidth = juce::jmax(140, identity.getWidth() * 45 / 100);
+        workspaceName_.setBounds(identity.removeFromLeft(nameWidth).reduced(2));
+        rename_.setBounds(identity.reduced(2));
+        auto actions = bounds.removeFromTop(30);
+        const auto cell = actions.getWidth() / 3;
+        undo_.setBounds(actions.removeFromLeft(cell).reduced(2));
+        redo_.setBounds(actions.removeFromLeft(cell).reduced(2));
+        resetLayout_.setBounds(actions.reduced(2));
+        return;
+    }
     workspaceName_.setBounds(bounds.removeFromLeft(150).reduced(2));
     rename_.setBounds(bounds.removeFromLeft(142).reduced(2));
     undo_.setBounds(bounds.removeFromLeft(56).reduced(2));

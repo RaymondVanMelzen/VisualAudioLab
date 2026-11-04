@@ -64,6 +64,11 @@ private:
         showModules, showProperties, showAudioSettings, quit,
         saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport
     };
+    void toggleTransportAction();
+    void stopTransportAction();
+    void showStartFailure(const std::string& detail);
+    void updateTransportControls();
+    [[nodiscard]] juce::String startFailureGuidance(const std::string& detail) const;
     void refresh();
     void report(const application::Result& result);
     void captureProjectView();
@@ -80,6 +85,7 @@ private:
     application::ProjectSession* project_{};
     std::unique_ptr<juce::FileChooser> chooser_;
     bool fileWorkflow_{};
+    bool transportTransitionPending_{}, startFailureDialogPending_{};
     domain::GraphId displayedPatch_{1};
     std::vector<std::filesystem::path> recentMenu_;
     ShellTheme theme_;

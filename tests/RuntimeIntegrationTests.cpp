@@ -96,7 +96,12 @@ public:
         openedRequest = request;
         return {AudioStreamFormat{request.sampleRate, request.bufferFrames, request.maxFrames, request.inputChannels, request.outputChannels}, {}};
     }
-    AudioError startStream(IAudioRenderCallback& value) override { target = &value; return {}; }
+    AudioError startStream(IAudioRenderCallback& value) override
+    {
+        if (!startError.succeeded()) return startError;
+        target = &value;
+        return {};
+    }
     AudioError stopStream() override { target = nullptr; return {}; }
     AudioError closeStream() override { ++closes; return {}; }
     AudioQuery<AudioStreamDiagnostics> streamDiagnostics() const override { return {AudioStreamDiagnostics{target != nullptr, target != nullptr, {}, 64, {}}, {}}; }
@@ -117,7 +122,7 @@ public:
     AudioBackendKind backend_;
     bool defer{}, withInput{};
     CapabilityCallback pending;
-    AudioError probeError, requestError, panelError;
+    AudioError probeError, requestError, panelError, startError;
     std::optional<AudioDeviceToken> selectedInput;
     AudioDeviceToken selectedOutput;
     AudioDeviceCapabilities capabilities{{}, {"Left", "Right"}, {48000}, {128}, 128, {}, {}};
@@ -377,6 +382,13 @@ void runRuntimeIntegrationTests()
         require(leftSamples[0] == 0.375f && rightSamples[31] == 0.375f,
                 "Prepared callback compacts exact sparse input identities and fans the adapted bus to selected output slots.");
         require(setup.stop().succeeded, "Explicit Stop quiesces the selected stream.");
+        device->startError = {AudioErrorCode::unavailable, "Injected native stream start failure."};
+        const auto failedStart = setup.start();
+        require(!failedStart.succeeded
+                    && failedStart.error.find("native stream start failure") != std::string::npos
+                    && !setup.running() && device->target == nullptr && device->opens == 2 && device->closes == 2,
+                "A native start failure is returned with its diagnostic and closes its partially opened stream.");
+        device->startError = {};
         screenshot(setup, "desktop-endpoint-rows-" + juce::String(static_cast<int>(kind)) + "-ready.png");
         require(setup.assignEndpointChannels(inputEndpoint, {}).succeeded,
                 "Unassigning an input row preserves the output-only workflow.");
@@ -388,10 +400,10 @@ void runRuntimeIntegrationTests()
         require(panel->isEnabled(), "Driver-reported Control Panel support enables its action.");
         clickButton(*panel);
         require(device->panels == 1 && device->panelToken == device->selectedOutput && !setup.running()
-                && device->opens == 1, "Control Panel targets the chosen driver and revalidates without starting audio.");
+                && device->opens == 2, "Control Panel targets the chosen driver and revalidates without starting audio.");
         device->panelError = {AudioErrorCode::unavailable, "Injected driver panel failure"};
         clickButton(*panel);
-        require(setup.status().contains("panel failure") && !setup.running() && device->opens == 1,
+        require(setup.status().contains("panel failure") && !setup.running() && device->opens == 2,
                 "Control Panel failure remains visible without opening audio or silently changing backend.");
         device->panelError = {};
         device->defer = true;
@@ -493,6 +505,9 @@ void runRuntimeIntegrationTests()
     shell.setSize(1600, 1000);
     juce::DocumentWindow window("Desktop integration validation - no hardware", juce::Colours::black, juce::DocumentWindow::allButtons);
     window.setContentNonOwned(&shell, false); window.centreWithSize(1600, 1000); window.setVisible(true);
+    window.setSize(640, 480);
+    screenshot(shell, "desktop-compact-window-controls.png");
+    window.centreWithSize(1600, 1000);
     require(creations == 1 && mock->scans == 1 && mock->probes == 0 && mock->opens == 0,
             "Opening desktop automatically enumerates the selected API, without probing unselected endpoints or opening audio.");
     auto& runtime = shell.runtime();
@@ -525,6 +540,10 @@ void runRuntimeIntegrationTests()
     require(saved.succeeded, "Integrated executable source/FX/analysis metadata saves through File workflow: " + saved.error);
     require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && runtime.running() && creations == 1,
             "Explicit desktop F5 command starts real offline engine with zero device interaction.");
+    require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && !runtime.running(),
+            "F5 stops the engine when it is already running.");
+    require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && runtime.running(),
+            "F5 starts the stopped engine again without changing configuration.");
     std::uint64_t initialRevision{};
     std::uint64_t beforeScheduled{};
     int observedTicks{};

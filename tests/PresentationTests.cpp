@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 #include <val/presentation/MainComponent.h>
+#include <val/presentation/WindowPlacement.h>
 
 template <typename ComponentType>
 ComponentType* findControl(juce::Component& parent)
@@ -103,6 +104,19 @@ int main(int argc, char** argv)
         const juce::ScopedJuceInitialiser_GUI initialise;
         using namespace val::presentation;
         ShellTheme::setGlowEnabled(true);
+        const auto placement = fitWindowToUserArea({-600, -400, 1800, 1200}, {100, 50, 1280, 720});
+        require(placement.bounds == juce::Rectangle<int>(100, 50, 1280, 720)
+                    && placement.minimumWidth == 800 && placement.minimumHeight == 600
+                    && placement.maximumWidth == 1280 && placement.maximumHeight == 720,
+                "Oversized and off-screen window bounds fit the logical usable display area.");
+        const auto smallDisplayPlacement = fitWindowToUserArea({-50, 20, 1000, 700}, {-1280, 100, 640, 480});
+        require(smallDisplayPlacement.bounds == juce::Rectangle<int>(-1280, 100, 640, 480)
+                    && smallDisplayPlacement.minimumWidth == 640 && smallDisplayPlacement.minimumHeight == 480,
+                "Small-display fitting adapts resize minima to keep the full usable area reachable.");
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        if (const auto* primary = displays.getPrimaryDisplay())
+            require(displayForRestoredBounds(displays, {100000, 100000, 800, 600}) == primary,
+                    "A saved window on a disconnected monitor recovers to the primary display.");
         val::application::WorkspaceService service;
         MainComponent shell(service);
         shell.setSize(1000, 700);
@@ -111,6 +125,13 @@ int main(int argc, char** argv)
         require(shell.inspectorVisible(), "Property Inspector starts visible.");
         shell.setInspectorVisible(false);
         require(!shell.inspectorVisible(), "Inspector can collapse without a backend.");
+        shell.setSize(800, 600);
+        shell.setSize(500, 400);
+        require(shell.getChildComponent(1)->getHeight() == 66
+                    && shell.getChildComponent(2)->getHeight() == 30
+                    && shell.getChildComponent(5)->getY()
+                        >= shell.getChildComponent(2)->getBottom(),
+                "Compact windows reflow toolbar actions and transport/patch controls into reachable rows.");
         shell.setSize(800, 600);
         shell.setInspectorVisible(true);
         shell.showStatus("Test status");
@@ -145,8 +166,12 @@ int main(int argc, char** argv)
         require(findButton(shell, "Audio Setup") == nullptr,
                 "Main toolbar and view contain no Audio Setup button.");
         const auto audioMenu = shell.getMenuForIndex(3, "Audio");
-        require(menuContains(audioMenu, "Start") && menuContains(audioMenu, "Stop"),
-                "Audio menu exposes explicit Start and Stop.");
+        require(menuContains(audioMenu, "Start (F5)") && menuContains(audioMenu, "Stop (Shift+F5)"),
+                "Audio menu distinguishes the F5 toggle from the explicit Shift+F5 stop.");
+        juce::ApplicationCommandInfo startInfo(commandId("Start (F5)"));
+        shell.getCommandInfo(startInfo.commandID, startInfo);
+        require((startInfo.flags & juce::ApplicationCommandInfo::isDisabled) == 0,
+                "Start remains invokable with an invalid or unfinished device configuration so F5 can explain the issue.");
 
         auto& canvas = shell.dockWorkspace().canvas();
         const auto dropPoint = canvas.viewport().getCentre();

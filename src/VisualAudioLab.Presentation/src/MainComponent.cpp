@@ -1,6 +1,8 @@
 #include <val/presentation/MainComponent.h>
 #include <val/presentation/Typography.h>
+#include <val/presentation/WindowPlacement.h>
 #include <ValResources.h>
+#include <cctype>
 
 namespace val::presentation
 {
@@ -24,6 +26,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
                         juce::dontSendNotification);
         banner_.setTooltip(value);
         showStatus(value); commands_.commandStatusChanged();
+        updateTransportControls();
     };
     runtime_->onStarted = [this] { dockWorkspace_.canvas().synchronise(); };
     runtime_->onDismissSetup = [this]
@@ -128,8 +131,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
     commands_.registerAllCommandsForTarget(this);
     commands_.setFirstCommandTarget(this);
-    startAudio_.setCommandToTrigger(&commands_, startTransport, true);
     stopAudio_.setCommandToTrigger(&commands_, stopTransport, true);
+    startAudio_.onClick = [this] { toggleTransportAction(); };
     addKeyListener(commands_.getKeyMappings());
     dockWorkspace_.onLayoutChanged = [this]
     {
@@ -151,6 +154,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     };
     banner_.setText(runtime_->compactStatus() + " | Audio menu: Audio Setup; Start / Stop are explicit.", juce::dontSendNotification);
     showStatus("Ready. Modules are reusable audio functions; placed nodes are instances. Configure from Audio > Audio Setup, then Start explicitly.");
+    updateTransportControls();
     refresh();
     if (project_ && !project_->warning().empty())
         showStatus(juce::String::fromUTF8(project_->warning().c_str()));
@@ -202,8 +206,93 @@ void MainComponent::paint(juce::Graphics& graphics)
 bool MainComponent::keyPressed(const juce::KeyPress& key)
 {
     if (key.getKeyCode() != juce::KeyPress::F5Key) return false;
-    perform(InvocationInfo(key.getModifiers().isShiftDown() ? stopTransport : startTransport));
+    if (key.getModifiers().isShiftDown())
+        stopTransportAction();
+    else
+        toggleTransportAction();
     return true;
+}
+void MainComponent::toggleTransportAction()
+{
+    if (transportTransitionPending_ || startFailureDialogPending_) return;
+    if (runtime_->running())
+    {
+        stopTransportAction();
+        return;
+    }
+
+    transportTransitionPending_ = true;
+    updateTransportControls();
+    const auto result = runtime_->start();
+    transportTransitionPending_ = false;
+    if (!result.succeeded) showStartFailure(result.error);
+    updateTransportControls();
+}
+
+void MainComponent::stopTransportAction()
+{
+    if (transportTransitionPending_ || !runtime_->running()) return;
+    transportTransitionPending_ = true;
+    updateTransportControls();
+    const auto result = runtime_->stop();
+    transportTransitionPending_ = false;
+    if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
+    updateTransportControls();
+}
+
+juce::String MainComponent::startFailureGuidance(const std::string& detail) const
+{
+    auto normalized = detail;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    if (normalized.find("select a native output device") != std::string::npos
+        || normalized.find("select output explicitly") != std::string::npos)
+        return "Choose an output device in Audio > Audio Setup, then assign its named channel in the Outputs lane.";
+    if (normalized.find("assign at least one named channel") != std::string::npos)
+        return "Assign at least one available channel to an enabled output row on the right side of the canvas.";
+    if (normalized.find("input rows are assigned") != std::string::npos)
+        return "Choose and inspect the input device in Audio > Audio Setup, or unassign the input row.";
+    if (normalized.find("patch is empty") != std::string::npos)
+        return "Add a generator or processor, connect a source to an output row, then try Start again.";
+    if (normalized.find("cycle") != std::string::npos)
+        return "Remove the cycle shown in the patch. Audio routes must flow from sources to outputs.";
+    if (normalized.find("channel") != std::string::npos || normalized.find("layout") != std::string::npos)
+        return "Review the named channel assignments and cable layouts shown in the canvas, then correct the highlighted route.";
+    if (normalized.find("device") != std::string::npos || normalized.find("driver") != std::string::npos
+        || normalized.find("stream") != std::string::npos || normalized.find("open") != std::string::npos)
+        return "Check that the selected audio device is available and not in use, then retry Start from the chosen configuration.";
+    return "Review the patch and Audio Setup. Correct the reported issue before trying Start again.";
+}
+
+void MainComponent::showStartFailure(const std::string& detail)
+{
+    if (startFailureDialogPending_) return;
+    startFailureDialogPending_ = true;
+    const auto guidance = startFailureGuidance(detail);
+    showStatus("Audio could not start. " + guidance);
+    const juce::Component::SafePointer<MainComponent> safe(this);
+    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Audio engine could not start",
+        "The engine is stopped; no device fallback was selected.\n\n"
+        + guidance + "\n\nTechnical details: " + juce::String::fromUTF8(detail.c_str()),
+        "OK", getTopLevelComponent(), juce::ModalCallbackFunction::create([safe](int)
+        {
+            if (!safe) return;
+            safe->startFailureDialogPending_ = false;
+            safe->updateTransportControls();
+        }));
+    updateTransportControls();
+}
+
+void MainComponent::updateTransportControls()
+{
+    const auto running = runtime_ && runtime_->running();
+    startAudio_.setButtonText(running ? "Stop (F5)" : "Start (F5)");
+    startAudio_.setEnabled(!transportTransitionPending_ && !startFailureDialogPending_);
+    stopAudio_.setEnabled(running && !transportTransitionPending_);
+    startAudio_.setTitle(running ? "Stop audio engine" : "Start audio engine");
+    startAudio_.setTooltip(running ? "Stop the audio engine (F5)." : "Start the audio engine (F5).");
+    commands_.commandStatusChanged();
+    menuItemsChanged();
 }
 void MainComponent::insertModule(std::string type, std::optional<juce::Point<float>> placement)
 {
@@ -252,13 +341,27 @@ void MainComponent::resized()
 {
     auto bounds = getLocalBounds().reduced(6);
     menu_.setBounds(bounds.removeFromTop(26));
-    toolbar_.setBounds(bounds.removeFromTop(40));
-    auto info = bounds.removeFromTop(38);
-    startAudio_.setBounds(info.removeFromLeft(90).reduced(2, 4));
-    stopAudio_.setBounds(info.removeFromLeft(60).reduced(2, 4));
-    addPatch_.setBounds(info.removeFromRight(95).reduced(2, 4));
-    patches_.setBounds(info.removeFromRight(170).reduced(2, 4));
-    banner_.setBounds(info);
+    const bool compact = bounds.getWidth() < 610;
+    toolbar_.setBounds(bounds.removeFromTop(compact ? 66 : 40));
+    auto info = bounds.removeFromTop(compact ? 64 : 38);
+    if (compact)
+    {
+        auto transport = info.removeFromTop(30);
+        startAudio_.setBounds(transport.removeFromLeft(90).reduced(2));
+        stopAudio_.setBounds(transport.removeFromLeft(60).reduced(2));
+        banner_.setBounds(transport.reduced(2, 0));
+        auto patchControls = info;
+        addPatch_.setBounds(patchControls.removeFromRight(95).reduced(2));
+        patches_.setBounds(patchControls.removeFromRight(170).reduced(2));
+    }
+    else
+    {
+        startAudio_.setBounds(info.removeFromLeft(90).reduced(2, 4));
+        stopAudio_.setBounds(info.removeFromLeft(60).reduced(2, 4));
+        addPatch_.setBounds(info.removeFromRight(95).reduced(2, 4));
+        patches_.setBounds(info.removeFromRight(170).reduced(2, 4));
+        banner_.setBounds(info);
+    }
     status_.setBounds(bounds.removeFromBottom(34));
     dockWorkspace_.setBounds(bounds.reduced(0, 4));
 }
@@ -415,10 +518,12 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
     switch (command)
     {
         case startTransport:
-            info.setInfo("Start", "Explicitly start selected native configuration or offline preview", "Audio", 0);
-            info.setActive(runtime_->ready()); info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
+            info.setInfo(runtime_->running() ? "Stop (F5)" : "Start (F5)",
+                         "Toggle the audio engine; F5 starts or stops according to its current state", "Audio", 0);
+            info.setActive(!transportTransitionPending_ && !startFailureDialogPending_);
+            info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
         case stopTransport:
-            info.setInfo("Stop", "Stop/quiesce audio and detach visualizer sources", "Audio", 0);
+            info.setInfo("Stop (Shift+F5)", "Stop/quiesce audio and detach visualizer sources", "Audio", 0);
             info.setActive(runtime_->running()); info.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::shiftModifier); break;
         case rename: info.setInfo("Rename workspace", "Change project name", "Workspace", 0); break;
         case saveProject:
@@ -471,17 +576,9 @@ bool MainComponent::perform(const InvocationInfo& invocation)
     switch (invocation.commandID)
     {
         case startTransport:
-        {
-            const auto result = runtime_->start();
-            if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
-            return true;
-        }
+            toggleTransportAction(); return true;
         case stopTransport:
-        {
-            const auto result = runtime_->stop();
-            if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
-            return true;
-        }
+            stopTransportAction(); return true;
         case rename: report(workspace_.rename(toolbar_.workspaceName().toStdString())); return true;
         case undo: captureProjectView(); report(workspace_.undo()); return true;
         case redo: captureProjectView(); report(workspace_.redo()); return true;
@@ -622,12 +719,12 @@ void MainComponent::restoreProjectView()
     {
         juce::Rectangle<int> desired(layout.x, layout.y, layout.width, layout.height);
         const auto& displays = juce::Desktop::getInstance().getDisplays();
-        if (const auto* display = displays.getDisplayForRect(desired))
+        if (const auto* display = displayForRestoredBounds(displays, desired))
         {
-            const auto area = display->userArea;
-            desired.setSize(juce::jmin(desired.getWidth(), area.getWidth()), juce::jmin(desired.getHeight(), area.getHeight()));
-            desired.setPosition(juce::jlimit(area.getX(), area.getRight() - desired.getWidth(), desired.getX()),
-                                juce::jlimit(area.getY(), area.getBottom() - desired.getHeight(), desired.getY()));
+            const auto placement = fitWindowToUserArea(desired, display->userArea);
+            window->setResizeLimits(placement.minimumWidth, placement.minimumHeight,
+                                    placement.maximumWidth, placement.maximumHeight);
+            desired = placement.bounds;
         }
         window->setFullScreen(false);
         window->setBounds(desired);

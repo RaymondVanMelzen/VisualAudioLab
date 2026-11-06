@@ -118,6 +118,7 @@ int main()
                 "Input endpoint has no processor input.");
         require(sum.undo().succeeded && sum.graph().connections.size() == 1
                 && sum.redo().succeeded && sum.graph() == mixed, "Explicit summing is undoable without changing identities.");
-        require(application::validateProject(sum.project()).succeeded, "Project validation agrees with editing Sum fan-in.");
+        const auto validSum = application::validateProject(sum.project());
+        require(validSum.succeeded, "Project validation agrees with editing Sum fan-in: " + validSum.error);
     });
 }

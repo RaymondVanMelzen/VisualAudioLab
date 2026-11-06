@@ -4,6 +4,7 @@
 #include <map>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace val::domain
 {
@@ -21,12 +22,16 @@ struct Position final
 
 /** Fixed structural ports on an editor node, not an audio/DSP capability declaration. */
 enum class Port { input, output };
+enum class EndpointRole { hardwareInput, hardwareOutput };
+enum class AudioAdapter { none, monoToStereo };
 
 /** A node-local port reference; connection commands never retain view pointers. */
 struct Endpoint final
 {
     GraphId node{};
     Port port{Port::input};
+    /** Port identity is independent from direction; current built-ins expose port zero. */
+    std::uint16_t index{};
     bool operator==(const Endpoint&) const = default;
 };
 
@@ -40,11 +45,28 @@ struct Node final
     bool operator==(const Node&) const = default;
 };
 
-/** One directed wire; only explicit Sum inputs accept fan-in, outputs allow fan-out. */
+/**
+ * Fixed project-owned hardware lane row. Channel names are portable requests; driver indices
+ * are resolved against the machine-local device inventory and never stored here.
+ */
+struct HardwareEndpoint final
+{
+    GraphId id{};
+    EndpointRole role{EndpointRole::hardwareInput};
+    std::string name;
+    bool enabled{true};
+    int layoutChannels{2};
+    std::vector<std::string> channelNames;
+    bool operator==(const HardwareEndpoint&) const = default;
+};
+
+/** One directed, typed-port wire; only explicit Sum inputs accept fan-in. */
 struct Connection final
 {
     GraphId id{};
     Endpoint source, destination;
+    /** Visible/persisted conversion; no implicit channel truncation or summing. */
+    AudioAdapter adapter{AudioAdapter::none};
     bool operator==(const Connection&) const = default;
 };
 
@@ -52,6 +74,7 @@ struct Connection final
 struct Graph final
 {
     std::map<GraphId, Node> nodes;
+    std::map<GraphId, HardwareEndpoint> endpoints;
     std::map<GraphId, Connection> connections;
     bool operator==(const Graph&) const = default;
 };

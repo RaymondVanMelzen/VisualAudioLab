@@ -206,13 +206,17 @@ domain::Endpoint endpoint(const var& value)
 {
     const auto port = text(field(value, "port"));
     check(port == "in" || port == "out", "Unknown port identity; this reader cannot safely edit the project.");
-    return {identity(field(value, "node")), port == "in" ? domain::Port::input : domain::Port::output};
+    const auto index = value.getDynamicObject()->hasProperty("index") ? integer(field(value, "index")) : 0;
+    check(index == 0, "Unknown port index; this reader cannot safely edit the project.");
+    return {identity(field(value, "node")), port == "in" ? domain::Port::input : domain::Port::output,
+            static_cast<std::uint16_t>(index)};
 }
 void writeEndpoint(var& parent, const char* name, domain::Endpoint endpointValue)
 {
     auto value = nested(parent, name);
     put(value, "node", idValue(endpointValue.node));
     put(value, "port", endpointValue.port == domain::Port::input ? "in" : "out");
+    put(value, "index", static_cast<int>(endpointValue.index));
 }
 juce::File juceFile(const std::filesystem::path& path)
 {
@@ -270,11 +274,17 @@ application::ProjectReadResult LocalProjectStore::decode(const std::string& sour
         check(integer(field(version, "major")) == 1 && integer(field(version, "minor")) >= 0,
               "Unsupported breaking project version. Use a compatible application; the original is preserved.");
         const auto& reader = field(root, "minimumReader");
-        check(integer(field(reader, "major")) == 1 && integer(field(reader, "minor")) == 0,
+        check(integer(field(reader, "major")) == 1
+              && (integer(field(reader, "minor")) == 0 || integer(field(reader, "minor")) == 1),
               "Project requires a newer reader. It will not be opened or overwritten.");
+        bool endpointFeature{};
         for (const auto& feature : array(field(root, "requiredFeatures")))
-            check(text(feature) == "audio.explicit-sum.v1",
+        {
+            const auto name = text(feature);
+            check(name == "audio.explicit-sum.v1" || name == "audio.endpoint-ports.v1",
                   "Project requires unsupported features. It will not be opened or overwritten.");
+            endpointFeature = endpointFeature || name == "audio.endpoint-ports.v1";
+        }
         ProjectState state;
         state.workspace.name = text(field(root, "name"));
         state.activePatch = identity(field(root, "activePatch"));
@@ -287,6 +297,23 @@ application::ProjectReadResult LocalProjectStore::decode(const std::string& sour
             const auto& viewport = field(item, "viewport");
             patch.viewport = {number(field(viewport, "zoom")), number(field(viewport, "x")), number(field(viewport, "y"))};
             const auto& graph = field(item, "graph");
+            if (endpointFeature)
+                for (const auto& endpointValue : array(field(graph, "endpoints")))
+                {
+                    domain::HardwareEndpoint endpoint;
+                    endpoint.id = identity(field(endpointValue, "id"));
+                    const auto role = text(field(endpointValue, "role"));
+                    check(role == "hardwareInput" || role == "hardwareOutput", "Unsupported hardware endpoint role.");
+                    endpoint.role = role == "hardwareInput" ? domain::EndpointRole::hardwareInput
+                                                              : domain::EndpointRole::hardwareOutput;
+                    endpoint.name = text(field(endpointValue, "name"));
+                    endpoint.enabled = boolean(field(endpointValue, "enabled"));
+                    endpoint.layoutChannels = integer(field(endpointValue, "layoutChannels"));
+                    for (const auto& channel : array(field(endpointValue, "channelNames")))
+                        endpoint.channelNames.push_back(text(channel));
+                    check(patch.graph.endpoints.emplace(endpoint.id, std::move(endpoint)).second,
+                          "Duplicate hardware endpoint ID.");
+                }
             for (const auto& nodeValue : array(field(graph, "nodes")))
             {
                 domain::Node node;
@@ -305,15 +332,68 @@ application::ProjectReadResult LocalProjectStore::decode(const std::string& sour
                     else value = number(entry.value);
                     node.parameters.emplace(entry.name.toString().toStdString(), std::move(value));
                 }
-                check(patch.graph.nodes.emplace(node.id, std::move(node)).second, "Duplicate node ID.");
+                const auto type = node.parameters.find("audio.type");
+                const auto* audioType = type == node.parameters.end() ? nullptr
+                    : std::get_if<std::string>(&type->second);
+                if (!endpointFeature && audioType && (*audioType == "Input" || *audioType == "Output"))
+                {
+                    const auto role = *audioType == "Input" ? domain::EndpointRole::hardwareInput
+                                                             : domain::EndpointRole::hardwareOutput;
+                    check(patch.graph.endpoints.emplace(node.id, domain::HardwareEndpoint{
+                        node.id, role, node.name, true, 2, {}}).second,
+                        "Legacy Input/Output identity collides with another endpoint.");
+                }
+                else check(patch.graph.nodes.emplace(node.id, std::move(node)).second, "Duplicate node ID.");
             }
             for (const auto& wireValue : array(field(graph, "connections")))
             {
                 domain::Connection wire{identity(field(wireValue, "id")), endpoint(field(wireValue, "source")),
                                         endpoint(field(wireValue, "destination"))};
+                if (wireValue.getDynamicObject()->hasProperty("adapter"))
+                {
+                    const auto adapter = text(field(wireValue, "adapter"));
+                    check(adapter == "none" || adapter == "monoToStereo", "Unsupported cable adapter.");
+                    wire.adapter = adapter == "monoToStereo" ? domain::AudioAdapter::monoToStereo
+                                                               : domain::AudioAdapter::none;
+                }
                 check(patch.graph.connections.emplace(wire.id, wire).second, "Duplicate connection ID.");
             }
             check(state.patches.emplace(patch.id, std::move(patch)).second, "Duplicate patch ID.");
+        }
+        if (!endpointFeature)
+        {
+            domain::GraphId next{};
+            for (const auto& [patchId, patch] : state.patches)
+            {
+                (void) patchId;
+                for (const auto& [id, node] : patch.graph.nodes) { (void) node; next = std::max(next, id); }
+                for (const auto& [id, endpointValue] : patch.graph.endpoints) { (void) endpointValue; next = std::max(next, id); }
+                for (const auto& [id, wire] : patch.graph.connections) { (void) wire; next = std::max(next, id); }
+            }
+            check(next < std::numeric_limits<domain::GraphId>::max() - 2,
+                  "No stable identities remain for default hardware endpoint rows.");
+            ++next;
+            for (auto& [patchId, patch] : state.patches)
+            {
+                (void) patchId;
+                const auto hasRole = [&](domain::EndpointRole role)
+                {
+                    return std::any_of(patch.graph.endpoints.begin(), patch.graph.endpoints.end(),
+                        [role](const auto& value) { return value.second.role == role; });
+                };
+                if (!hasRole(domain::EndpointRole::hardwareInput))
+                {
+                    patch.graph.endpoints.emplace(next, domain::HardwareEndpoint{next,
+                        domain::EndpointRole::hardwareInput, "Hardware Input 1", true, 2, {}});
+                    ++next;
+                }
+                if (!hasRole(domain::EndpointRole::hardwareOutput))
+                {
+                    patch.graph.endpoints.emplace(next, domain::HardwareEndpoint{next,
+                        domain::EndpointRole::hardwareOutput, "Main Output", true, 2, {}});
+                    ++next;
+                }
+            }
         }
         const auto& layout = field(root, "layout");
         const auto& window = field(layout, "window");
@@ -368,6 +448,12 @@ application::Result LocalProjectStore::encode(application::ProjectFile& file)
         put(reader, "major", 1); put(reader, "minor", 0);
         put(root, "requiredFeatures", juce::Array<var>{});
     }
+    auto version = nested(root, "version");
+    put(version, "major", 1);
+    put(version, "minor", std::max(1, static_cast<int>(version.getProperty("minor", 0))));
+    auto minimumReader = nested(root, "minimumReader");
+    put(minimumReader, "major", 1);
+    put(minimumReader, "minor", 1);
     bool usesSum{};
     for (const auto& [id, patch] : file.state.patches)
     {
@@ -378,7 +464,9 @@ application::Result LocalProjectStore::encode(application::ProjectFile& file)
             usesSum = usesSum || domain::isSumPort(node);
         }
     }
-    put(root, "requiredFeatures", usesSum ? juce::Array<var>{"audio.explicit-sum.v1"} : juce::Array<var>{});
+    juce::Array<var> features{"audio.endpoint-ports.v1"};
+    if (usesSum) features.add("audio.explicit-sum.v1");
+    put(root, "requiredFeatures", features);
     put(root, "format", "VisualAudioLab");
     put(root, "name", juce::String::fromUTF8(file.state.workspace.name.c_str()));
     put(root, "activePatch", idValue(file.state.activePatch));
@@ -410,15 +498,39 @@ application::Result LocalProjectStore::encode(application::ProjectFile& file)
             put(nodeValue, "parameters", parameters);
             nodes.add(nodeValue);
         }
+        juce::Array<var> endpoints;
+        for (const auto& [endpointId, endpointValue] : patch.graph.endpoints)
+        {
+            auto encodedEndpoint = indexedObject(graph.getProperty("endpoints", {}), endpointId);
+            if (encodedEndpoint.getDynamicObject()->getProperties().size() == 0)
+            {
+                const auto legacyNode = indexedObject(graph.getProperty("nodes", {}), endpointId);
+                if (legacyNode.getDynamicObject() != nullptr
+                    && legacyNode.getDynamicObject()->hasProperty("id"))
+                    put(encodedEndpoint, "legacyNode", legacyNode);
+            }
+            put(encodedEndpoint, "id", idValue(endpointId));
+            put(encodedEndpoint, "role", endpointValue.role == domain::EndpointRole::hardwareInput
+                ? "hardwareInput" : "hardwareOutput");
+            put(encodedEndpoint, "name", juce::String::fromUTF8(endpointValue.name.c_str()));
+            put(encodedEndpoint, "enabled", endpointValue.enabled);
+            put(encodedEndpoint, "layoutChannels", endpointValue.layoutChannels);
+            juce::Array<var> channelNames;
+            for (const auto& channel : endpointValue.channelNames)
+                channelNames.add(juce::String::fromUTF8(channel.c_str()));
+            put(encodedEndpoint, "channelNames", channelNames);
+            endpoints.add(encodedEndpoint);
+        }
         for (const auto& [wireId, wire] : patch.graph.connections)
         {
             auto wireValue = indexedObject(graph.getProperty("connections", {}), wireId);
             put(wireValue, "id", idValue(wireId));
             writeEndpoint(wireValue, "source", wire.source);
             writeEndpoint(wireValue, "destination", wire.destination);
+            put(wireValue, "adapter", wire.adapter == domain::AudioAdapter::monoToStereo ? "monoToStereo" : "none");
             wires.add(wireValue);
         }
-        put(graph, "nodes", nodes); put(graph, "connections", wires);
+        put(graph, "nodes", nodes); put(graph, "endpoints", endpoints); put(graph, "connections", wires);
         patches.add(item);
     }
     put(root, "patches", patches);

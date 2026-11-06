@@ -32,11 +32,18 @@ struct AudioNodeDefinition
     std::shared_ptr<SignalCaptureBuffer> capture;
     /** Immutable compiler-produced artifact; no parsing/compilation is allowed during processing. */
     std::shared_ptr<const script::Program> script;
+    /** Native bus width for source/sink endpoints and generators; pass-through nodes inherit input width. */
+    int channels{};
+    /** Endpoint-local channel order to the compact stream buffer; empty means unresolved/unassigned. */
+    std::vector<int> hardwareChannelMap;
+    bool hardwareEndpoint{};
+    bool endpointActive{true};
 };
-/** Shared-width bus edge; fan-out allowed, fan-in only at explicit Sum utilities. */
+/** Typed bus edge; fan-out allowed, fan-in only at explicit Sum utilities. */
 struct AudioConnection
 {
     std::uint64_t source{}, destination{};
+    domain::AudioAdapter adapter{domain::AudioAdapter::none};
 };
 /** Control-owned graph description, independent of canvas geometry and device objects. */
 struct AudioGraph
@@ -45,7 +52,8 @@ struct AudioGraph
     std::vector<AudioNodeDefinition> nodes;
     std::vector<AudioConnection> connections;
     /** Explicit opt-in mapping via audio.type parameters; generic editor nodes are rejected. */
-    [[nodiscard]] static application::AudioQuery<AudioGraph> fromStructural(const domain::Graph& graph, int channels);
+    [[nodiscard]] static application::AudioQuery<AudioGraph> fromStructural(const domain::Graph& graph, int channels,
+        const std::map<std::uint64_t, std::vector<int>>& endpointChannelMaps = {});
     [[nodiscard]] std::vector<std::uint64_t> outputDependencies() const;
 };
 
@@ -72,20 +80,28 @@ public:
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
     [[nodiscard]] application::AudioStreamFormat format() const noexcept { return format_; }
 private:
-    /** One topologically ordered, independently owned prepared processor and its upstream scratch offset. */
+    /** One topologically ordered processor and its independently sized planar scratch bus. */
+    struct InputEdge
+    {
+        std::size_t source{}, scratch{};
+        int sourceChannels{};
+        domain::AudioAdapter adapter{domain::AudioAdapter::none};
+    };
     struct Step
     {
         std::uint64_t id{};
         AudioNodeType type{};
         std::unique_ptr<AudioProcessorNode> processor;
-        std::size_t source{}, destination{};
+        std::size_t destination{};
+        int channels{};
         std::shared_ptr<SignalCaptureBuffer> capture;
-        std::vector<std::size_t> sumSources;
+        std::vector<int> hardwareChannelMap;
+        std::vector<InputEdge> inputs;
+        bool endpointActive{true};
         bool active{};
     };
     application::AudioStreamFormat format_;
     std::uint64_t revision_{};
-    int channels_{};
     std::vector<Step> steps_;
     std::vector<float> scratch_;
 };

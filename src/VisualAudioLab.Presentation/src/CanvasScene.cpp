@@ -79,12 +79,16 @@ CanvasScene::CanvasScene(const domain::Graph& graph)
     }
     for (const auto& [id, wire] : graph.connections)
     {
-        ConnectionView view(NodeView::port(graph.nodes.at(wire.source.node).position, wire.source.port),
-                             NodeView::port(graph.nodes.at(wire.destination.node).position, wire.destination.port));
-        if (!domain::isFixedEndpoint(graph.nodes.at(wire.source.node))
-            && !domain::isFixedEndpoint(graph.nodes.at(wire.destination.node)))
-            connections_.add(id, view.path());
-        wires_.emplace(id, std::move(view));
+        const auto source = graph.nodes.find(wire.source.node);
+        const auto destination = graph.nodes.find(wire.destination.node);
+        if (source != graph.nodes.end() && destination != graph.nodes.end())
+        {
+            ConnectionView view(NodeView::port(source->second.position, wire.source.port),
+                                NodeView::port(destination->second.position, wire.destination.port));
+            if (!domain::isFixedEndpoint(source->second) && !domain::isFixedEndpoint(destination->second))
+                connections_.add(id, view.path());
+            wires_.emplace(id, std::move(view));
+        }
         incident_[wire.source.node].push_back(id);
         incident_[wire.destination.node].push_back(id);
     }

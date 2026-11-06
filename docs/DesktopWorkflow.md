@@ -18,6 +18,27 @@ in place using their header controls and reopen from the small edge controls;
 they cannot be dragged, floated or docked elsewhere. Legacy saved dock
 positions are ignored while panel visibility is retained.
 
+The **Help > About Visual Audio Lab** dialog displays the bundled application
+logo, the product version from the CMake project metadata and the source
+revision captured when CMake configures the build. Reconfigure after changing
+the source revision to refresh the displayed build identifier. The dialog is
+single-instance, uses a responsive compact layout when needed, and is fitted
+to the usable area of the display containing the main window. Dismiss it with
+its Close button, Escape, or the native window close control.
+
+The main window is positioned and constrained in JUCE's display coordinate
+system using the monitor's usable `userArea`, which excludes reserved work-area
+space such as the taskbar. Saved project and machine-local window bounds need
+only have positive dimensions; they are fitted to the current monitor when
+opened. The shell's resize floor is 640×380 logical units and is reduced when
+the usable area is smaller. On a 1920×1080 display at 175% Windows scaling,
+logical bounds are roughly 1097×617 before work-area insets; the app keeps the
+Windows scale and fonts and fits the window to the reported usable area rather
+than requiring 800×600. The 125%, 150%, 175% and 200% work-area geometries are
+covered by simulated layout tests; actual high-DPI monitor/taskbar behavior
+still depends on Windows/JUCE display reporting and must be qualified on the
+target PC.
+
 1. Windows offers **ASIO**, **WASAPI Shared**, **WASAPI Exclusive** and **DirectSound**; macOS
    offers **CoreAudio**. Offline preview is separate. Foreign APIs are not
    offered. Windows defaults to ASIO; macOS defaults to CoreAudio, without fallback.
@@ -36,29 +57,23 @@ positions are ignored while panel visibility is retained.
    JUCE message thread and event loop. The desktop remains responsive; a crashed
    helper fails visibly, and a hung inspection is terminated after 15 seconds.
    Changing endpoints discards obsolete results; changing backend cancels its helper.
-4. Select reported sample rate, buffer frames, **Input port** and **Output port**.
-   Basic port choices select a specific mono driver channel or a contiguous stereo
-   pair, for example `Stereo: 5: Virtual L / 6: Virtual R`. The actual zero-based
-   indices `[4, 5]` are passed to native open; they do not mean the first two channels.
-   Input must be **None (input disabled)** or match output width. Mono-to-stereo
-   engine routing is not implemented.
-   **Advanced ports** exposes wider contiguous groups, up to 32 channels.
-   It does not invent arbitrary remapping or physical/virtual classification.
-   The choice and its tooltip show the selected names verbatim;
-   an empty name is explicitly marked **name not reported**.
-   Arbitrary noncontiguous selections are preserved in saved/request contracts,
-   but are not an editable UI feature in Phase 1. Channel names may describe physical,
-   virtual or loopback channels; JUCE's name list does not classify them.
-   Check the vendor mixer/routing panel rather than assuming every reported
-   channel is a physical socket. Offline choices describe the preview bus only.
-   WASAPI pair candidates follow
+4. Choose the reported **Sample rate** and **Buffer size**. Audio Setup does not
+   select channel counts, mono/stereo formats or hardware channels: those belong
+   to the fixed Inputs and Outputs lanes beside the canvas. The selected device
+   inventory supplies all reported names to the lane editors. Basic assignments
+   select a named mono channel or stereo pair; Advanced supports wider and sparse
+   exact channel selections up to 32 channels. The displayed names are the
+   driver's names (an empty name is marked **name not reported**), not a claim
+   about physical sockets. JUCE does not classify physical, virtual or loopback
+   channels; check the vendor mixer where that distinction matters. WASAPI pair candidates follow
    JUCE's combined-device rules (including shared-mode mixer conversion), not
    an intersection of independently queried endpoint periods. Shared-mode
    **Callback frames** configure the JUCE processing block; Windows manages
    the hardware period. A single reported candidate is shown as such.
    Empty lists mean unreported/unsupported, never invented defaults or proof
    that a setting is host-managed. Disabled controls show pending/error/retry
-   guidance. Start stays unavailable until a valid explicit selection exists.
+   guidance. Start stays unavailable until a valid explicit selection and
+   routable output are available.
 5. Build a valid patch, check output levels, then explicitly click **Start**
    or press **F5**. There is no master limiter. **Stop** / **Shift+F5** closes
    the stream before configuration changes. Open verifies rate, buffer and
@@ -77,15 +92,17 @@ Explicit stream open/start/stop remain on the desktop JUCE control thread:
 those user-requested vendor operations are not made crash-proof or time-bounded by
 the discovery helper. Physical driver qualification remains necessary.
 
-Validated backend/device names, rate, buffer, widths and exact channel indices persist in
-machine-local `settings.json` using the existing preference lifecycle. They
-are hints, not stable hardware identities: launch resolves fresh tokens and
-automatically revalidates saved choices, which may initialize hardware but never
-start application playback. Tokens and
+Validated backend/device names, rate and buffer persist in machine-local
+`settings.json` using the existing preference lifecycle. The local endpoint
+mapping associates stable project row IDs and saved channel names with current
+driver indices. These are resolved against fresh inventory and never substitute
+another channel silently. Launch may initialize hardware to revalidate choices
+but never starts application playback. Tokens and
 transport state are never persisted. Old window-only preferences remain valid;
 malformed preferences preserve their original file and disable automatic writes.
-Legacy count-only settings explicitly migrate to first-N index vectors. CoreAudio
-keeps its existing numerical value 3; DirectSound is appended as 4, and the UI's
+Legacy count-only settings retain their historical width but have no exact
+channel identity; they do not select first-N hardware channels. Assign rows
+explicitly in the canvas lanes. CoreAudio keeps its existing numerical value 3; DirectSound is appended as 4, and the UI's
 offline-preview item moves from ID 5 to 6 (offline is not a persisted backend).
 
 ## Try DSP without opening hardware
@@ -96,37 +113,39 @@ script example.
 
 Use the **Module Browser** category filter and search to find a shipped entry.
 Categories are **Effects**, **Analysis**, **Routing utilities**, and **Custom
-DSP**; unavailable/future modules are not listed as empty categories. Insert
+DSP**; unavailable/future modules are not listed as empty categories. The
+Routing utilities category contains the explicit **Sum** processor; hardware
+Input and Output are fixed endpoints, not browser modules. Insert
 the selected result with the button, double-click, or Enter, or drag it onto
 the Patch Canvas to place it at the pointer. Each insertion is one undoable
 edit with its runtime identity already attached. Dragging outside the canvas
 area is rejected with a visible status message. Insertion never auto-wires:
-connect ports explicitly. Input/Output belong to routing utilities, not the
-effect taxonomy.
+connect ports explicitly.
 A **module** is a reusable audio function; a placed **node** is its instance
-with its own saved parameters/source and runtime state. Input/Output are
-explicit **routing utilities**, not effects. On the canvas, current hardware
-Input and inserted built-in generator instances appear in the fixed Sources
-rail; the existing Main Output appears in the fixed Destinations rail. Those
-endpoints cannot be moved or deleted on the canvas. Hardware device and exact
-named channel groups are still chosen in Audio Setup. This rail presentation
-does not yet add system-owned endpoint identities or multiple device buses.
+with its own saved parameters/source and runtime state. The fixed left Inputs
+lane contains configured hardware input rows and inserted built-in generator
+source cards; the fixed right Outputs lane contains hardware output rows.
+Endpoint rows have stable project identities and cannot be moved as processors.
+Use **+ Add input/output** to add an unassigned row; no row addition binds a
+device, wires a cable or starts playback. Assign exact driver-named channels in
+the lane, enable/disable or remove rows there, and use the explicit connection
+ports to route them.
 Analyzer modules observe audio while passing it through unchanged. Reusable
 patch packaging is not newly implemented.
 
-An external input device is optional: choose **None (output only)** to run
-without capture. The graph still needs its explicit Output routing utility.
-The seven shipped built-in generators appear as sources when inserted from the
-Module Browser and can feed a route without hardware input. A zero-input Script
-also remains supported; the inserted pass-through Script is not itself a
-generator, and a disconnected or input-dependent graph can render silence.
-Starting an output-only graph warns when no active zero-input source feeds
-Output. No input, hardware stream, or playback starts implicitly.
+Supported source kinds are configured hardware inputs and the shipped internal
+generators; the supported destination kind is the configured main hardware
+output. Input is optional, so generators can feed output without capture.
+Unassigned/disabled rows remain inert. A zero-input Script is also supported;
+the inserted pass-through Script is not itself a generator, and a disconnected
+or input-dependent route can render silence. Application Capture, File Player,
+Virtual Audio Device, Recorder/File Writer, Streaming and plugin-hosted
+endpoints are not implemented.
 
 For a device-free example:
 
-1. Insert **Script**, **Gain**, **Oscilloscope** and **Output**.
-2. Drag their ports to connect `Script -> Gain -> Oscilloscope -> Output`.
+1. Insert **Script**, **Gain** and **Oscilloscope**.
+2. Connect `Script -> Gain -> Oscilloscope ->` the configured output row.
 3. Select Script and use **Properties / Script** to load an example into the
    draft, or enter the following mono audio-rate source:
 
@@ -148,7 +167,12 @@ buffers. A UI timer advances one block per tick, not a hardware-rate clock:
 automation delays are **audio sample time**, not wall-clock preview time.
 Offline callback timing is synthetic, not a real-device performance measurement.
 
-Input reads the configured input bus; Output writes the output bus. The
+Hardware input rows read their assigned buses; hardware output rows write to
+their assigned channel groups. Each destination accepts one feed; use **Sum**
+to combine routes explicitly. Independent cable buses preserve their declared
+widths. Matching layouts connect directly; the implemented mono-to-stereo
+adapter is visible and saved on the cable. Other incompatible widths are
+rejected rather than silently truncated, duplicated or converted. The
 Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter and Guitar Tuner catalog
 entries are pass-through Analyzer nodes with distinct initial display choices,
 not independent audio processing pipelines. The Guitar Tuner uses the selected
@@ -221,10 +245,14 @@ to avoid partial/ambiguous targets. Correct the patch and restart if stopped.
 **Routing Draft** / **N** and old generic saved nodes remain usable in the editor.
 They are clearly labeled structural utilities with no DSP, not executable
 pass-through modules, until they have a supported explicit runtime identity.
-There is no implicit mixer/channel conversion: the current engine supports one
-matching bus, one upstream connection per processing node and one Output;
-all runtime nodes must contribute to that Output. Structural graphs can be much
-larger than the runtime limit of 256 nodes/edges.
+The runtime graph supports multiple independent sources and destinations,
+fan-out and legal unrouted/inert processors. A destination accepts a single
+feed, and explicit Sum is required for mixing. Bus widths are checked per port;
+the only implemented layout adapter is mono-to-stereo. Cycles, incompatible
+layouts and overlapping output channel assignments are rejected with diagnostics.
+Each hardware output row maps to a disjoint channel group of the configured
+audio-device session. The implementation does not synchronize arbitrary
+independent devices or offer generalized resampling.
 
 Selecting a captured node follows it in **Signal**. Selecting an analyzer also
 chooses its initial display. The five tabs share calibrated scope, spectrum,
@@ -253,5 +281,7 @@ and [ValScript.md](ValScript.md) for language/resource limits.
 Native hardware timing, audible processing and macOS device operation require
 platform/hardware qualification; offline and injected-device GUI tests do not
 establish them. Plugin hosting/export, MIDI, persistent automation lanes and
-an expanded language remain outside this integration. Panel docking and
+Application Capture, File Player, Virtual Audio Device, Recorder/File Writer,
+Streaming, plugin hosting, generalized resampling and persistent automation
+lanes remain outside this integration. Panel docking and
 re-docking are not supported.

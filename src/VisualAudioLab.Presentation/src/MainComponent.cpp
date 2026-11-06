@@ -1,9 +1,109 @@
 #include <val/presentation/MainComponent.h>
+#include <val/presentation/BuildInfo.h>
 #include <val/presentation/Typography.h>
+#include <val/presentation/WindowPlacement.h>
 #include <ValResources.h>
+#include <cctype>
 
 namespace val::presentation
 {
+namespace
+{
+class AboutContent final : public juce::Component, private juce::KeyListener
+{
+public:
+    explicit AboutContent(std::function<void()> dismiss) : dismiss_(std::move(dismiss))
+    {
+        setName("About Visual Audio Lab");
+        setWantsKeyboardFocus(true);
+        logo_.setName("Visual Audio Lab application logo");
+        logo_.setImage(juce::ImageCache::getFromMemory(val_resources::VAL_256x256_png,
+                                                       val_resources::VAL_256x256_pngSize));
+        logo_.setImagePlacement(juce::RectanglePlacement::centred
+                                | juce::RectanglePlacement::onlyReduceInSize);
+        addAndMakeVisible(logo_);
+        product_.setName("About product name");
+        product_.setText("Visual Audio Lab", juce::dontSendNotification);
+        product_.setFont(Typography::ui(24, true));
+        product_.setColour(juce::Label::textColourId, ShellTheme::textPrimary());
+        product_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(product_);
+        version_.setName("About product version");
+        version_.setText("Version " + juce::String(productVersion), juce::dontSendNotification);
+        version_.setFont(Typography::numeric(18));
+        version_.setColour(juce::Label::textColourId, ShellTheme::textPrimary());
+        version_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(version_);
+        revision_.setName("About build revision");
+        revision_.setText("Build " + juce::String(buildRevision), juce::dontSendNotification);
+        revision_.setFont(Typography::font(TextRole::status));
+        revision_.setColour(juce::Label::textColourId, ShellTheme::textSecondary());
+        revision_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(revision_);
+        close_.setButtonText("Close");
+        close_.setTitle("Close About dialog");
+        close_.setTooltip("Close this dialog and return to Visual Audio Lab.");
+        close_.onClick = [this] { dismiss_(); };
+        close_.addKeyListener(this);
+        addAndMakeVisible(close_);
+    }
+
+    void paint(juce::Graphics& graphics) override
+    {
+        graphics.fillAll(ShellTheme::background());
+        graphics.setColour(ShellTheme::border());
+        graphics.drawRect(getLocalBounds(), 1);
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds().reduced(22);
+        auto footer = bounds.removeFromBottom(42);
+        close_.setBounds(footer.removeFromRight(112).reduced(2, 4));
+        if (getWidth() < 460 || getHeight() < 270)
+        {
+            auto main = bounds.reduced(0, 6);
+            const auto logoSize = juce::jmin(96, juce::jmax(64, main.getHeight() / 2));
+            logo_.setBounds(main.removeFromTop(logoSize).withSizeKeepingCentre(logoSize, logoSize));
+            product_.setBounds(main.removeFromTop(36));
+            version_.setBounds(main.removeFromTop(30));
+            revision_.setBounds(main.removeFromTop(26));
+            return;
+        }
+        auto main = bounds.reduced(0, 10);
+        const auto logoWidth = juce::jmin(190, main.getHeight());
+        logo_.setBounds(main.removeFromLeft(logoWidth).withSizeKeepingCentre(logoWidth, logoWidth));
+        auto information = main.reduced(24, 0);
+        product_.setBounds(information.removeFromTop(48));
+        version_.setBounds(information.removeFromTop(36));
+        revision_.setBounds(information.removeFromTop(30));
+    }
+
+    void focusCloseButton() { close_.grabKeyboardFocus(); }
+
+    bool keyPressed(const juce::KeyPress& key) override
+    {
+        if (key == juce::KeyPress::escapeKey)
+        {
+            dismiss_();
+            return true;
+        }
+        return false;
+    }
+
+private:
+    bool keyPressed(const juce::KeyPress& key, juce::Component*) override
+    {
+        return keyPressed(key);
+    }
+
+    std::function<void()> dismiss_;
+    juce::ImageComponent logo_;
+    juce::Label product_, version_, revision_;
+    juce::TextButton close_;
+};
+}
+
 MainComponent::MainComponent(application::WorkspaceService& workspace, application::ProjectSession* project, RuntimePanel::BackendFactory backends)
     : workspace_(workspace), project_(project)
 {
@@ -24,6 +124,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
                         juce::dontSendNotification);
         banner_.setTooltip(value);
         showStatus(value); commands_.commandStatusChanged();
+        updateTransportControls();
     };
     runtime_->onStarted = [this] { dockWorkspace_.canvas().synchronise(); };
     runtime_->onDismissSetup = [this]
@@ -39,6 +140,11 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     editor_->onChanged = [this] { refresh(); };
     editor_->onRuntimeParameter = [this](auto node, auto index, auto value, auto action) { runtime_->parameter(node, index, value, action); };
     editor_->onScheduleParameter = [this](auto node, auto index, auto value, auto seconds) { runtime_->schedule(node, index, value, seconds); };
+    editor_->onReadGeneratorMeters = [this](auto node)
+    {
+        return runtime_->running() ? dockWorkspace_.visualizations().generatorMeters(node)
+                                   : GeneratorMeterReadout{juce::String::fromUTF8("Stopped · Start transport to measure")};
+    };
     inspectorTabs_.addTab("Properties / Script", ShellTheme::surface(), editor_.get(), false);
     inspectorTabs_.addTab("Signal", ShellTheme::surface(), &dockWorkspace_.signalPreview(), false);
     dockWorkspace_.setPanelContent(PanelId::propertyInspector, inspectorTabs_);
@@ -47,6 +153,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
         editor_->setNode(node);
         dockWorkspace_.signalPreview().followSelection(node);
         updateGeneratorDisplay();
+        dockWorkspace_.visualizations().setEditorTarget(0);
         const auto found = workspace_.graph().nodes.find(node);
         if (found != workspace_.graph().nodes.end())
         {
@@ -55,9 +162,11 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
                 ? nullptr : std::get_if<std::string>(&typeField->second);
             if (type && type->find("Generator") != std::string::npos)
             {
+                dockWorkspace_.visualizations().setEditorTarget(node);
                 dockWorkspace_.signalPreview().showKind(VisualizationKind::oscilloscope);
-                inspectorTabs_.setCurrentTabIndex(1);
+                inspectorTabs_.setCurrentTabIndex(0);
             }
+            else dockWorkspace_.visualizations().setEditorTarget(0);
             if (const auto kind = found->second.parameters.find("visualization.kind"); kind != found->second.parameters.end())
                 if (const auto* name = std::get_if<std::string>(&kind->second))
                 {
@@ -78,6 +187,22 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     dockWorkspace_.canvas().onModuleDropRejected = [this](juce::String message)
     {
         showStatus(message);
+    };
+    dockWorkspace_.canvas().endpointChannels = [this](domain::EndpointRole role)
+    {
+        return runtime_->endpointChannelNames(role);
+    };
+    dockWorkspace_.canvas().selectedEndpointChannels = [this](domain::GraphId endpoint)
+    {
+        return runtime_->selectedEndpointChannelIndices(endpoint);
+    };
+    dockWorkspace_.canvas().endpointStatus = [this](domain::GraphId endpoint)
+    {
+        return runtime_->endpointReadiness(endpoint);
+    };
+    dockWorkspace_.canvas().assignEndpointChannels = [this](domain::GraphId endpoint, const std::vector<int>& channels)
+    {
+        return runtime_->assignEndpointChannels(endpoint, channels);
     };
     for (auto* component : std::initializer_list<juce::Component*>{
              &menu_, &toolbar_, &banner_, &status_, &dockWorkspace_, &patches_, &addPatch_, &startAudio_, &stopAudio_})
@@ -104,8 +229,8 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
     commands_.registerAllCommandsForTarget(this);
     commands_.setFirstCommandTarget(this);
-    startAudio_.setCommandToTrigger(&commands_, startTransport, true);
     stopAudio_.setCommandToTrigger(&commands_, stopTransport, true);
+    startAudio_.onClick = [this] { toggleTransportAction(); };
     addKeyListener(commands_.getKeyMappings());
     dockWorkspace_.onLayoutChanged = [this]
     {
@@ -127,6 +252,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
     };
     banner_.setText(runtime_->compactStatus() + " | Audio menu: Audio Setup; Start / Stop are explicit.", juce::dontSendNotification);
     showStatus("Ready. Modules are reusable audio functions; placed nodes are instances. Configure from Audio > Audio Setup, then Start explicitly.");
+    updateTransportControls();
     refresh();
     if (project_ && !project_->warning().empty())
         showStatus(juce::String::fromUTF8(project_->warning().c_str()));
@@ -134,10 +260,15 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
 
 MainComponent::~MainComponent()
 {
+    aboutWindow_.reset();
     audioSetupWindow_.reset();
     dockWorkspace_.canvas().onObservationTarget = nullptr;
     dockWorkspace_.canvas().onModuleDropped = nullptr;
     dockWorkspace_.canvas().onModuleDropRejected = nullptr;
+    dockWorkspace_.canvas().endpointChannels = nullptr;
+    dockWorkspace_.canvas().selectedEndpointChannels = nullptr;
+    dockWorkspace_.canvas().endpointStatus = nullptr;
+    dockWorkspace_.canvas().assignEndpointChannels = nullptr;
     inspectorTabs_.clearTabs();
     removeKeyListener(commands_.getKeyMappings());
     menu_.setModel(nullptr);
@@ -156,6 +287,51 @@ MainComponent::AudioSetupWindow::AudioSetupWindow(RuntimePanel& runtime)
     centreWithSize(720, 440);
 }
 
+MainComponent::AboutWindow::AboutWindow(MainComponent& owner)
+    : juce::DocumentWindow("About Visual Audio Lab", ShellTheme::background(), closeButton),
+      owner_(&owner)
+{
+    setUsingNativeTitleBar(true);
+    auto safe = juce::Component::SafePointer<AboutWindow>(this);
+    setContentOwned(new AboutContent([safe]
+    {
+        if (safe)
+            safe->dismiss();
+    }), true);
+    setResizable(false, false);
+    fitToOwnerDisplay();
+}
+
+void MainComponent::AboutWindow::closeButtonPressed()
+{
+    setVisible(false);
+    if (owner_)
+        owner_->grabKeyboardFocus();
+}
+
+void MainComponent::AboutWindow::dismiss()
+{
+    closeButtonPressed();
+}
+
+void MainComponent::AboutWindow::fitToOwnerDisplay()
+{
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    auto* display = owner_ ? displays.getDisplayForRect(owner_->getScreenBounds()) : nullptr;
+    if (display == nullptr)
+        display = displays.getPrimaryDisplay();
+    if (display == nullptr)
+    {
+        centreWithSize(560, 320);
+        return;
+    }
+
+    const auto area = display->userArea;
+    const auto width = juce::jmin(560, area.getWidth());
+    const auto height = juce::jmin(320, area.getHeight());
+    setBounds(juce::Rectangle<int>(0, 0, width, height).withCentre(area.getCentre()));
+}
+
 void MainComponent::showAudioSetup()
 {
     if (!audioSetupWindow_)
@@ -167,6 +343,20 @@ void MainComponent::showAudioSetup()
     audioSetupWindow_->toFront(true);
 }
 
+void MainComponent::showAbout()
+{
+    if (!aboutWindow_)
+    {
+        aboutWindow_ = std::make_unique<AboutWindow>(*this);
+        aboutWindow_->setLookAndFeel(&theme_);
+    }
+    aboutWindow_->fitToOwnerDisplay();
+    aboutWindow_->setVisible(true);
+    aboutWindow_->toFront(true);
+    if (auto* content = dynamic_cast<AboutContent*>(aboutWindow_->getContentComponent()))
+        content->focusCloseButton();
+}
+
 void MainComponent::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(ShellTheme::background());
@@ -174,11 +364,101 @@ void MainComponent::paint(juce::Graphics& graphics)
 bool MainComponent::keyPressed(const juce::KeyPress& key)
 {
     if (key.getKeyCode() != juce::KeyPress::F5Key) return false;
-    perform(InvocationInfo(key.getModifiers().isShiftDown() ? stopTransport : startTransport));
+    if (key.getModifiers().isShiftDown())
+        stopTransportAction();
+    else
+        toggleTransportAction();
     return true;
+}
+void MainComponent::toggleTransportAction()
+{
+    if (transportTransitionPending_ || startFailureDialogPending_) return;
+    if (runtime_->running())
+    {
+        stopTransportAction();
+        return;
+    }
+
+    transportTransitionPending_ = true;
+    updateTransportControls();
+    const auto result = runtime_->start();
+    transportTransitionPending_ = false;
+    if (!result.succeeded) showStartFailure(result.error);
+    updateTransportControls();
+}
+
+void MainComponent::stopTransportAction()
+{
+    if (transportTransitionPending_ || !runtime_->running()) return;
+    transportTransitionPending_ = true;
+    updateTransportControls();
+    const auto result = runtime_->stop();
+    transportTransitionPending_ = false;
+    if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
+    updateTransportControls();
+}
+
+juce::String MainComponent::startFailureGuidance(const std::string& detail) const
+{
+    auto normalized = detail;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    if (normalized.find("select a native output device") != std::string::npos
+        || normalized.find("select output explicitly") != std::string::npos)
+        return "Choose an output device in Audio > Audio Setup, then assign its named channel in the Outputs lane.";
+    if (normalized.find("assign at least one named channel") != std::string::npos)
+        return "Assign at least one available channel to an enabled output row on the right side of the canvas.";
+    if (normalized.find("input rows are assigned") != std::string::npos)
+        return "Choose and inspect the input device in Audio > Audio Setup, or unassign the input row.";
+    if (normalized.find("patch is empty") != std::string::npos)
+        return "Add a generator or processor, connect a source to an output row, then try Start again.";
+    if (normalized.find("cycle") != std::string::npos)
+        return "Remove the cycle shown in the patch. Audio routes must flow from sources to outputs.";
+    if (normalized.find("channel") != std::string::npos || normalized.find("layout") != std::string::npos)
+        return "Review the named channel assignments and cable layouts shown in the canvas, then correct the highlighted route.";
+    if (normalized.find("device") != std::string::npos || normalized.find("driver") != std::string::npos
+        || normalized.find("stream") != std::string::npos || normalized.find("open") != std::string::npos)
+        return "Check that the selected audio device is available and not in use, then retry Start from the chosen configuration.";
+    return "Review the patch and Audio Setup. Correct the reported issue before trying Start again.";
+}
+
+void MainComponent::showStartFailure(const std::string& detail)
+{
+    if (startFailureDialogPending_) return;
+    startFailureDialogPending_ = true;
+    const auto guidance = startFailureGuidance(detail);
+    showStatus("Audio could not start. " + guidance);
+    const juce::Component::SafePointer<MainComponent> safe(this);
+    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Audio engine could not start",
+        "The engine is stopped; no device fallback was selected.\n\n"
+        + guidance + "\n\nTechnical details: " + juce::String::fromUTF8(detail.c_str()),
+        "OK", getTopLevelComponent(), juce::ModalCallbackFunction::create([safe](int)
+        {
+            if (!safe) return;
+            safe->startFailureDialogPending_ = false;
+            safe->updateTransportControls();
+        }));
+    updateTransportControls();
+}
+
+void MainComponent::updateTransportControls()
+{
+    const auto running = runtime_ && runtime_->running();
+    startAudio_.setButtonText(running ? "Stop (F5)" : "Start (F5)");
+    startAudio_.setEnabled(!transportTransitionPending_ && !startFailureDialogPending_);
+    stopAudio_.setEnabled(running && !transportTransitionPending_);
+    startAudio_.setTitle(running ? "Stop audio engine" : "Start audio engine");
+    startAudio_.setTooltip(running ? "Stop the audio engine (F5)." : "Start the audio engine (F5).");
+    commands_.commandStatusChanged();
+    menuItemsChanged();
 }
 void MainComponent::insertModule(std::string type, std::optional<juce::Point<float>> placement)
 {
+    if (type == "Input" || type == "Output")
+    {
+        showStatus("Hardware inputs and outputs are managed as fixed rows in the canvas lanes, not inserted as modules.");
+        return;
+    }
     const auto screenPosition = placement.value_or(dockWorkspace_.canvas().viewport().getCentre().toFloat());
     const auto position = dockWorkspace_.canvas().toPatch(screenPosition);
     std::map<std::string, domain::Parameter> values;
@@ -190,6 +470,10 @@ void MainComponent::insertModule(std::string type, std::optional<juce::Point<flo
         type = "Analyzer";
     }
     values["audio.type"] = type;
+    if (type == "Signal Generator")
+        values["audio.param.levelDb"] = -6.0;
+    else if (type == "Noise Generator")
+        values["audio.param.levelDbRms"] = -6.0;
     if (type == "Script")
     {
         const auto count = runtime_->channels();
@@ -215,13 +499,27 @@ void MainComponent::resized()
 {
     auto bounds = getLocalBounds().reduced(6);
     menu_.setBounds(bounds.removeFromTop(26));
-    toolbar_.setBounds(bounds.removeFromTop(40));
-    auto info = bounds.removeFromTop(38);
-    startAudio_.setBounds(info.removeFromLeft(90).reduced(2, 4));
-    stopAudio_.setBounds(info.removeFromLeft(60).reduced(2, 4));
-    addPatch_.setBounds(info.removeFromRight(95).reduced(2, 4));
-    patches_.setBounds(info.removeFromRight(170).reduced(2, 4));
-    banner_.setBounds(info);
+    const bool compact = bounds.getWidth() < 610;
+    toolbar_.setBounds(bounds.removeFromTop(compact ? 66 : 40));
+    auto info = bounds.removeFromTop(compact ? 64 : 38);
+    if (compact)
+    {
+        auto transport = info.removeFromTop(30);
+        startAudio_.setBounds(transport.removeFromLeft(90).reduced(2));
+        stopAudio_.setBounds(transport.removeFromLeft(60).reduced(2));
+        banner_.setBounds(transport.reduced(2, 0));
+        auto patchControls = info;
+        addPatch_.setBounds(patchControls.removeFromRight(95).reduced(2));
+        patches_.setBounds(patchControls.removeFromRight(170).reduced(2));
+    }
+    else
+    {
+        startAudio_.setBounds(info.removeFromLeft(90).reduced(2, 4));
+        stopAudio_.setBounds(info.removeFromLeft(60).reduced(2, 4));
+        addPatch_.setBounds(info.removeFromRight(95).reduced(2, 4));
+        patches_.setBounds(info.removeFromRight(170).reduced(2, 4));
+        banner_.setBounds(info);
+    }
     status_.setBounds(bounds.removeFromBottom(34));
     dockWorkspace_.setBounds(bounds.reduced(0, 4));
 }
@@ -296,6 +594,8 @@ void MainComponent::updateGeneratorDisplay()
         "Sawtooth (aliased)", "White noise", "Pink noise", "DC"};
     static constexpr const char* curves[]{"linear", "logarithmic", "curved exponential"};
     static constexpr const char* transports[]{"free run", "one-shot", "loop"};
+    const auto dot = juce::String::fromUTF8(" · ");
+    const auto arrow = juce::String::fromUTF8(" → ");
 
     if (*type == "Signal Generator")
     {
@@ -303,51 +603,56 @@ void MainComponent::updateGeneratorDisplay()
         const auto mode = static_cast<int>(number("mode", 0));
         const auto level = number("levelDb", -60);
         if (mode == 0)
-            info.summary = "Signal Generator · " + waveform + " · "
-                + juce::String(number("frequencyHz", 440), 2) + " Hz · "
+            info.summary = juce::String("Signal Generator") + dot + waveform + dot
+                + juce::String(number("frequencyHz", 440), 2) + " Hz" + dot
                 + juce::String(level, 1) + " dBFS peak";
         else
         {
             const auto musical = mode == 2;
             const auto curve = choice(curves, std::size(curves), number("sweepCurve", 1));
-            info.summary = "Signal Generator · " + (musical ? juce::String("Musical sweep")
-                                                                : juce::String(curve + " sweep"))
-                + " · " + juce::String(number("startFrequencyHz", 20), 1) + " → "
-                + juce::String(number("endFrequencyHz", 20000), 1) + " Hz · "
-                + juce::String(number("durationSeconds", 5), 2) + " s · "
+            info.summary = juce::String("Signal Generator") + dot
+                + (musical ? juce::String("Musical sweep") : juce::String(curve + " sweep"))
+                + dot + juce::String(number("startFrequencyHz", 20), 1) + arrow
+                + juce::String(number("endFrequencyHz", 20000), 1) + " Hz" + dot
+                + juce::String(number("durationSeconds", 5), 2) + " s" + dot
                 + choice(transports, std::size(transports), number("transport", 0))
-                + " · " + juce::String(level, 1) + " dBFS peak";
+                + dot + juce::String(level, 1) + " dBFS peak";
             info.durationSeconds = number("durationSeconds", 5);
             info.transport = static_cast<int>(number("transport", 0));
         }
     }
     else if (*type == "Chirp Generator")
     {
-        info.summary = "Chirp Generator · " + choice(curves, std::size(curves), number("sweepCurve", 1))
-            + " · " + juce::String(number("startFrequencyHz", 20), 1) + " → "
-            + juce::String(number("endFrequencyHz", 20000), 1) + " Hz · "
-            + juce::String(number("durationSeconds", 5), 2) + " s · "
+        info.summary = juce::String("Chirp Generator") + dot
+            + choice(curves, std::size(curves), number("sweepCurve", 1))
+            + dot + juce::String(number("startFrequencyHz", 20), 1) + arrow
+            + juce::String(number("endFrequencyHz", 20000), 1) + " Hz" + dot
+            + juce::String(number("durationSeconds", 5), 2) + " s" + dot
             + choice(transports, std::size(transports), number("transport", 1))
-            + " · " + juce::String(number("levelDb", -60), 1) + " dBFS peak";
+            + dot + juce::String(number("levelDb", -60), 1) + " dBFS peak";
         info.durationSeconds = number("durationSeconds", 5);
         info.transport = static_cast<int>(number("transport", 1));
     }
     else if (*type == "Noise Generator")
-        info.summary = "Noise Generator · " + juce::String(number("color", 0) == 1 ? "Pink" : "White")
-            + " · " + juce::String(number("levelDbRms", -60), 1) + " dBFS RMS";
+        info.summary = juce::String("Noise Generator") + dot
+            + juce::String(number("color", 0) == 1 ? "Pink" : "White")
+            + dot + juce::String(number("levelDbRms", -60), 1) + " dBFS peak reference";
     else if (*type == "Burst Generator")
-        info.summary = "Burst Generator · " + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
-            + juce::String(number("durationSeconds", 0.1) * 1000, 0) + " ms · "
+        info.summary = juce::String("Burst Generator") + dot
+            + juce::String(number("frequencyHz", 1000), 1) + " Hz" + dot
+            + juce::String(number("durationSeconds", 0.1) * 1000, 0) + " ms" + dot
             + juce::String(number("levelDb", -60), 1) + " dBFS peak";
     else if (*type == "Click Generator")
-        info.summary = "Click Generator · " + juce::String(number("bpm", 120), 1) + " BPM · "
-            + juce::String(number("frequencyHz", 1000), 1) + " Hz · "
+        info.summary = juce::String("Click Generator") + dot
+            + juce::String(number("bpm", 120), 1) + " BPM" + dot
+            + juce::String(number("frequencyHz", 1000), 1) + " Hz" + dot
             + juce::String(number("levelDb", -60), 1) + " dBFS peak";
     else if (*type == "Impulse Generator")
-        info.summary = "Impulse Generator · one-sample peak · "
+        info.summary = juce::String("Impulse Generator") + dot + "one-sample peak" + dot
             + juce::String(number("levelDb", -60), 1) + " dBFS";
     else if (*type == "DC Generator")
-        info.summary = "DC Generator · exact " + juce::String(number("value", 0), 4) + " / ±1.0";
+        info.summary = juce::String("DC Generator") + dot + "exact "
+            + juce::String(number("value", 0), 4) + " / " + juce::String::fromUTF8("±1.0");
     dockWorkspace_.signalPreview().setGeneratorContext(std::move(info));
 }
 
@@ -363,7 +668,7 @@ void MainComponent::getAllCommands(juce::Array<juce::CommandID>& result)
 {
     result.addArray({rename, undo, redo, toggleInspector, toggleReducedEffects, resetLayout,
                      showModules, showProperties, showAudioSettings, quit,
-                     saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport});
+                     saveProject, saveProjectAs, loadProject, addPatch, startTransport, stopTransport, about});
 }
 
 void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCommandInfo& info)
@@ -371,10 +676,12 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
     switch (command)
     {
         case startTransport:
-            info.setInfo("Start", "Explicitly start selected native configuration or offline preview", "Audio", 0);
-            info.setActive(runtime_->ready()); info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
+            info.setInfo(runtime_->running() ? "Stop (F5)" : "Start (F5)",
+                         "Toggle the audio engine; F5 starts or stops according to its current state", "Audio", 0);
+            info.setActive(!transportTransitionPending_ && !startFailureDialogPending_);
+            info.addDefaultKeypress(juce::KeyPress::F5Key, 0); break;
         case stopTransport:
-            info.setInfo("Stop", "Stop/quiesce audio and detach visualizer sources", "Audio", 0);
+            info.setInfo("Stop (Shift+F5)", "Stop/quiesce audio and detach visualizer sources", "Audio", 0);
             info.setActive(runtime_->running()); info.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::shiftModifier); break;
         case rename: info.setInfo("Rename workspace", "Change project name", "Workspace", 0); break;
         case saveProject:
@@ -413,6 +720,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
         case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
         case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
         case showAudioSettings: info.setInfo("Audio Setup", "Configure audio devices and capabilities. Playback remains explicit.", "Audio", 0); break;
+        case about: info.setInfo("About Visual Audio Lab", "Show application logo and build information", "Help", 0); break;
         case quit:
             info.setInfo("Quit", "Close Visual Audio Lab", "File", 0);
             info.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
@@ -427,17 +735,9 @@ bool MainComponent::perform(const InvocationInfo& invocation)
     switch (invocation.commandID)
     {
         case startTransport:
-        {
-            const auto result = runtime_->start();
-            if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
-            return true;
-        }
+            toggleTransportAction(); return true;
         case stopTransport:
-        {
-            const auto result = runtime_->stop();
-            if (!result.succeeded) showStatus(juce::String::fromUTF8(result.error.c_str()));
-            return true;
-        }
+            stopTransportAction(); return true;
         case rename: report(workspace_.rename(toolbar_.workspaceName().toStdString())); return true;
         case undo: captureProjectView(); report(workspace_.undo()); return true;
         case redo: captureProjectView(); report(workspace_.redo()); return true;
@@ -451,6 +751,7 @@ bool MainComponent::perform(const InvocationInfo& invocation)
         case showModules: dockWorkspace_.showPanel(PanelId::moduleBrowser); return true;
         case showProperties: dockWorkspace_.showPanel(PanelId::propertyInspector); return true;
         case showAudioSettings: showAudioSetup(); return true;
+        case about: showAbout(); return true;
         case saveProject: chooseSave(false); return true;
         case saveProjectAs: chooseSave(true); return true;
         case loadProject: chooseLoad(); return true;
@@ -468,7 +769,7 @@ bool MainComponent::perform(const InvocationInfo& invocation)
 
 juce::StringArray MainComponent::getMenuBarNames()
 {
-    return {"File", "Edit", "View", "Audio"};
+    return {"File", "Edit", "View", "Audio", "Help"};
 }
 
 juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
@@ -520,6 +821,8 @@ juce::PopupMenu MainComponent::getMenuForIndex(int index, const juce::String&)
         menu.addSeparator();
         menu.addCommandItem(&commands_, showAudioSettings);
     }
+    else if (index == 4)
+        menu.addCommandItem(&commands_, about);
     return menu;
 }
 
@@ -578,12 +881,12 @@ void MainComponent::restoreProjectView()
     {
         juce::Rectangle<int> desired(layout.x, layout.y, layout.width, layout.height);
         const auto& displays = juce::Desktop::getInstance().getDisplays();
-        if (const auto* display = displays.getDisplayForRect(desired))
+        if (const auto* display = displayForRestoredBounds(displays, desired))
         {
-            const auto area = display->userArea;
-            desired.setSize(juce::jmin(desired.getWidth(), area.getWidth()), juce::jmin(desired.getHeight(), area.getHeight()));
-            desired.setPosition(juce::jlimit(area.getX(), area.getRight() - desired.getWidth(), desired.getX()),
-                                juce::jlimit(area.getY(), area.getBottom() - desired.getHeight(), desired.getY()));
+            const auto placement = fitWindowToUserArea(desired, display->userArea);
+            window->setResizeLimits(placement.minimumWidth, placement.minimumHeight,
+                                    placement.maximumWidth, placement.maximumHeight);
+            desired = placement.bounds;
         }
         window->setFullScreen(false);
         window->setBounds(desired);

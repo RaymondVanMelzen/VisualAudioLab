@@ -1,15 +1,27 @@
 # Routing Model Redesign: Fixed Sources and Destinations
 
-**Status:** target architecture and UX design. The first executable shared-bus
-layer supports explicit Sum, multiple roots, fan-out and legal inert nodes. Its
-canvas follow-up adds fixed-looking Sources/Destinations rails that group the
-existing Input, generator and Main Output graph nodes and prevent their canvas
-move/delete. This is a presentation layer over the version-1 graph, **not**
-system-owned endpoint lifetime/readiness/bindings. Independent typed buses,
-layout adapters and multiple destinations below remain unshipped. See the
-[implementation boundary and dependency order](plans/07-TypographyAndRoutingImplementation.md).
+**Status:** the core fixed-endpoint and typed-bus architecture is implemented.
+Hardware Input and Output are system-owned, stable project endpoints; exact
+driver-named channel assignments and readiness states are shown in fixed canvas
+lanes. The runtime supports multiple sources and destinations, fan-out,
+independent bus widths, explicit Sum, and a visible mono-to-stereo cable
+adapter. Each destination accepts one feed; mix through Sum rather than
+implicit destination summing. Hardware outputs use disjoint channel groups
+from one configured backend/device session. Legacy Input/Output nodes migrate
+without changing processor or cable identities.
 
-## 1. Review of the current model
+The shipped endpoint kinds are hardware input, the existing internal
+generators and configured main hardware output. Application Capture, File
+Player, Virtual Audio Device, Recorder/File Writer, Streaming, plugin hosting,
+arbitrary unsynchronized devices and generalized resampling remain deferred.
+The rest of this document describes the broader target product model; its
+deferred kinds and capabilities are proposals, not shipped behavior. See the
+[implemented plan and validation record](plans/08-HardwareEndpointLanesAndAudioSetupPlan.md).
+
+## 1. Previous model (before fixed endpoint implementation)
+
+The following is historical context, not a description of current runtime
+behavior.
 
 Today the patch is a single chain:
 
@@ -54,8 +66,11 @@ Facts from the engine (`AudioGraph.cpp`, `AudioProcessorNode.h`,
 ```
 
 The canvas has three zones. Sources and destinations are **system-owned,
-always present, not deletable or movable**; processors are **user-owned**.
-Cables run left → right only.
+not deletable or movable as processor nodes**; processors are **user-owned**.
+Cables run left → right only. The shipped hardware lanes may contain several
+user-configured endpoint rows; a row's identity survives missing hardware and
+its driver channel assignments are not serialized as machine-specific device
+tokens in the project.
 
 ### 2.1 Node taxonomy
 
@@ -68,8 +83,8 @@ share the existing node base (`AudioNode`) and a common port/bus contract.
 | **ProcessorNode** | User | ≥1 input bus, ≥1 output bus | Created/deleted by the user | All existing DSP/script/plugin nodes |
 | **DestinationNode** | System, per available endpoint | ≥1 input bus, 0 outputs | Exists while configured; can be disabled but not deleted | `OutputNode` |
 
-Concrete kinds (data, not new classes — a `kind` discriminator plus
-kind-specific settings):
+Concrete kinds (the following taxonomy is the wider product target, not a
+claim that every listed source or destination has shipped):
 
 - **SourceNode kinds:** Hardware Input, Signal Generator, Application
   Capture, File Player, Virtual Audio Device.
@@ -100,50 +115,46 @@ kind-specific settings):
 1. Cables go Source → Processor → Processor → Destination, or Source →
    Destination directly (a valid patch with zero processors).
 2. **Matching layout:** direct connection when layouts are equal.
-3. **Auto-adaptation:** mismatches never fail silently. The canvas inserts a
-   visible, removable **adapter chip** on the cable (see §4) with a named
-   rule:
-   - Mono → Stereo: *Dual-mono* (default) or *Pan*.
-   - Stereo → Mono: *Sum −3 dB* (default), *L only*, *R only*.
-   - N → M multichannel: *Channel map* (editable matrix).
-   Adapters are engine-level, deterministic, and appear in the project file;
-   they are not hidden conversions.
+3. **Explicit adaptation:** mismatches never fail silently. The shipped
+   adapter is a visible, removable **Mono → Stereo: Dual-mono** cable chip,
+   persisted in the project. Pan, stereo-to-mono, multichannel matrices and
+   other conversions in the wider target model remain unimplemented; those
+   mismatches are rejected rather than guessed.
 4. **Fan-out is free:** one output bus may feed many inputs.
-5. **Fan-in is explicit:** an input port accepts one cable by default. A
-   port flagged *summing* (all Destinations and a Mixer-style processor input)
-   accepts several cables and shows a **sum badge** with per-cable gain/mute.
-   This keeps the "no implicit summing" invariant: summing happens only where
-   the user can see it.
+5. **Fan-in is explicit:** every destination accepts a single cable. Multiple
+   sources are combined only through the visible **Sum** processor. The
+   proposed destination sum badges and per-cable gain/mute are not shipped.
 6. **No cycles** (feedback requires an explicit Feedback/Delay-loop
    processor, a future feature).
 7. A **processor with no path to any destination** is shown dimmed with a
    "not routed" hint; it is legal but inert (replaces the current hard
    "every node must feed Output" failure with a visible state).
 
-### 2.4 Engine and validation changes (conceptual)
+### 2.4 Engine and validation changes
 
-| Area | Current | Proposed |
-|------|---------|----------|
-| Root requirement | Exactly one Output | Zero or more enabled Destinations; empty graph still renders silence |
-| Source requirement | Optional Input via Audio Setup | Any enabled Source; no source ≠ error |
-| Fan-in | Single upstream, no summing | Single by default, explicit summing ports |
-| Width | Global in==out | Per-bus, with adapters |
-| Start validation | Device + graph conflated | Per-endpoint readiness (below) |
-| Execution order | Topological from Input | Topological from all enabled Sources, evaluated only on subgraphs reaching an enabled Destination |
+| Area | Shipped behavior | Wider target not yet shipped |
+|------|-----------------|------------------------------|
+| Endpoints | Stable hardware input/output rows; existing internal generators remain available | Application Capture, File Player, Virtual Audio Device, Recorder/File Writer, Streaming and plugins |
+| Bus layouts | Independently declared 1-32 channel ports, compatibility checked per cable | Additional conversion adapters and editable channel matrices |
+| Fan-in | Single feed per destination; explicit Sum processor for mixing | Per-cable controls and destination summing ports |
+| Fan-out | One output can feed several compatible inputs | Additional routing conveniences |
+| Hardware mapping | Exact saved channel names resolved to current device indices; sparse physical masks compacted for callbacks | Multiple unsynchronized devices and cross-device resampling |
+| Output groups | Disjoint physical channel assignments within the configured session | Independent destination clock domains |
+| Start | Explicit; no automatic device fallback or playback | Other real-time and asynchronous endpoint lifecycle policies |
+| Persistence | Schema 1.1 endpoint feature; legacy Input/Output nodes migrate with stable IDs and cable references | Additional endpoint-specific portable state |
 
-**Endpoint lifecycle** — each Source/Destination has a state shown on the
-node: *Ready*, *Disabled*, *Missing* (device unplugged), *Error*. Missing or
-errored endpoints keep their wires; the signal path is muted and flagged
-rather than the project being rejected. This preserves the existing rule that
-audio starts only on explicit Start and no endpoint is silently substituted.
+**Endpoint lifecycle** — the shipped hardware rows show readiness, disabled,
+missing or error state in the fixed lanes. Rows and cables survive a missing
+device; the user must resolve the binding, and no channel/device is silently
+substituted. A configured audio session can still be unavailable as a whole
+if its device is missing. Audio starts only on explicit Start.
 
-**Real-time vs. non-real-time endpoints:** Hardware, App Capture, Virtual
-Device, Main Output, Headphones and Streaming are clock-bound; Signal
-Generator and File Player are free-running and sample-accurate; Recorder and
-File Writer are *sinks with a lock-free ring buffer to a writer thread*, never
-blocking the audio callback. Sample-rate differences between endpoints are
-handled at the endpoint boundary (resampler inside the endpoint, not in the
-graph).
+**Real-time vs. non-real-time endpoints:** the shipped hardware input/output
+and internal generators participate in the current audio graph. The additional
+App Capture, Virtual Device, File Player, Recorder, File Writer and Streaming
+examples above are target-design considerations only. No file writing,
+external endpoint resampling or asynchronous sink behavior is claimed as
+implemented.
 
 ### 2.5 Project format (conceptual)
 
@@ -334,15 +345,13 @@ Behavior:
 | Feedback loops | Out of scope; reject cycles with a highlighted cable |
 | Plugin/script (VAL, VST3) channel capability | Declare layouts in the module contract; fallback to adapter chips |
 
-## 7. Suggested rollout (non-binding)
+## 7. Implementation record
 
-1. Introduce `SourceNode`/`DestinationNode`/`ProcessorNode` roles and bus
-   layouts in the engine behind the existing graph API; keep legacy
-   `InputNode`/`OutputNode` as migration shims.
-2. Add per-cable layouts, adapters and summing ports plus validation.
-3. Add project schema v-next and migration.
-4. Build the pinned rails and cable adaptation UX; then multichannel matrix
-   editor.
-5. Add Recorder/File Writer/Streaming/App Capture endpoints incrementally;
-   each is independent once the endpoint contract exists.
-6. Remove shims after one release.
+The fixed endpoint rows, per-port runtime graph, explicit Sum, visible
+mono-to-stereo cable adapter, sparse device channel mapping, schema-1.1
+persistence and legacy node migration have shipped together. Legacy `Input` and
+`Output` type recognition remains in the reader as a compatibility path; new
+projects cannot add these hardware nodes through the Module Browser.
+
+The focused implementation plan, scope boundaries and validation evidence are
+recorded in [Hardware Endpoint Lanes and Audio Setup Plan](plans/08-HardwareEndpointLanesAndAudioSetupPlan.md).

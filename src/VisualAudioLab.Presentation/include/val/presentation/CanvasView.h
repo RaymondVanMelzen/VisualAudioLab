@@ -70,6 +70,10 @@ public:
     std::function<void(const application::Result&)> onEdit;
     std::function<void(std::string, juce::Point<float>)> onModuleDropped;
     std::function<void(juce::String)> onModuleDropRejected;
+    std::function<std::vector<std::string>(domain::EndpointRole)> endpointChannels;
+    std::function<std::vector<int>(domain::GraphId)> selectedEndpointChannels;
+    std::function<juce::String(domain::GraphId)> endpointStatus;
+    std::function<application::Result(domain::GraphId, const std::vector<int>&)> assignEndpointChannels;
     /** Single selected node, connected source endpoint, or zero for absent/ambiguous targets. */
     std::function<void(domain::GraphId)> onObservationTarget;
     /** Optional shared observation rendering; never owns a processor, timer or analysis worker. */
@@ -82,6 +86,7 @@ private:
     enum class Gesture { none, move, marquee, connect, pan, keyboardMove };
     void finish(const application::Result& result);
     void contextMenu(juce::Point<float> screenPoint);
+    void endpointMenu(domain::GraphId endpoint);
     void updateMove(juce::Point<float> patchDelta);
     void updateMarquee(juce::Point<float> screenPoint, juce::ModifierKeys modifiers);
     void updateDetails();
@@ -110,7 +115,8 @@ private:
     float zoom_{1.0f};
     int sourceScroll_{}, destinationScroll_{};
     bool spaceHeld_{};
-    juce::TextButton add_{"Routing Draft"}, remove_{"Delete"}, fit_{"Fit"}, minus_{"-"}, plus_{"+"};
+    juce::TextButton add_{"Routing Draft"}, addInput_{"+ Input"}, addOutput_{"+ Output"};
+    juce::TextButton remove_{"Delete"}, fit_{"Fit"}, minus_{"-"}, plus_{"+"};
     juce::Label zoomLabel_, help_;
 };
 }

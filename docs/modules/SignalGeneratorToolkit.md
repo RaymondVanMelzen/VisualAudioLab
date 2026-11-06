@@ -78,12 +78,16 @@ one versatile source; the second makes the exact bounded control value the
 primary operation. They have separate names and cannot silently map to one
 another on project load.
 
-All modules have safe, quiet defaults. Tone/noise defaults use a low digital
-level (documented in the control); DC defaults to 0; a generator does not
-start itself. The UI prominently warns that headphones, loudspeakers and
-connected equipment can be damaged by unexpected or high-level test signals.
-There is no hidden limiter: values above full scale remain above 1.0 in the
-floating-point graph and may clip in a later device/output stage.
+Newly inserted Signal Generator and Noise Generator nodes start at an adjustable
+-6 dBFS peak target; this is a digital amplitude reference, not a physical
+voltage/SPL calibration or protection limit. Users can change Output Level or
+attenuate downstream with Gain. Existing projects retain saved levels, while
+older project files that omit a level retain the legacy DSP fallback. DC
+defaults to 0, and a generator never starts itself. The UI warns that
+headphones, loudspeakers and connected equipment can be damaged by unexpected
+or high-level test signals. There is no hidden limiter: values above full scale
+remain above 1.0 in the floating-point graph and may clip in a later
+device/output stage.
 
 ## Frequency entry and musical semantics
 
@@ -168,6 +172,13 @@ and transport are discrete changes with event-frame semantics. A waveform
 change applies at the accepted event frame and preserves phase.
 
 ## Amplitude, normalization and digital references
+
+The user-confirmed target level reference and proposed live Peak/RMS display
+policy are documented in
+[`../GeneratorLevelPolicy.md`](../GeneratorLevelPolicy.md). That decision
+does not itself change the implementation described below: until a separate
+implementation lands, existing parameter ranges, defaults, project values
+and DSP normalization remain as currently implemented.
 
 The common Level control spans -80 dBFS through +12 dBFS and is a peak
 amplitude reference for deterministic periodic waveforms:
@@ -367,25 +378,20 @@ The architecture contract, seven DSP source types, graph/catalog mapping,
 base editor controls, typed parameter mapping, custom frequency/scale entry,
 source-relative sweep progress, worker-backed node preview, floating monitor,
 stereo correlation meter and eight offline-loadable example projects are in
-place. The current Windows Release build passes all 20 non-device tests,
-including DSP callback allocation/free instrumentation and module-panel,
-visualization and project tests. The native-discovery test was not rerun
-because it can touch platform discovery. Remaining work is representative UI
-evidence, persistent Release bundle verification and review delivery.
+place. The generator task editor now groups fixed tone, frequency sweep,
+musical sweep, noise and calibration-reference goals; provides mode-specific
+controls, static waveform/sweep previews, a clear output mute, and worker-
+measured sample Peak/RMS readouts; and keeps engine parameter/control rows
+inside collapsed Advanced, Automation and Developer disclosures. Noise keeps
+its legacy persisted `levelDbRms` key while the editor labels it as a
+peak-reference target.
 
-Still required before claiming the toolkit assignment complete:
-
-1. Finish the full regression after the correlation-meter addition, then
-   capture representative UI evidence without starting playback or probing
-   hardware; verify menu, editor, monitor and stereo/mono feedback paths.
-2. Record the exact deterministic noise and analyzer measurements, then
-   perform any additional cross-rate or user-requested qualification needed
-   before describing those behaviors beyond the existing test bounds.
-3. Build and hash-verify the complete Release bundle before updating
-   `Latest`; preserve the existing bundle until verification succeeds.
-4. Deliver the focused review and report synthetic test evidence separately
-   from unperformed driver, device, acoustic, calibration and performance
-   qualification.
+The Windows x64 Release build passes all 22 CTest tests, including DSP
+allocation instrumentation, generator-level math, visualization and panel
+integration. Software-rendered default and constrained-width task-editor
+screenshots were captured without starting transport. The review-bundle
+update and PR delivery are tracked separately; this evidence does not qualify
+physical audio output, acoustic calibration, macOS or multi-monitor DPI.
 
 No phase claims hard realtime deadlines based only on average CPU or a
 lock-free queue. User hardware, ASIO/vendor drivers, acoustic transducers,
@@ -397,9 +403,11 @@ calibration, plugin hosting and macOS/ARM require their own qualification.
 prepared DSP lifecycle and per-node state; base parameter layers and bounded
 sample-frame events; typed per-parameter LFO, one-shot Envelope and stateless
 VAL Script scalar mappings for continuous parameters; output-only transport;
-deterministic note/custom-scale parsing; scalar project persistence; module
-catalog/editor controls; source-relative sweep progress; worker-decimated node
-scope previews; generator-aware inspector context; a shared floating monitor;
+deterministic note/custom-scale parsing; scalar project persistence; the
+musician-focused Signal Generator and Noise Generator task editors with
+mode-specific controls, shape previews, output mute and live sample Peak/RMS
+display; source-relative sweep progress; worker-decimated node scope
+previews; generator-aware inspector context; a shared floating monitor;
 eight saved stopped projects; and the analyzer worker with
 scope/spectrum/peak/RMS/correlation/tuner views.
 

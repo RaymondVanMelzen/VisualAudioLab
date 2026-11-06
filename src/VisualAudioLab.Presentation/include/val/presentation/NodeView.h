@@ -17,6 +17,6 @@ public:
     [[nodiscard]] static juce::Rectangle<float> bounds(domain::Position position);
     [[nodiscard]] static juce::Point<float> port(domain::Position position, domain::Port direction);
     static void paint(juce::Graphics& graphics, const domain::Node& node,
-                      domain::Position position, bool selected, bool focused, bool detail = true);
+                      domain::Position position, bool selected, bool focused, float zoom = 1.0f);
 };
 }

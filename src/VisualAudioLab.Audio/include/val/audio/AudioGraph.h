@@ -14,7 +14,7 @@ namespace val::audio
 enum class AudioNodeType
 {
     input, gain, output, eq, delay, compressor, distortion, chorus, reverb, analyzer, script,
-    signalGenerator, impulseGenerator, clickGenerator, burstGenerator, chirpGenerator, noiseGenerator, dcGenerator
+    signalGenerator, impulseGenerator, clickGenerator, burstGenerator, chirpGenerator, noiseGenerator, dcGenerator, sum
 };
 /** Control-owned node definition with stable identity, initial physical-domain parameters and bypass. */
 struct AudioNodeDefinition
@@ -33,7 +33,7 @@ struct AudioNodeDefinition
     /** Immutable compiler-produced artifact; no parsing/compilation is allowed during processing. */
     std::shared_ptr<const script::Program> script;
 };
-/** Single-bus graph edge; fan-out allowed, implicit fan-in/mixing forbidden. */
+/** Shared-width bus edge; fan-out allowed, fan-in only at explicit Sum utilities. */
 struct AudioConnection
 {
     std::uint64_t source{}, destination{};
@@ -46,6 +46,7 @@ struct AudioGraph
     std::vector<AudioConnection> connections;
     /** Explicit opt-in mapping via audio.type parameters; generic editor nodes are rejected. */
     [[nodiscard]] static application::AudioQuery<AudioGraph> fromStructural(const domain::Graph& graph, int channels);
+    [[nodiscard]] std::vector<std::uint64_t> outputDependencies() const;
 };
 
 /** Validated execution plan, with all nodes/scratch allocated before publication. */
@@ -79,6 +80,8 @@ private:
         std::unique_ptr<AudioProcessorNode> processor;
         std::size_t source{}, destination{};
         std::shared_ptr<SignalCaptureBuffer> capture;
+        std::vector<std::size_t> sumSources;
+        bool active{};
     };
     application::AudioStreamFormat format_;
     std::uint64_t revision_{};

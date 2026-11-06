@@ -22,9 +22,10 @@ struct ModuleCatalogEntry
     std::string_view description;
 };
 
-inline constexpr std::array<ModuleCatalogEntry, 23> moduleCatalog{
+inline constexpr std::array<ModuleCatalogEntry, 24> moduleCatalog{
     ModuleCatalogEntry{"Input", ModuleCategory::routing, "External audio input routing utility."},
     ModuleCatalogEntry{"Output", ModuleCategory::routing, "Audio output routing utility."},
+    ModuleCatalogEntry{"Sum", ModuleCategory::routing, "Explicit unity sum of corresponding channels; may exceed full scale. No limiter."},
     ModuleCatalogEntry{"Gain", ModuleCategory::effects, "Adjusts linear signal level."},
     ModuleCatalogEntry{"EQ", ModuleCategory::effects, "Shapes frequency response."},
     ModuleCatalogEntry{"Delay", ModuleCategory::effects, "Adds a short delayed signal."},

@@ -1,4 +1,5 @@
 #include <val/application/WorkspaceService.h>
+#include <val/domain/Routing.h>
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -143,6 +144,8 @@ Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint de
         return Result::failure("Both connection endpoints must belong to this graph.");
     if (source.node == destination.node)
         return Result::failure("A node cannot connect to itself.");
+    if (!domain::hasOutputPort(graph().nodes.at(source.node)) || !domain::hasInputPort(graph().nodes.at(destination.node)))
+        return Result::failure("Sources have no input and the hardware Output has no output port.");
 
     std::unordered_map<domain::GraphId, std::vector<domain::GraphId>> outgoing;
     outgoing.reserve(graph().nodes.size());
@@ -151,8 +154,8 @@ Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint de
         (void) id;
         if (wire.source == source && wire.destination == destination)
             return Result::failure("These ports are already connected.");
-        if (wire.destination == destination)
-            return Result::failure("This input already has a connection. Disconnect it first.");
+        if (wire.destination == destination && !domain::isSumPort(graph().nodes.at(destination.node)))
+            return Result::failure("This input already has a connection. Use an explicit Sum utility to mix sources.");
         outgoing[wire.source.node].push_back(wire.destination.node);
     }
     std::vector<domain::GraphId> pending{destination.node};
@@ -215,6 +218,17 @@ Result WorkspaceService::setParameters(domain::GraphId node, std::map<std::strin
     auto replacement = graph().nodes.at(node);
     for (auto& [key, value] : values)
         replacement.parameters.insert_or_assign(std::move(key), std::move(value));
+    std::size_t incoming{};
+    for (const auto& [id, wire] : graph().connections)
+    {
+        (void) id;
+        if (wire.destination.node == node) ++incoming;
+        if ((wire.destination.node == node && !domain::hasInputPort(replacement))
+            || (wire.source.node == node && !domain::hasOutputPort(replacement)))
+            return Result::failure("Disconnect the affected cables before changing a node's routing direction.");
+    }
+    if (incoming > 1 && !domain::isSumPort(replacement))
+        return Result::failure("Multiple incoming cables require an explicit Sum utility.");
     if (replacement == graph().nodes.at(node))
         return Result::success();
     domain::Graph alternate;

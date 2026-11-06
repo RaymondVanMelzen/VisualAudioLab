@@ -9,7 +9,8 @@ add_library(VisualAudioLab.Presentation STATIC
     src/VisualizationWidgets.cpp
     src/DockWorkspace.cpp
     src/ShellChrome.cpp
-    src/ShellTheme.cpp)
+    src/ShellTheme.cpp
+    src/Typography.cpp)
 target_include_directories(VisualAudioLab.Presentation PUBLIC include)
 target_link_libraries(VisualAudioLab.Presentation
     PUBLIC VisualAudioLab.Application VisualAudioLab.Audio juce::juce_gui_basics val_juce_options

@@ -4,6 +4,7 @@
 #include <val/audio/GeneratorNodes.h>
 #include <val/audio/ScriptNode.h>
 #include <val/presentation/ShellTheme.h>
+#include <val/presentation/Typography.h>
 #include <val/script/Compiler.h>
 #include <algorithm>
 #include <array>
@@ -62,6 +63,7 @@ std::unique_ptr<audio::AudioNode> prototype(const std::string& type)
 {
     if (type == "Input") return std::make_unique<audio::InputNode>();
     if (type == "Output") return std::make_unique<audio::OutputNode>();
+    if (type == "Sum") return std::make_unique<audio::SumNode>();
     if (type == "Gain") return std::make_unique<audio::GainNode>();
     if (type == "EQ") return std::make_unique<audio::EqNode>();
     if (type == "Delay") return std::make_unique<audio::DelayNode>();
@@ -144,6 +146,7 @@ public:
     explicit Impl(ModuleCatalog& owner) : owner_(owner)
     {
         search_.setTitle("Search modules");
+        search_.setFont(Typography::ui(12));
         search_.setTextToShowWhenEmpty("Search modules...", ShellTheme::textMuted());
         search_.onTextChange = [this] { filter(); };
         search_.onReturnKey = [this] { insert(); };
@@ -160,7 +163,7 @@ public:
         list_.addMouseListener(this, true);
         insert_.onClick = [this] { insert(); };
         help_.setText("Modules are reusable audio functions; placed nodes are instances.\nInput / Output are routing utilities.", juce::dontSendNotification);
-        help_.setFont(juce::FontOptions(11.0f));
+        help_.setFont(Typography::ui(11));
         for (auto* child : std::initializer_list<juce::Component*>{&search_, &category_, &list_, &insert_, &status_, &help_})
             addAndMakeVisible(child);
         filter();
@@ -196,6 +199,7 @@ private:
             graphics.fillRect(0, 0, 3, height);
         }
         graphics.setColour(ShellTheme::textPrimary());
+        graphics.setFont(Typography::font(TextRole::menu));
         const auto& entry = *filtered_[static_cast<std::size_t>(row)];
         const auto categoryIndex = static_cast<std::size_t>(entry.category);
         const auto label = juce::String(entry.name.data(), static_cast<int>(entry.name.size()))
@@ -316,7 +320,7 @@ public:
         source_.setReturnKeyStartsNewLine(true);
         source_.setTabKeyUsedAsCharacter(true);
         source_.setScrollbarsShown(true);
-        source_.setFont(juce::Font(juce::FontOptions(13.0f)));
+        source_.setFont(Typography::font(TextRole::code));
         source_.onTextChange = [this]
         {
             if (!loadingSource_)
@@ -370,6 +374,7 @@ public:
         controlMinimum_.setTitle("Declared minimum VAL Script scalar output");
         controlMaximum_.setTitle("Declared maximum VAL Script scalar output");
         controlScript_.setTitle("Stateless VAL Script scalar control source");
+        controlScript_.setFont(Typography::font(TextRole::code));
         controlScript_.setMultiLine(true, true);
         controlScript_.setReturnKeyStartsNewLine(true);
         controlScript_.setScrollbarsShown(true);
@@ -382,6 +387,10 @@ public:
         controlRelease_.setTextToShowWhenEmpty("Release s", ShellTheme::textSecondary());
         controlMinimum_.setTextToShowWhenEmpty("Output min", ShellTheme::textSecondary());
         controlMaximum_.setTextToShowWhenEmpty("Output max", ShellTheme::textSecondary());
+        for (auto* editor : {&frequencyEntry_, &scaleIntervals_, &controlOffset_, &controlDepth_,
+                             &controlRate_, &controlAttack_, &controlHold_, &controlRelease_,
+                             &controlMinimum_, &controlMaximum_, &seconds_})
+            editor->setFont(Typography::font(TextRole::value));
         controlSave_.onClick = [this] { saveControlEditor(); };
         compile_.onClick = [this] { applyScript(); };
         load_.onClick = [this] { loadSource(); };
@@ -407,7 +416,11 @@ public:
         refresh();
     }
 
-    void status(const juce::String& message) { status_.setText(message, false); }
+    void status(const juce::String& message)
+    {
+        status_.setFont(script_ ? Typography::font(TextRole::diagnostics) : Typography::ui(12));
+        status_.setText(message, false);
+    }
     void setNode(std::uint64_t id)
     {
         rememberDraft();
@@ -496,7 +509,7 @@ public:
                     else
                     {
                         valid_ = true;
-                        const bool routing = type_ == "Input" || type_ == "Output";
+                        const bool routing = type_ == "Input" || type_ == "Output" || type_ == "Sum";
                         bypass_.setEnabled(!routing);
                         title_.setText(juce::String(selected->name) + (routing ? " - routing utility" : " - module instance"),
                                        juce::dontSendNotification);
@@ -507,6 +520,7 @@ public:
                         populateControlTargets();
                         status(script_ ? "Saved source verified. Script INPUT/OUTPUT counts must match the runtime bus; "
                                          "mono examples require a mono bus."
+                                       : type_ == "Sum" ? "Explicit unity sum: connect multiple sources to Sum In. Corresponding channels add without normalization or limiting; check levels before Start."
                                        : routing ? "Routing utility: connects the configured device bus, not a reusable effect. No bypass or processing parameters."
                                        : type_ == "Analyzer" ? "Analysis module instance; audio passes through unchanged while shared visualizations observe it."
                                                    : type_ == "DC Generator" ? "Zero-input DC source, exact -1.0 to +1.0. Check connected equipment before Start; values are not an acoustic safety limit."
@@ -682,6 +696,7 @@ private:
                            juce::dontSendNotification);
             label_.setTooltip("Physical units and smoothing are defined by the processor; ramp duration "
                               + juce::String(spec.smoothingSeconds * 1000.0) + " ms.");
+            label_.setFont(Typography::font(TextRole::label));
             base_.setRange(spec.minimum, spec.maximum,
                            spec.name == std::string_view("rootMidi") || spec.name == std::string_view("seed") ? 1.0 : 0.0);
             base_.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -719,6 +734,7 @@ private:
             }
             targetLabel_.setText("Live target (not saved)", juce::dontSendNotification);
             target_.setText(juce::String(saved, 6), false);
+            target_.setFont(Typography::font(TextRole::value));
             target_.setTitle(juce::String(spec.name) + " live override or automation target");
             override_.onClick = [this] { apply(audio::ParameterAction::overrideValue, false); };
             release_.onClick = [this] { owner_.runtime(index_, 0, audio::ParameterAction::releaseOverride); };

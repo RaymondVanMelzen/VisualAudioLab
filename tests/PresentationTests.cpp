@@ -137,6 +137,25 @@ int main(int argc, char** argv)
         require(highDpi175.bounds == juce::Rectangle<int>(0, 0, 1097, 577)
                     && highDpi175.minimumWidth == 640 && highDpi175.minimumHeight == 380,
                 "The 175% work-area regression preserves usable bounds and product-sized resize minima.");
+        const juce::BorderSize<int> windowsFrame{32, 8, 8, 8};
+        const juce::Rectangle<int> scaledWorkArea{120, 80, 1097, 577};
+        const auto framed175 = fitWindowToUserArea({-200, -300, 1100, 720},
+                                                   scaledWorkArea, windowsFrame);
+        auto framedOuterBounds = framed175.bounds;
+        windowsFrame.addTo(framedOuterBounds);
+        require(framed175.bounds == juce::Rectangle<int>(128, 112, 1081, 537)
+                    && framedOuterBounds == scaledWorkArea
+                    && framed175.maximumWidth == scaledWorkArea.getWidth()
+                    && framed175.maximumHeight == scaledWorkArea.getHeight(),
+                "At simulated 175% geometry, client bounds reserve native titlebar/frame extents and the whole outer window fits.");
+        const auto smallerFramed = fitWindowToUserArea({180, 130, 800, 500},
+                                                       scaledWorkArea, windowsFrame);
+        auto smallerOuterBounds = smallerFramed.bounds;
+        windowsFrame.addTo(smallerOuterBounds);
+        require(smallerOuterBounds == juce::Rectangle<int>(172, 98, 816, 540),
+                "A non-maximized decorated window preserves its client size and remains inside the work area.");
+        require(scaledWorkArea.contains(smallerOuterBounds),
+                "The full native frame, not only the client area, remains within the usable monitor bounds.");
         const auto& displays = juce::Desktop::getInstance().getDisplays();
         if (const auto* primary = displays.getPrimaryDisplay())
             require(displayForRestoredBounds(displays, {100000, 100000, 800, 600}) == primary,

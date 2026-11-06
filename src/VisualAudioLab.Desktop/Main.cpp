@@ -54,11 +54,15 @@ public:
             const auto area = display->userArea;
             auto desired = juce::Rectangle<int>(area.getX(), area.getY(),
                                                  settings.windowWidth, settings.windowHeight);
-            auto placement = presentation::fitWindowToUserArea(desired, area);
+            const auto frame = presentation::windowFrameSize(*this);
+            auto placement = presentation::fitWindowToUserArea(desired, area, frame);
+            frame.addTo(placement.bounds);
             placement.bounds.setCentre(area.getCentre());
+            frame.subtractFrom(placement.bounds);
             setResizeLimits(placement.minimumWidth, placement.minimumHeight,
                             placement.maximumWidth, placement.maximumHeight);
             workArea_ = area;
+            frameSize_ = frame;
             setBounds(placement.bounds);
         }
         else
@@ -67,29 +71,55 @@ public:
             centreWithSize(settings.windowWidth, settings.windowHeight);
         }
         setVisible(true);
+        placementReady_ = true;
+        fitToCurrentDisplayIfNeeded();
     }
 
     void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
     presentation::MainComponent& content() noexcept { return *content_; }
     void moved() override
     {
-        const auto& displays = juce::Desktop::getInstance().getDisplays();
-        if (const auto* display = displays.getDisplayForRect(getBounds()); display && display->userArea != workArea_)
-            fitToDisplay(*display, getBounds());
+        fitToCurrentDisplayIfNeeded();
+    }
+
+    void resized() override
+    {
+        juce::DocumentWindow::resized();
+        fitToCurrentDisplayIfNeeded();
     }
 
 private:
-    void fitToDisplay(const juce::Displays::Display& display, juce::Rectangle<int> desired)
+    void fitToDisplay(const juce::Displays::Display& display, juce::Rectangle<int> desired,
+                      juce::BorderSize<int> frame)
     {
-        const auto placement = presentation::fitWindowToUserArea(desired, display.userArea);
+        const auto placement = presentation::fitWindowToUserArea(desired, display.userArea, frame);
+        const juce::ScopedValueSetter<bool> fitting(fittingPlacement_, true);
+        workArea_ = display.userArea;
+        frameSize_ = frame;
         setResizeLimits(placement.minimumWidth, placement.minimumHeight,
                         placement.maximumWidth, placement.maximumHeight);
-        workArea_ = display.userArea;
-        setBounds(placement.bounds);
+        if (getBounds() != placement.bounds)
+            setBounds(placement.bounds);
+    }
+
+    void fitToCurrentDisplayIfNeeded()
+    {
+        if (!placementReady_ || fittingPlacement_ || isFullScreen())
+            return;
+
+        const auto frame = presentation::windowFrameSize(*this);
+        auto outerBounds = getBounds();
+        frame.addTo(outerBounds);
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        if (const auto* display = displays.getDisplayForRect(outerBounds);
+            display && (display->userArea != workArea_ || frame != frameSize_))
+            fitToDisplay(*display, getBounds(), frame);
     }
 
     presentation::MainComponent* content_{};
     juce::Rectangle<int> workArea_;
+    juce::BorderSize<int> frameSize_;
+    bool placementReady_{}, fittingPlacement_{};
 };
 
 /** Explicit composition root for the UI shell, local adapters and application-owned services. */

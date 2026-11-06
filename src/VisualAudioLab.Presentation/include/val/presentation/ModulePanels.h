@@ -2,6 +2,7 @@
 
 #include <val/application/WorkspaceService.h>
 #include <val/audio/AudioNode.h>
+#include <val/presentation/VisualizationWidgets.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 #include <memory>
@@ -68,6 +69,8 @@ public:
      * Scheduled values do not change the document's saved base.
      */
     std::function<void(std::uint64_t, std::uint16_t, float, double)> onScheduleParameter;
+    /** Reads only fresh off-callback capture analysis for the selected generator node output. */
+    std::function<GeneratorMeterReadout(std::uint64_t)> onReadGeneratorMeters;
 
 private:
     /** Owns the scrollable editor, processor metadata and lifetime-safe asynchronous source loader. */

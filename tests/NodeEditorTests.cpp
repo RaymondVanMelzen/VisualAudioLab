@@ -35,6 +35,77 @@ double elapsed(std::chrono::steady_clock::time_point start)
 }
 }
 
+void runEndpointRailTests()
+{
+    using namespace val;
+    using namespace presentation;
+    application::WorkspaceService service;
+    const auto input = std::find_if(service.graph().endpoints.begin(), service.graph().endpoints.end(),
+        [](const auto& item) { return item.second.role == domain::EndpointRole::hardwareInput; })->first;
+    const auto output = std::find_if(service.graph().endpoints.begin(), service.graph().endpoints.end(),
+        [](const auto& item) { return item.second.role == domain::EndpointRole::hardwareOutput; })->first;
+    require(service.createNode({-400, -250}, "DC Generator", {{"audio.type", std::string("DC Generator")}}).succeeded,
+            "Create an internal generator source.");
+    const auto generator = service.lastCreatedNode();
+    require(service.createNode({500, 100}, "Gain", {{"audio.type", std::string("Gain")}}).succeeded, "Create processor.");
+    const auto processor = service.lastCreatedNode();
+    require(service.connect({input, domain::Port::output}, {output, domain::Port::input}).succeeded,
+            "A direct source-to-destination route remains valid.");
+
+    CanvasView canvas(service);
+    canvas.setSize(1000, 700);
+    require(canvas.sourceRailBounds().getRight() <= canvas.viewport().getX()
+            && canvas.destinationRailBounds().getX() >= canvas.viewport().getRight(),
+            "Fixed endpoint rails stay outside the panning/zooming processor viewport.");
+    const auto inputPort = canvas.endpointPortPosition(input, domain::Port::output);
+    const auto generatorPort = canvas.endpointPortPosition(generator, domain::Port::output);
+    const auto outputPort = canvas.endpointPortPosition(output, domain::Port::input);
+    require(inputPort && generatorPort && outputPort
+            && canvas.portAt(*inputPort) == domain::Endpoint{input, domain::Port::output}
+            && canvas.portAt(*generatorPort) == domain::Endpoint{generator, domain::Port::output}
+            && canvas.portAt(*outputPort) == domain::Endpoint{output, domain::Port::input},
+            "Configurable hardware rows, current generator instances and destinations expose correctly directed rail ports.");
+    canvas.panBy({55, 24});
+    canvas.zoomAt(1.4f, canvas.viewport().getCentre().toFloat());
+    require(canvas.endpointPortPosition(input, domain::Port::output) == inputPort
+            && canvas.endpointPortPosition(output, domain::Port::input) == outputPort,
+            "Panning and zooming the centre never moves either endpoint rail.");
+    canvas.zoomAt(1.0f, canvas.viewport().getCentre().toFloat());
+    canvas.panBy({-55, -24});
+    const auto route = service.graph().connections.begin()->second;
+    ConnectionView direct(canvas.toPatch(*canvas.endpointPortPosition(route.source.node, route.source.port)),
+                          canvas.toPatch(*canvas.endpointPortPosition(route.destination.node, route.destination.port)));
+    const auto midpoint = direct.path().getPointAlongPath(direct.path().getLength() * 0.5f);
+    require(canvas.connectionAt(canvas.toScreen(midpoint)) == service.graph().connections.begin()->first,
+            "A cable remains hit-testable when both endpoint positions are pinned to the rails.");
+
+    const auto original = service.graph();
+    const auto card = canvas.sourceRailBounds().withTrimmedTop(86).reduced(6, 0).withHeight(62);
+    drag(canvas, card.getCentre().toFloat(), card.getCentre().toFloat() + juce::Point<float>{36, 32});
+    require(service.graph() == original && !service.deleteNodes({input}).succeeded
+            && !service.moveNodes({{input, {300, 300}}}).succeeded,
+            "Hardware rows remain fixed lane records, not movable or deletable nodes.");
+    canvas.selectAll();
+    require(canvas.selection() == std::set<domain::GraphId>{processor}, "Select All targets movable processors, not fixed endpoints.");
+    require(!service.removeHardwareEndpoint(output).succeeded,
+            "The last destination row cannot be removed; disable it or leave it unassigned instead.");
+    canvas.setSize(520, 440);
+    require(canvas.viewport().getWidth() >= 170
+            && canvas.sourceRailBounds().getRight() <= canvas.viewport().getX()
+            && canvas.destinationRailBounds().getX() >= canvas.viewport().getRight(),
+            "Constrained layout preserves two pinned endpoint rails and a usable centre patch area.");
+    canvas.setSize(1000, 700);
+
+    require(service.disconnect(service.graph().connections.begin()->first).succeeded
+            && service.connect({generator, domain::Port::output}, {processor, domain::Port::input}).succeeded
+            && service.connect({processor, domain::Port::output}, {output, domain::Port::input}).succeeded,
+            "Built-in generator sources route through centre processors into the fixed output row.");
+    canvas.synchronise();
+    require(canvas.endpointPortPosition(generator, domain::Port::output)
+                == std::optional<juce::Point<float>>(generatorPort.value()),
+            "Adding a route leaves the generator endpoint pinned to its source rail.");
+}
+
 void runNodeEditorTests()
 {
     using namespace val;
@@ -176,6 +247,7 @@ void runNodeEditorTests()
     require(canvas.toScreen({0, 0}).getDistanceFrom(offsetBefore + juce::Point<float>{50, 30}) < 0.001f,
             "Middle drag pans in screen pixels independent of zoom.");
     require(service.graph() == connected, "Selection, zoom and pan never mutate the graph.");
+    runEndpointRailTests();
 
     // Broad-phase cells must work at negative coordinates and for a long backwards cable.
     domain::Graph negative;

@@ -132,10 +132,27 @@ juce::String parameterUnit(std::string_view name)
     if (name.find("Seconds") != std::string_view::npos || name == "stepSeconds"
         || name == "intervalSeconds" || name == "fadeSeconds") return "s";
     if (name == "levelDb") return "dBFS peak";
-    if (name == "levelDbRms") return "dBFS RMS";
+    if (name == "levelDbRms") return "dBFS peak reference";
     if (name == "bpm") return "BPM";
     if (name == "rootMidi") return "MIDI note";
     return {};
+}
+
+juce::String displayParameterName(const std::string& type, std::string_view name)
+{
+    if (name == "frequencyHz") return "Frequency";
+    if (name == "startFrequencyHz") return "Start Frequency";
+    if (name == "endFrequencyHz") return "End Frequency";
+    if (name == "durationSeconds") return type == "Signal Generator" || type == "Chirp Generator"
+        ? "Sweep Time" : "Duration";
+    if (name == "stepSeconds") return "Step Time";
+    if (name == "levelDb" || name == "levelDbRms") return "Output Level";
+    if (name == "rootMidi") return "Root MIDI Note";
+    if (name == "referenceAHz") return "Reference A";
+    if (name == "color") return "Noise Color";
+    if (name == "sweepCurve") return "Sweep Shape";
+    if (name == "muted") return "Output";
+    return juce::String(name.data(), static_cast<int>(name.size()));
 }
 }
 
@@ -162,8 +179,8 @@ public:
         list_.setRowHeight(30);
         list_.addMouseListener(this, true);
         insert_.onClick = [this] { insert(); };
-        help_.setText("Modules are reusable audio functions; placed nodes are instances.\nInput / Output are routing utilities.", juce::dontSendNotification);
-        help_.setFont(Typography::ui(11));
+        help_.setText("Browser: processors, generators, Sum.\nHardware I/O: fixed canvas lanes.", juce::dontSendNotification);
+        help_.setFont(Typography::ui(12));
         for (auto* child : std::initializer_list<juce::Component*>{&search_, &category_, &list_, &insert_, &status_, &help_})
             addAndMakeVisible(child);
         filter();
@@ -259,7 +276,8 @@ private:
             list_.selectRow(found == filtered_.end() ? 0 : static_cast<int>(found - filtered_.begin()));
         insert_.setEnabled(!filtered_.empty());
         const auto category = category_.getText();
-        status_.setText(category + " · " + juce::String(getNumRows()) + (getNumRows() == 1 ? " result" : " results"),
+        status_.setText(category + juce::String::fromUTF8(" · ") + juce::String(getNumRows())
+                            + (getNumRows() == 1 ? " result" : " results"),
                         juce::dontSendNotification);
     }
     void insert()
@@ -291,7 +309,123 @@ ModuleCatalog::~ModuleCatalog() = default;
 void ModuleCatalog::resized() { impl_->setBounds(getLocalBounds()); }
 
 /** Scrollable, selected-node editor with document edits separated from transient parameter layers. */
-class ModuleEditor::Impl final : public juce::Component
+class GeneratorPreview final : public juce::Component
+{
+public:
+    void setSignal(int mode, int waveform, float start, float end, int curve)
+    { mode_ = mode; waveform_ = waveform; start_ = start; end_ = end; curve_ = curve; repaint(); }
+    void paint(juce::Graphics& g) override
+    {
+        auto area = getLocalBounds().toFloat();
+        g.setColour(ShellTheme::raised());
+        g.fillRoundedRectangle(area, 7.0f);
+        area = area.reduced(10.0f, 9.0f);
+        g.setColour(ShellTheme::textMuted());
+        g.setFont(Typography::font(TextRole::meterScale));
+        g.drawText(juce::String::fromUTF8(mode_ == 1 ? "TARGET FREQUENCY VS TIME · PREVIEW"
+                                                     : mode_ == 2 ? "MUSICAL SWEEP PREVIEW · SHAPE ONLY"
+                                                                  : "WAVEFORM PREVIEW · SHAPE ONLY"),
+                   area.removeFromTop(17.0f), juce::Justification::centredLeft);
+        const auto plot = area.reduced(2.0f, 4.0f);
+        g.setColour(ShellTheme::border());
+        g.drawHorizontalLine(static_cast<int>(plot.getCentreY()), plot.getX(), plot.getRight());
+        g.setColour(ShellTheme::audio());
+        juce::Path path;
+        constexpr int points = 120;
+        if (mode_ == 2)
+        {
+            const auto noteY = [&](int note)
+            { return plot.getCentreY() - (0.72f - static_cast<float>(note) * 0.24f) * plot.getHeight() * 0.42f; };
+            path.startNewSubPath(plot.getX(), noteY(0));
+            for (int note = 1; note < 7; ++note)
+            {
+                const auto x = plot.getX() + plot.getWidth() * static_cast<float>(note) / 6.0f;
+                path.lineTo(x, noteY(note - 1));
+                path.lineTo(x, noteY(note));
+            }
+            path.lineTo(plot.getRight(), noteY(6));
+        }
+        else
+        {
+            for (int i = 0; i < points; ++i)
+            {
+                const auto x = static_cast<float>(i) / static_cast<float>(points - 1);
+                float y{};
+                if (mode_ == 1)
+                {
+                    double shaped = x;
+                    if (curve_ == 1)
+                    {
+                        const auto low = std::log(std::max(20.0f, std::min(start_, end_)));
+                        const auto high = std::log(std::max(20.0f, std::max(start_, end_)));
+                        const auto frequency = std::exp(low + (high - low) * x);
+                        shaped = (frequency - std::min(start_, end_))
+                               / std::max(0.0001f, std::max(start_, end_) - std::min(start_, end_));
+                    }
+                    else if (curve_ == 2)
+                        shaped = std::expm1(3.0 * x) / std::expm1(3.0);
+                    y = 1.0f - static_cast<float>(shaped) * 2.0f;
+                }
+                else if (waveform_ >= 4)
+                    y = std::sin(i * 12.9898f) * 0.65f;
+                else
+                {
+                    const auto phase = x * 8.0f;
+                    switch (waveform_)
+                    {
+                        case 1: y = std::sin(phase * juce::MathConstants<float>::twoPi) >= 0 ? 0.75f : -0.75f; break;
+                        case 2: y = 2.0f / juce::MathConstants<float>::pi
+                            * std::asin(std::sin(phase * juce::MathConstants<float>::twoPi)); break;
+                        case 3: y = 2.0f * (phase - std::floor(phase + 0.5f)); break;
+                        default: y = std::sin(phase * juce::MathConstants<float>::twoPi); break;
+                    }
+                }
+                const auto point = juce::Point<float>(plot.getX() + plot.getWidth() * x,
+                    plot.getCentreY() - juce::jlimit(-1.0f, 1.0f, y) * plot.getHeight() * 0.42f);
+                if (i == 0) path.startNewSubPath(point); else path.lineTo(point);
+            }
+        }
+        g.strokePath(path, juce::PathStrokeType(1.7f));
+    }
+private:
+    int mode_{}, waveform_{}, curve_{};
+    float start_{20}, end_{20000};
+};
+
+class GeneratorMeter final : public juce::Component
+{
+public:
+    void setLevels(float peak, bool peakValid, float rms, bool rmsValid)
+    { peak_ = peak; peakValid_ = peakValid; rms_ = rms; rmsValid_ = rmsValid; repaint(); }
+    void paint(juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        g.setColour(ShellTheme::raised());
+        g.fillRoundedRectangle(bounds, 6.0f);
+        bounds = bounds.reduced(8.0f, 5.0f);
+        const auto barHeight = (bounds.getHeight() - 6.0f) * 0.5f;
+        const auto draw = [&](float db, bool valid, float y, juce::Colour colour)
+        {
+            auto bar = juce::Rectangle<float>(bounds.getX(), y, bounds.getWidth(), barHeight);
+            g.setColour(ShellTheme::input());
+            g.fillRoundedRectangle(bar, 2.0f);
+            if (valid)
+            {
+                const auto proportion = juce::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f);
+                bar.setWidth(bar.getWidth() * proportion);
+                g.setColour(db >= -1.0f ? ShellTheme::error() : colour);
+                g.fillRoundedRectangle(bar, 2.0f);
+            }
+        };
+        draw(peak_, peakValid_, bounds.getY(), ShellTheme::audio());
+        draw(rms_, rmsValid_, bounds.getY() + barHeight + 6.0f, ShellTheme::analyzer());
+    }
+private:
+    float peak_{-160.0f}, rms_{-160.0f};
+    bool peakValid_{}, rmsValid_{};
+};
+
+class ModuleEditor::Impl final : public juce::Component, private juce::Timer
 {
 public:
     Impl(ModuleEditor& owner, application::WorkspaceService& workspace) : owner_(owner), workspace_(workspace)
@@ -304,6 +438,7 @@ public:
         status_.setReadOnly(true);
         status_.setTitle("Module editor diagnostics");
         title_.setJustificationType(juce::Justification::centredLeft);
+        title_.setFont(Typography::font(TextRole::panelTitle));
         bypass_.onClick = [this] { saveBypass(); };
         explanation_.setText("Saved base is undoable. Override wins over automation; release restores automation/base. "
                              "Disable automation restores base after override release. Live targets are not saved.",
@@ -413,13 +548,390 @@ public:
                  &controlDepth_, &controlRate_, &controlAttack_, &controlHold_,
                  &controlRelease_, &controlMinimum_, &controlMaximum_, &controlScript_, &controlSave_})
             content_.addAndMakeVisible(child);
+        for (auto* child : std::initializer_list<juce::Component*>{
+                 &generatorGoalLabel_, &generatorGoal_, &generatorWaveformLabel_, &generatorWaveform_,
+                 &generatorFrequencyLabel_, &generatorFrequency_, &generatorStartLabel_, &generatorStart_,
+                 &generatorEndLabel_, &generatorEnd_, &generatorDurationLabel_, &generatorDuration_,
+                 &generatorLevelLabel_, &generatorLevel_, &generatorNoiseLabel_, &generatorNoise_,
+                 &generatorScaleLabel_, &generatorScale_, &generatorRootLabel_, &generatorRoot_,
+                 &generatorStepLabel_, &generatorStep_, &generatorCurveLabel_, &generatorCurve_,
+                 &generatorCalibrationLabel_, &generatorCalibration_, &generatorPreview_, &generatorMeter_,
+                 &generatorPeak_, &generatorRms_, &generatorMeterState_, &generatorMute_, &generatorSafety_,
+                 &advancedToggle_, &automationToggle_, &developerToggle_,
+                 &developerDetails_})
+            content_.addAndMakeVisible(child);
+        configureGeneratorEditor();
+        startTimerHz(20);
         refresh();
     }
 
     void status(const juce::String& message)
     {
-        status_.setFont(script_ ? Typography::font(TextRole::diagnostics) : Typography::ui(12));
+        status_.setFont(script_ ? Typography::font(TextRole::diagnostics)
+                                : type_.find("Generator") != std::string::npos
+                                    ? Typography::ui(15) : Typography::ui(12));
         status_.setText(message, false);
+    }
+    void timerCallback() override { refreshGeneratorMeters(); }
+    void configureGeneratorEditor()
+    {
+        generatorGoal_.addItem("Fixed tone", 1);
+        generatorGoal_.addItem("Frequency sweep", 2);
+        generatorGoal_.addItem("Musical sweep", 3);
+        generatorGoal_.addItem("Noise", 4);
+        generatorGoal_.addItem("Calibration signal", 5);
+        generatorWaveform_.addItemList({"Sine", "Square", "Triangle", "Sawtooth", "White Noise", "Pink Noise", "DC"}, 1);
+        generatorNoise_.addItem("White", 1);
+        generatorNoise_.addItem("Pink", 2);
+        generatorScale_.addItemList({"Chromatic", "Major", "Natural minor", "Major pentatonic",
+                                     "Minor pentatonic", "Custom"}, 1);
+        generatorCurve_.addItemList({"Linear", "Logarithmic", "Exponential"}, 1);
+        generatorCalibration_.addItem(juce::String::fromUTF8("Reference tone · 1 kHz sine"), 1);
+        generatorCalibration_.addItem("Pink-noise reference", 2);
+        generatorGoal_.setTitle("Signal goal");
+        generatorWaveform_.setTitle("Waveform");
+        generatorNoise_.setTitle("Noise color");
+        generatorScale_.setTitle("Musical scale");
+        generatorCurve_.setTitle("Sweep shape");
+        generatorCalibration_.setTitle("Calibration signal type");
+        generatorMute_.setButtonText("Mute output");
+        generatorMute_.setTitle("Mute generator output without stopping transport");
+        generatorMute_.setTooltip("Mutes this source while leaving its transport running.");
+        generatorMute_.onClick = [this]
+        {
+            if (!processor_) return;
+            const auto& parameters = processor_->parameters();
+            const auto muted = std::find_if(parameters.begin(), parameters.end(),
+                [](const auto& parameter) { return std::string_view(parameter.name) == "muted"; });
+            if (muted == parameters.end())
+            {
+                status("Mute is unavailable for this generator.");
+                return;
+            }
+            saveBase(static_cast<std::uint16_t>(std::distance(parameters.begin(), muted)),
+                     "audio.param.muted", generatorMute_.getToggleState() ? 1.0 : 0.0);
+        };
+        generatorGoalLabel_.setText("Start with a goal", juce::dontSendNotification);
+        generatorWaveformLabel_.setText("Waveform", juce::dontSendNotification);
+        generatorFrequencyLabel_.setText("Frequency", juce::dontSendNotification);
+        generatorStartLabel_.setText("Start Frequency", juce::dontSendNotification);
+        generatorEndLabel_.setText("End Frequency", juce::dontSendNotification);
+        generatorDurationLabel_.setText("Sweep Time", juce::dontSendNotification);
+        generatorLevelLabel_.setText(juce::String::fromUTF8("Output Level · target peak"), juce::dontSendNotification);
+        generatorNoiseLabel_.setText("Noise Color", juce::dontSendNotification);
+        generatorScaleLabel_.setText("Scale", juce::dontSendNotification);
+        generatorRootLabel_.setText("Root MIDI Note", juce::dontSendNotification);
+        generatorStepLabel_.setText("Step Time", juce::dontSendNotification);
+        generatorCurveLabel_.setText("Sweep Shape", juce::dontSendNotification);
+        generatorCalibrationLabel_.setText("Choose a digital reference", juce::dontSendNotification);
+        for (auto* label : {&generatorGoalLabel_, &generatorWaveformLabel_, &generatorFrequencyLabel_,
+                            &generatorStartLabel_, &generatorEndLabel_, &generatorDurationLabel_,
+                            &generatorLevelLabel_, &generatorNoiseLabel_, &generatorScaleLabel_,
+                            &generatorRootLabel_, &generatorStepLabel_})
+            label->setFont(Typography::ui(16, true));
+        generatorCurveLabel_.setFont(Typography::ui(16, true));
+        generatorCalibrationLabel_.setFont(Typography::ui(16, true));
+        const auto setupSlider = [this](juce::Slider& slider, const juce::String& title,
+                                        double minimum, double maximum, double interval, int decimals)
+        {
+            slider.setSliderStyle(juce::Slider::LinearHorizontal);
+            slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 82, 26);
+            slider.setRange(minimum, maximum, interval);
+            slider.setNumDecimalPlacesToDisplay(decimals);
+            slider.setTitle(title);
+            slider.onDragStart = [this] { taskDragging_ = true; };
+            slider.onValueChange = [this, &slider] { if (!taskDragging_) saveTaskSlider(slider); };
+            slider.onDragEnd = [this, &slider] { taskDragging_ = false; saveTaskSlider(slider); };
+        };
+        setupSlider(generatorFrequency_, "Frequency in hertz", 20, 20000, 0.1, 2);
+        setupSlider(generatorStart_, "Sweep start frequency in hertz", 20, 20000, 0.1, 2);
+        setupSlider(generatorEnd_, "Sweep end frequency in hertz", 20, 20000, 0.1, 2);
+        setupSlider(generatorDuration_, "Sweep time in seconds", 0.001, 3600, 0.001, 3);
+        setupSlider(generatorLevel_, "Output Level target peak in dBFS", -80, 12, 0.1, 1);
+        setupSlider(generatorRoot_, "Root MIDI note", 0, 127, 1, 0);
+        setupSlider(generatorStep_, "Musical sweep step time in seconds", 0.01, 10, 0.01, 2);
+        generatorGoal_.onChange = [this] { applyGeneratorGoal(generatorGoal_.getSelectedId()); };
+        generatorWaveform_.onChange = [this]
+        {
+            if (type_ == "Signal Generator" && generatorWaveform_.getSelectedId() > 0)
+                saveBase(audio::signalWaveform, "audio.param.waveform",
+                         generatorWaveform_.getSelectedId() - 1);
+            refreshGeneratorVisibility();
+        };
+        generatorNoise_.onChange = [this]
+        {
+            if (type_ == "Noise Generator" && generatorNoise_.getSelectedId() > 0)
+                saveBase(0, "audio.param.color", generatorNoise_.getSelectedId() - 1);
+            else if (type_ == "Signal Generator" && generatorGoal_.getSelectedId() == 4
+                     && generatorNoise_.getSelectedId() > 0)
+                saveBase(audio::signalWaveform, "audio.param.waveform",
+                         generatorNoise_.getSelectedId() + 3);
+        };
+        generatorScale_.onChange = [this]
+        {
+            if (type_ == "Signal Generator" && generatorScale_.getSelectedId() > 0)
+                saveBase(audio::signalScale, "audio.param.scale", generatorScale_.getSelectedId() - 1);
+        };
+        generatorCurve_.onChange = [this]
+        {
+            if (type_ == "Signal Generator" && generatorCurve_.getSelectedId() > 0)
+                saveBase(audio::signalSweepCurve, "audio.param.sweepCurve", generatorCurve_.getSelectedId() - 1);
+        };
+        generatorCalibration_.onChange = [this]
+        {
+            if (type_ != "Signal Generator" || generatorCalibration_.getSelectedId() == 0) return;
+            const auto pinkNoise = generatorCalibration_.getSelectedId() == 2;
+            saveBase(audio::signalMode, "audio.param.mode", 0);
+            saveBase(audio::signalWaveform, "audio.param.waveform", pinkNoise ? 5 : 0);
+            if (!pinkNoise) saveBase(audio::signalFrequency, "audio.param.frequencyHz", 1000);
+            status("Digital reference selected. This is not voltage or SPL calibration.");
+        };
+        advancedToggle_.setButtonText("Advanced");
+        automationToggle_.setButtonText("Automation");
+        developerToggle_.setButtonText("Developer");
+        advancedToggle_.setTitle("Show or hide advanced signal controls");
+        automationToggle_.setTitle("Show or hide automation controls");
+        developerToggle_.setTitle("Show or hide developer details");
+        advancedToggle_.onClick = [this] { advancedExpanded_ = !advancedExpanded_; updateTaskDisclosures(); };
+        automationToggle_.onClick = [this] { automationExpanded_ = !automationExpanded_; updateTaskDisclosures(); };
+        developerToggle_.onClick = [this] { developerExpanded_ = !developerExpanded_; updateTaskDisclosures(); };
+        developerDetails_.setText("Developer details show processor parameter keys and engine ranges. "
+                                  "Editing those values still uses the normal validated project and runtime paths.", false);
+        developerDetails_.setReadOnly(true);
+        developerDetails_.setMultiLine(true, true);
+        generatorPeak_.setText(juce::String::fromUTF8("Sample Peak  —  waiting"), juce::dontSendNotification);
+        generatorRms_.setText(juce::String::fromUTF8("Measured RMS  —  waiting"), juce::dontSendNotification);
+        generatorMeterState_.setText("Waiting for generator samples", juce::dontSendNotification);
+        generatorSafety_.setText("Connect to Main Output in the canvas. Start is explicit. dBFS is digital, not voltage or SPL.",
+                                 juce::dontSendNotification);
+        generatorPeak_.setTitle("Measured sample peak in dBFS over the latest 50 milliseconds");
+        generatorRms_.setTitle("Measured RMS in dBFS over a rolling 300 millisecond window");
+        generatorMeterState_.setTitle("Generator measurement state");
+        generatorSafety_.setTitle("Digital signal and routing safety note");
+        generatorPreview_.setName("Generator waveform and sweep preview");
+        generatorMeter_.setName("Measured sample peak and RMS level meter");
+        for (auto* toggle : {&advancedToggle_, &automationToggle_, &developerToggle_})
+            toggle->setClickingTogglesState(true);
+        for (auto* label : {&generatorMeterState_, &generatorPeak_, &generatorRms_, &generatorSafety_})
+        {
+            label->setColour(juce::Label::textColourId, ShellTheme::textPrimary());
+        }
+        generatorMeterState_.setFont(Typography::ui(15.5f, true));
+        generatorPeak_.setFont(Typography::numeric(18));
+        generatorRms_.setFont(Typography::numeric(18));
+        generatorSafety_.setFont(Typography::ui(15));
+    }
+
+    void applyGeneratorGoal(int goal)
+    {
+        if (type_ != "Signal Generator" || goal < 1 || goal > 5 || !editable()) return;
+        const auto* node = current();
+        const auto valueFor = [node](const char* key, double fallback)
+        {
+            if (!node) return fallback;
+            const auto found = node->parameters.find(key);
+            if (found == node->parameters.end()) return fallback;
+            if (const auto* number = std::get_if<double>(&found->second)) return *number;
+            return fallback;
+        };
+        if (goal >= 1 && goal <= 3)
+        {
+            const auto waveform = static_cast<int>(valueFor("audio.param.waveform", 0));
+            if (waveform == 4 || waveform == 5)
+                saveBase(audio::signalWaveform, "audio.param.waveform", 0);
+            saveBase(audio::signalMode, "audio.param.mode", goal - 1);
+        }
+        else if (goal == 4)
+        {
+            saveBase(audio::signalMode, "audio.param.mode", 0);
+            saveBase(audio::signalWaveform, "audio.param.waveform",
+                     std::clamp(valueFor("audio.param.waveform", 4), 4.0, 5.0));
+        }
+        else
+        {
+            generatorCalibration_.setSelectedId(0, juce::dontSendNotification);
+            status("Choose a digital reference tone or pink-noise reference. No voltage or SPL calibration is implied.");
+            refreshGeneratorVisibility();
+            resized();
+        }
+    }
+
+    void saveTaskSlider(juce::Slider& slider)
+    {
+        if (type_ == "Signal Generator")
+        {
+            if (&slider == &generatorFrequency_) saveBase(audio::signalFrequency, "audio.param.frequencyHz", slider.getValue());
+            else if (&slider == &generatorStart_) saveBase(audio::signalStartFrequency, "audio.param.startFrequencyHz", slider.getValue());
+            else if (&slider == &generatorEnd_) saveBase(audio::signalEndFrequency, "audio.param.endFrequencyHz", slider.getValue());
+            else if (&slider == &generatorDuration_) saveBase(audio::signalDuration, "audio.param.durationSeconds", slider.getValue());
+            else if (&slider == &generatorLevel_) saveBase(audio::signalLevelDb, "audio.param.levelDb", slider.getValue());
+            else if (&slider == &generatorRoot_) saveBase(audio::signalRootMidi, "audio.param.rootMidi", slider.getValue());
+            else if (&slider == &generatorStep_) saveBase(audio::signalStepSeconds, "audio.param.stepSeconds", slider.getValue());
+        }
+        else if (type_ == "Noise Generator" && &slider == &generatorLevel_)
+            saveBase(1, "audio.param.levelDbRms", slider.getValue());
+    }
+
+    void refreshGeneratorVisibility()
+    {
+        const auto* node = current();
+        const bool generator = valid_ && node
+            && (type_ == "Signal Generator" || type_ == "Noise Generator");
+        generatorGoalLabel_.setVisible(generator && type_ == "Signal Generator");
+        generatorGoal_.setVisible(generator && type_ == "Signal Generator");
+        const int goal = generatorGoal_.getSelectedId();
+        const bool noiseGoal = type_ == "Noise Generator" || goal == 4;
+        const bool sweep = goal == 2;
+        const bool musical = goal == 3;
+        const bool fixed = !sweep && !musical;
+        generatorWaveformLabel_.setVisible(generator && type_ == "Signal Generator" && !noiseGoal);
+        generatorWaveform_.setVisible(generatorWaveformLabel_.isVisible());
+        generatorNoiseLabel_.setVisible(generator && noiseGoal);
+        generatorNoise_.setVisible(generatorNoiseLabel_.isVisible());
+        generatorCurveLabel_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorCurve_.setVisible(generatorCurveLabel_.isVisible());
+        generatorCalibrationLabel_.setVisible(generator && type_ == "Signal Generator" && goal == 5);
+        generatorCalibration_.setVisible(generatorCalibrationLabel_.isVisible());
+        generatorFrequencyLabel_.setVisible(generator && type_ == "Signal Generator" && fixed && !noiseGoal);
+        generatorFrequency_.setVisible(generator && type_ == "Signal Generator" && fixed && !noiseGoal);
+        generatorStartLabel_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorStart_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorEndLabel_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorEnd_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorDurationLabel_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorDuration_.setVisible(generator && type_ == "Signal Generator" && sweep);
+        generatorScaleLabel_.setVisible(generator && musical);
+        generatorScale_.setVisible(generator && musical);
+        generatorRootLabel_.setVisible(generator && musical);
+        generatorRoot_.setVisible(generator && musical);
+        generatorStepLabel_.setVisible(generator && musical);
+        generatorStep_.setVisible(generator && musical);
+        generatorLevelLabel_.setVisible(generator);
+        generatorLevel_.setVisible(generator);
+        generatorPreview_.setVisible(generator);
+        generatorMeter_.setVisible(generator);
+        generatorPeak_.setVisible(generator);
+        generatorRms_.setVisible(generator);
+        generatorMeterState_.setVisible(generator);
+        generatorMute_.setVisible(generator);
+        generatorSafety_.setVisible(generator);
+        advancedToggle_.setVisible(generator);
+        automationToggle_.setVisible(generator);
+        developerToggle_.setVisible(generator);
+        developerDetails_.setVisible(generator && developerExpanded_);
+        frequencyEntryLabel_.setVisible(generator && type_ == "Signal Generator" && fixed && !noiseGoal);
+        frequencyEntry_.setVisible(frequencyEntryLabel_.isVisible());
+        frequencyApply_.setVisible(frequencyEntryLabel_.isVisible());
+        scaleIntervalsLabel_.setVisible(generator && musical && generatorScale_.getSelectedId() == 6);
+        scaleIntervals_.setVisible(scaleIntervalsLabel_.isVisible());
+        scaleApply_.setVisible(scaleIntervalsLabel_.isVisible());
+        const auto waveform = type_ == "Signal Generator" ? generatorWaveform_.getSelectedId() - 1 : 0;
+        const auto mode = type_ == "Signal Generator" && (goal == 2 || goal == 3) ? goal - 1 : 0;
+        generatorPreview_.setSignal(mode, waveform, static_cast<float>(generatorStart_.getValue()),
+                                    static_cast<float>(generatorEnd_.getValue()),
+                                    generatorCurve_.getSelectedId() - 1);
+        for (auto& row : rows_)
+        {
+            row->setSections(!generator || advancedExpanded_, !generator || automationExpanded_);
+            row->setVisible(row->preferredHeight() > 0);
+        }
+        controlLabel_.setVisible(valid_ && controlTarget_.getNumItems() > 0
+                                 && (!generator || automationExpanded_));
+        controlTarget_.setVisible(controlLabel_.isVisible());
+        controlSource_.setVisible(controlLabel_.isVisible());
+        controlSave_.setVisible(controlLabel_.isVisible() && controlSource_.getSelectedId() != 1);
+        updateControlVisibility();
+    }
+
+    void refreshGeneratorMeters()
+    {
+        if (!owner_.onReadGeneratorMeters || (type_ != "Signal Generator" && type_ != "Noise Generator")
+            || selected_ == 0) return;
+        const auto meter = owner_.onReadGeneratorMeters(selected_);
+        const auto* node = current();
+        const auto muted = node && taskValue(*node, "audio.param.muted", 0) >= 0.5;
+        const auto prefix = muted ? juce::String::fromUTF8("Muted · ") : juce::String{};
+        generatorMeterState_.setText(prefix + meter.state,
+                                     juce::dontSendNotification);
+        if (type_ == "Noise Generator")
+            generatorMeterState_.setText(prefix + meter.state
+                                             + juce::String::fromUTF8(" · RMS is primary; noise peaks vary"),
+                                         juce::dontSendNotification);
+        generatorPeak_.setText("Sample Peak  " + (meter.samplePeakValid
+            ? juce::String(meter.samplePeakDbfs, 1) + " dBFS"
+            : juce::String::fromUTF8("—")), juce::dontSendNotification);
+        generatorRms_.setText("Measured RMS  " + (meter.rmsValid
+            ? juce::String(meter.rmsDbfs, 1) + " dBFS"
+            : juce::String::fromUTF8("—")), juce::dontSendNotification);
+        generatorMeter_.setLevels(meter.samplePeakDbfs, meter.samplePeakValid,
+                                  meter.rmsDbfs, meter.rmsValid);
+    }
+    double taskValue(const domain::Node& node, const char* key, double fallback) const
+    {
+        const auto found = node.parameters.find(key);
+        if (found == node.parameters.end()) return fallback;
+        if (const auto* number = std::get_if<double>(&found->second)) return *number;
+        return fallback;
+    }
+    void refreshTaskEditor()
+    {
+        const auto* node = current();
+        const bool signal = valid_ && node && type_ == "Signal Generator";
+        const bool noise = valid_ && node && type_ == "Noise Generator";
+        if (!signal && !noise)
+        {
+            refreshGeneratorVisibility();
+            return;
+        }
+        if (signal)
+        {
+            const auto mode = static_cast<int>(taskValue(*node, "audio.param.mode", 0));
+            const auto waveform = static_cast<int>(taskValue(*node, "audio.param.waveform", 0));
+            const auto goal = mode == 1 ? 2 : mode == 2 ? 3 : waveform == 4 || waveform == 5 ? 4 : 1;
+            generatorGoal_.setSelectedId(goal, juce::dontSendNotification);
+            generatorWaveform_.setSelectedId(waveform + 1, juce::dontSendNotification);
+            generatorFrequency_.setValue(taskValue(*node, "audio.param.frequencyHz", 440), juce::dontSendNotification);
+            generatorStart_.setValue(taskValue(*node, "audio.param.startFrequencyHz", 20), juce::dontSendNotification);
+            generatorEnd_.setValue(taskValue(*node, "audio.param.endFrequencyHz", 20000), juce::dontSendNotification);
+            generatorDuration_.setValue(taskValue(*node, "audio.param.durationSeconds", 5), juce::dontSendNotification);
+            generatorLevel_.setValue(taskValue(*node, "audio.param.levelDb", -60), juce::dontSendNotification);
+            generatorScale_.setSelectedId(static_cast<int>(taskValue(*node, "audio.param.scale", 0)) + 1,
+                                          juce::dontSendNotification);
+            generatorCurve_.setSelectedId(static_cast<int>(taskValue(*node, "audio.param.sweepCurve", 1)) + 1,
+                                          juce::dontSendNotification);
+            generatorRoot_.setValue(taskValue(*node, "audio.param.rootMidi", 36), juce::dontSendNotification);
+            generatorStep_.setValue(taskValue(*node, "audio.param.stepSeconds", 0.5), juce::dontSendNotification);
+            generatorNoise_.setSelectedId(waveform >= 4 ? waveform - 3 : 1, juce::dontSendNotification);
+        }
+        else
+        {
+            generatorNoise_.setSelectedId(static_cast<int>(taskValue(*node, "audio.param.color", 0)) + 1,
+                                          juce::dontSendNotification);
+            generatorLevel_.setValue(taskValue(*node, "audio.param.levelDbRms", -60), juce::dontSendNotification);
+        }
+        generatorMute_.setToggleState(taskValue(*node, "audio.param.muted", 0) >= 0.5,
+                                      juce::dontSendNotification);
+        refreshGeneratorVisibility();
+    }
+    void updateTaskDisclosures()
+    {
+        advancedToggle_.setButtonText(juce::String::fromUTF8(advancedExpanded_ ? "▾ Advanced" : "▸ Advanced"));
+        automationToggle_.setButtonText(juce::String::fromUTF8(automationExpanded_ ? "▾ Automation" : "▸ Automation"));
+        developerToggle_.setButtonText(juce::String::fromUTF8(developerExpanded_ ? "▾ Developer" : "▸ Developer"));
+        advancedToggle_.setToggleState(advancedExpanded_, juce::dontSendNotification);
+        automationToggle_.setToggleState(automationExpanded_, juce::dontSendNotification);
+        developerToggle_.setToggleState(developerExpanded_, juce::dontSendNotification);
+        if (processor_)
+        {
+            juce::String details = "Node " + juce::String(static_cast<juce::int64>(selected_))
+                + juce::String::fromUTF8(" · audio.type = ") + type_ + "\n";
+            for (const auto& spec : processor_->parameters())
+                details += juce::String(spec.name) + " [" + juce::String(spec.minimum)
+                    + ", " + juce::String(spec.maximum) + "]\n";
+            developerDetails_.setText(details, false);
+        }
+        refreshGeneratorVisibility();
+        resized();
     }
     void setNode(std::uint64_t id)
     {
@@ -511,8 +1023,13 @@ public:
                         valid_ = true;
                         const bool routing = type_ == "Input" || type_ == "Output" || type_ == "Sum";
                         bypass_.setEnabled(!routing);
-                        title_.setText(juce::String(selected->name) + (routing ? " - routing utility" : " - module instance"),
+                        title_.setText(juce::String(selected->name)
+                                           + (routing ? " - routing utility"
+                                              : type_.find("Generator") != std::string::npos ? "" : " - module instance"),
                                        juce::dontSendNotification);
+                        title_.setFont(type_.find("Generator") != std::string::npos
+                                           ? Typography::ui(18, true)
+                                           : Typography::font(TextRole::panelTitle));
                         const auto bypass = selected->parameters.find("audio.bypass");
                         bypass_.setToggleState(bypass != selected->parameters.end() && std::get<bool>(bypass->second),
                                                juce::dontSendNotification);
@@ -525,7 +1042,7 @@ public:
                                        : type_ == "Analyzer" ? "Analysis module instance; audio passes through unchanged while shared visualizations observe it."
                                                    : type_ == "DC Generator" ? "Zero-input DC source, exact -1.0 to +1.0. Check connected equipment before Start; values are not an acoustic safety limit."
                                                    : type_.find("Generator") != std::string::npos
-                                                       ? "Zero-input source. Quiet default; no audio starts until explicit Start. Check output level and connected equipment before raising gain."
+                                                       ? "Ready. No audio until Start; check your listening level before raising Output Level."
                                                    : "Module instance: saved base values are shown; live automation/override state is owned by the runtime.");
                     }
                 }
@@ -544,10 +1061,11 @@ public:
         compile_.setVisible(script_);
         load_.setVisible(script_);
         revert_.setVisible(script_);
-        bypass_.setVisible(valid_);
-        explanation_.setVisible(valid_);
-        scheduleLabel_.setVisible(valid_ && !rows_.empty());
-        seconds_.setVisible(valid_ && !rows_.empty());
+        const bool taskGenerator = valid_ && (type_ == "Signal Generator" || type_ == "Noise Generator");
+        bypass_.setVisible(valid_ && !taskGenerator);
+        explanation_.setVisible(valid_ && !taskGenerator);
+        scheduleLabel_.setVisible(valid_ && !rows_.empty() && (!taskGenerator || automationExpanded_));
+        seconds_.setVisible(valid_ && !rows_.empty() && (!taskGenerator || automationExpanded_));
         const auto* selectedNode = current();
         const bool signalGenerator = selectedNode && valid_ && type_ == "Signal Generator";
         frequencyEntryLabel_.setVisible(signalGenerator);
@@ -585,6 +1103,8 @@ public:
             scaleEditorBoundNode_ = 0;
             scaleEditorBoundPatch_ = 0;
         }
+        refreshTaskEditor();
+        refreshGeneratorMeters();
         resized();
     }
     void resized() override
@@ -598,8 +1118,14 @@ public:
         title_.setBounds(4, y, width - 8, 28); y += 32;
         if (valid_)
         {
-            bypass_.setBounds(4, y, width - 8, 28); y += 32;
-            explanation_.setBounds(4, y, width - 8, 84); y += 88;
+            if (bypass_.isVisible())
+            {
+                bypass_.setBounds(4, y, width - 8, 28); y += 32;
+            }
+            if (explanation_.isVisible())
+            {
+                explanation_.setBounds(4, y, width - 8, 84); y += 88;
+            }
         }
         if (script_)
         {
@@ -609,6 +1135,91 @@ public:
             compile_.setBounds(4, y, (width - 12) / 2, 28);
             load_.setBounds(8 + (width - 12) / 2, y, (width - 12) / 2, 28); y += 36;
             revert_.setBounds(4, y, width - 8, 28); y += 36;
+        }
+        if (generatorGoal_.isVisible())
+        {
+            generatorGoalLabel_.setBounds(4, y, width - 8, 22); y += 22;
+            generatorGoal_.setBounds(4, y, width - 8, 30); y += 36;
+        }
+        if (generatorWaveform_.isVisible())
+        {
+            generatorWaveformLabel_.setBounds(4, y, width - 8, 22); y += 22;
+            generatorWaveform_.setBounds(4, y, width - 8, 30); y += 36;
+        }
+        if (generatorNoise_.isVisible())
+        {
+            generatorNoiseLabel_.setBounds(4, y, width - 8, 22); y += 22;
+            generatorNoise_.setBounds(4, y, width - 8, 30); y += 36;
+        }
+        const auto placeTaskSlider = [&](juce::Label& label, juce::Component& control)
+        {
+            if (!label.isVisible()) return;
+            label.setBounds(4, y, width - 8, 21); y += 21;
+            control.setBounds(4, y, width - 8, 29); y += 34;
+        };
+        placeTaskSlider(generatorFrequencyLabel_, generatorFrequency_);
+        if (generatorStartLabel_.isVisible() && generatorEndLabel_.isVisible())
+        {
+            const auto cell = (width - 12) / 2;
+            generatorStartLabel_.setBounds(4, y, cell, 21);
+            generatorStart_.setBounds(4, y + 21, cell, 29);
+            generatorEndLabel_.setBounds(8 + cell, y, cell, 21);
+            generatorEnd_.setBounds(8 + cell, y + 21, cell, 29);
+            y += 58;
+        }
+        placeTaskSlider(generatorDurationLabel_, generatorDuration_);
+        placeTaskSlider(generatorScaleLabel_, generatorScale_);
+        placeTaskSlider(generatorRootLabel_, generatorRoot_);
+        placeTaskSlider(generatorStepLabel_, generatorStep_);
+        if (generatorCurveLabel_.isVisible())
+        {
+            generatorCurveLabel_.setBounds(4, y, width - 8, 21); y += 21;
+            generatorCurve_.setBounds(4, y, width - 8, 29); y += 34;
+        }
+        if (generatorCalibrationLabel_.isVisible())
+        {
+            generatorCalibrationLabel_.setBounds(4, y, width - 8, 21); y += 21;
+            generatorCalibration_.setBounds(4, y, width - 8, 29); y += 34;
+        }
+        placeTaskSlider(generatorLevelLabel_, generatorLevel_);
+        if (generatorPreview_.isVisible())
+        {
+            generatorPreview_.setBounds(4, y, width - 8, 102); y += 108;
+            generatorMeter_.setBounds(4, y, width - 8, 44); y += 50;
+            generatorMeterState_.setBounds(4, y, width - 8, 24); y += 25;
+            if (type_ == "Noise Generator")
+            {
+                generatorRms_.setBounds(4, y, width - 8, 28);
+                generatorPeak_.setBounds(4, y + 29, width - 8, 26);
+            }
+            else
+            {
+                generatorPeak_.setBounds(4, y, width - 8, 26);
+                generatorRms_.setBounds(4, y + 27, width - 8, 26);
+            }
+            y += 57;
+        }
+        if (generatorSafety_.isVisible())
+        {
+            generatorSafety_.setBounds(4, y, width - 8, 40); y += 44;
+        }
+        if (generatorMute_.isVisible())
+        {
+            generatorMute_.setBounds(4, y, width - 8, 28); y += 34;
+        }
+        if (advancedToggle_.isVisible())
+        {
+            auto line = juce::Rectangle<int>(4, y, width - 8, 28);
+            const auto cell = line.getWidth() / 3;
+            advancedToggle_.setBounds(line.removeFromLeft(cell - 2));
+            line.removeFromLeft(3);
+            automationToggle_.setBounds(line.removeFromLeft(cell - 2));
+            line.removeFromLeft(3);
+            developerToggle_.setBounds(line); y += 34;
+        }
+        if (developerDetails_.isVisible())
+        {
+            developerDetails_.setBounds(4, y, width - 8, 48); y += 52;
         }
         if (frequencyEntry_.isVisible())
         {
@@ -674,8 +1285,9 @@ public:
         }
         for (const auto& row : rows_)
         {
-            row->setBounds(4, y, width - 8, 166);
-            y += 172;
+            const auto height = row->preferredHeight();
+            row->setBounds(4, y, width - 8, height);
+            y += height + 6;
         }
         content_.setSize(width, std::max(y, bounds.getHeight()));
     }
@@ -690,7 +1302,8 @@ private:
             : owner_(owner), index_(index), minimum_(spec.minimum), maximum_(spec.maximum), key_(std::move(key))
         {
             const auto unit = parameterUnit(spec.name);
-            label_.setText(juce::String(spec.name) + (unit.isEmpty() ? "" : " (" + unit + ")")
+            label_.setText(displayParameterName(owner_.type_, spec.name)
+                               + (unit.isEmpty() ? "" : " (" + unit + ")")
                                + "  [" + juce::String(spec.minimum) + " .. "
                                + juce::String(spec.maximum) + "]  saved base",
                            juce::dontSendNotification);
@@ -747,26 +1360,48 @@ private:
             discrete_.setVisible(discreteMode_);
             base_.setVisible(!discreteMode_);
         }
+        void setSections(bool advanced, bool automation)
+        {
+            advanced_ = advanced;
+            automationSection_ = automation;
+            label_.setVisible(advanced_);
+            base_.setVisible(advanced_ && !discreteMode_);
+            discrete_.setVisible(advanced_ && discreteMode_);
+            targetLabel_.setVisible(automationSection_);
+            target_.setVisible(automationSection_);
+            override_.setVisible(automationSection_);
+            release_.setVisible(automationSection_);
+            automation_.setVisible(automationSection_);
+            disable_.setVisible(automationSection_);
+            schedule_.setVisible(automationSection_);
+        }
+        int preferredHeight() const noexcept
+        { return (advanced_ ? 54 : 0) + (automationSection_ ? 116 : 0); }
         void resized() override
         {
-            auto bounds = getLocalBounds();
-            label_.setBounds(bounds.removeFromTop(24));
-            const auto baseBounds = bounds.removeFromTop(30);
-            base_.setBounds(baseBounds);
-            discrete_.setBounds(baseBounds);
+            int y = 0;
+            if (advanced_)
+            {
+                label_.setBounds(0, y, getWidth(), 24); y += 24;
+                const auto baseBounds = juce::Rectangle<int>(0, y, getWidth(), 30);
+                base_.setBounds(baseBounds);
+                discrete_.setBounds(baseBounds); y += 30;
+            }
+            if (!automationSection_) return;
+            auto bounds = juce::Rectangle<int>(0, y, getWidth(), getHeight() - y);
             auto targetLine = bounds.removeFromTop(26);
             target_.setBounds(targetLine.removeFromRight(std::min(110, targetLine.getWidth() / 2)));
             targetLabel_.setBounds(targetLine);
-            bounds.removeFromTop(4);
-            auto line = bounds.removeFromTop(26);
+            bounds.removeFromTop(3);
+            auto line = bounds.removeFromTop(24);
             override_.setBounds(line.removeFromLeft(line.getWidth() / 2).reduced(1, 0));
             release_.setBounds(line.reduced(1, 0));
             bounds.removeFromTop(3);
-            line = bounds.removeFromTop(26);
+            line = bounds.removeFromTop(24);
             automation_.setBounds(line.removeFromLeft(line.getWidth() / 2).reduced(1, 0));
             disable_.setBounds(line.reduced(1, 0));
             bounds.removeFromTop(3);
-            schedule_.setBounds(bounds.removeFromTop(24));
+            schedule_.setBounds(bounds.removeFromTop(22));
         }
     private:
         void apply(audio::ParameterAction action, bool scheduled)
@@ -784,7 +1419,7 @@ private:
         std::uint16_t index_{};
         double minimum_{}, maximum_{};
         std::string key_;
-        bool dragging_{}, discreteMode_{};
+        bool dragging_{}, discreteMode_{}, advanced_{true}, automationSection_{true};
         juce::Label label_, targetLabel_;
         juce::Slider base_;
         juce::ComboBox discrete_;
@@ -1209,17 +1844,31 @@ private:
     std::optional<std::string> savedSource_;
     std::map<std::pair<std::uint64_t, std::uint64_t>, Draft> drafts_;
     std::map<std::pair<std::uint64_t, std::uint64_t>, Draft> scaleDrafts_;
-    bool valid_{}, script_{}, loadingSource_{}, loadingScale_{};
+    bool valid_{}, script_{}, loadingSource_{}, loadingScale_{}, taskDragging_{};
+    bool advancedExpanded_{}, automationExpanded_{}, developerExpanded_{};
     juce::Component content_;
     juce::Viewport viewport_;
     juce::TextEditor status_, source_, seconds_;
     juce::TextEditor frequencyEntry_, scaleIntervals_, controlOffset_, controlDepth_, controlRate_;
     juce::TextEditor controlAttack_, controlHold_, controlRelease_, controlMinimum_, controlMaximum_, controlScript_;
     juce::Label title_, explanation_, scheduleLabel_, sourceLabel_, frequencyEntryLabel_, scaleIntervalsLabel_, controlLabel_;
+    juce::Label generatorGoalLabel_, generatorWaveformLabel_, generatorFrequencyLabel_, generatorStartLabel_,
+        generatorEndLabel_, generatorDurationLabel_, generatorLevelLabel_, generatorNoiseLabel_,
+        generatorScaleLabel_, generatorRootLabel_, generatorStepLabel_, generatorCurveLabel_,
+        generatorCalibrationLabel_, generatorPeak_, generatorRms_,
+        generatorMeterState_, generatorSafety_;
+    juce::TextEditor developerDetails_;
     juce::ToggleButton bypass_{"Saved bypass (dry for effects; silence for sources)"};
-    juce::ComboBox examples_, controlTarget_, controlSource_;
+    juce::ToggleButton generatorMute_{"Mute output"};
+    juce::ComboBox examples_, controlTarget_, controlSource_, generatorGoal_, generatorWaveform_,
+        generatorNoise_, generatorScale_, generatorCurve_, generatorCalibration_;
     juce::TextButton compile_{"Compile / Apply"}, load_{"Load Source..."}, revert_{"Revert to saved source"},
-        frequencyApply_{"Set frequency"}, scaleApply_{"Apply scale"}, controlSave_{"Save typed control mapping"};
+        frequencyApply_{"Set Frequency"}, scaleApply_{"Apply scale"}, controlSave_{"Save typed control mapping"},
+        advancedToggle_, automationToggle_, developerToggle_;
+    juce::Slider generatorFrequency_, generatorStart_, generatorEnd_, generatorDuration_, generatorLevel_,
+        generatorRoot_, generatorStep_;
+    GeneratorPreview generatorPreview_;
+    GeneratorMeter generatorMeter_;
     std::shared_ptr<const script::Program> program_;
     std::unique_ptr<audio::AudioNode> processor_;
     std::vector<std::unique_ptr<ParameterRow>> rows_;

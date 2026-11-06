@@ -49,40 +49,40 @@ juce::String unavailable() { return juce::String::charToString(0x2014); }
 
 juce::Font Typography::ui(float height, bool semibold)
 {
-    return juce::Font(options(semibold ? faces().semibold : faces().regular, std::max(10.0f, height)));
+    return juce::Font(options(semibold ? faces().semibold : faces().regular, std::max(13.0f, height)));
 }
 juce::Font Typography::numeric(float height)
 {
-    return juce::Font(options(faces().semibold, std::max(11.0f, height))
+    return juce::Font(options(faces().semibold, std::max(14.0f, height))
         .withFeatureEnabled("tnum").withFeatureEnabled("zero"));
 }
 juce::Font Typography::code(float height, bool bold, bool italic)
 {
     return juce::Font(options(italic ? faces().monoItalic : bold ? faces().monoBold : faces().mono,
-                              height, true).withFeatureDisabled("liga").withFeatureDisabled("calt"));
+                              std::max(13.0f, height), true).withFeatureDisabled("liga").withFeatureDisabled("calt"));
 }
 juce::Font Typography::font(TextRole role)
 {
     switch (role)
     {
-        case TextRole::applicationTitle: return ui(15, true);
-        case TextRole::panelTitle: case TextRole::nodeTitle: return ui(12, true);
+        case TextRole::applicationTitle: return ui(17, true);
+        case TextRole::panelTitle: case TextRole::nodeTitle: return ui(15, true);
         case TextRole::sectionTitle:
-            return juce::Font(options(faces().semibold, 10.5f).withFeatureEnabled("case")).withExtraKerningFactor(0.06f);
-        case TextRole::value: return numeric(13);
-        case TextRole::meterReadout: return numeric(15);
+            return juce::Font(options(faces().semibold, 14).withFeatureEnabled("case")).withExtraKerningFactor(0.04f);
+        case TextRole::value: return numeric(16);
+        case TextRole::meterReadout: return numeric(18);
         case TextRole::meterScale:
-            return juce::Font(options(faces().medium, 9.5f).withFeatureEnabled("tnum"));
-        case TextRole::code: return code();
-        case TextRole::diagnostics: return code(12);
-        case TextRole::body: return ui(14);
+            return juce::Font(options(faces().medium, 13).withFeatureEnabled("tnum"));
+        case TextRole::code: return code(14);
+        case TextRole::diagnostics: return code(13.5f);
+        case TextRole::body: return ui(15);
         case TextRole::status:
-            return juce::Font(options(faces().medium, 11).withFeatureEnabled("tnum").withFeatureEnabled("zero"));
-        case TextRole::tooltip: return ui(11.5f);
-        case TextRole::menu: return ui(12);
-        case TextRole::label: case TextRole::unit: return juce::Font(options(faces().medium, 10.5f));
+            return juce::Font(options(faces().medium, 14).withFeatureEnabled("tnum").withFeatureEnabled("zero"));
+        case TextRole::tooltip: return ui(14);
+        case TextRole::menu: return ui(14);
+        case TextRole::label: case TextRole::unit: return juce::Font(options(faces().medium, 13.5f));
     }
-    return ui(12);
+    return ui(14);
 }
 bool Typography::bundledFontsAvailable()
 {
@@ -97,8 +97,8 @@ bool Typography::tabularFiguresAvailable()
 }
 TextDetail Typography::detail(float zoom) noexcept
 {
-    return zoom < 0.35f ? TextDetail::glyph : zoom < 0.6f ? TextDetail::overview
-        : zoom < 1.0f ? TextDetail::compact : TextDetail::full;
+    return zoom < 0.35f ? TextDetail::glyph : zoom < 0.8f ? TextDetail::overview
+        : zoom < 1.1f ? TextDetail::compact : TextDetail::full;
 }
 float Typography::canvasHeight(float logical, float zoom, float minimum) noexcept
 {

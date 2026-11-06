@@ -13,7 +13,7 @@ namespace val::presentation
 class NodeView final
 {
 public:
-    static constexpr float width = 168.0f, height = 88.0f;
+    static constexpr float width = 184.0f, height = 100.0f, portY = 70.0f;
     [[nodiscard]] static juce::Rectangle<float> bounds(domain::Position position);
     [[nodiscard]] static juce::Point<float> port(domain::Position position, domain::Port direction);
     static void paint(juce::Graphics& graphics, const domain::Node& node,

@@ -38,6 +38,10 @@ void testSettings(const TestDirectory& directory)
     require(store.save(value).succeeded, "Write valid preferences.");
     auto loaded = store.load();
     require(loaded.state == SettingsLoadState::loaded && loaded.value == value, "Preferences round-trip.");
+    const Settings scaledWindow{1097, 577, false};
+    require(store.save(scaledWindow).succeeded && store.load().value == scaledWindow,
+            "A positive logical work-area size at 175% Windows scaling persists without the legacy 800x600 floor.");
+    require(store.save(value).succeeded, "Restore regular window preference fixture.");
     Settings audioValue = value;
     audioValue.audioSetup = AudioSetupPreference{AudioBackendKind::asio, "Test driver", "Test driver", 48000, 128, 2, 2, {4, 5}, {6, 7}};
     require(store.save(audioValue).succeeded && store.load().value == audioValue,
@@ -55,22 +59,22 @@ void testSettings(const TestDirectory& directory)
     auto migrated = store.load();
     require(migrated.state == SettingsLoadState::loaded && migrated.value.audioSetup->backend == AudioBackendKind::coreAudio
             && migrated.value.audioSetup->inputChannelIndices.empty()
-            && migrated.value.audioSetup->outputChannelIndices == std::vector<int>{0, 1, 2, 3},
-            "Legacy counts migrate explicitly to first-N indices without changing CoreAudio's numeric identity.");
+            && migrated.value.audioSetup->outputChannels == 4
+            && migrated.value.audioSetup->outputChannelIndices.empty(),
+            "Legacy channel counts are retained without inventing exact channel assignments or changing CoreAudio's numeric identity.");
     require(store.save(migrated.value).succeeded && store.load().value == migrated.value
-            && file.loadFileAsString().contains("outputChannelIndices"), "Migration persists explicit channel identities on the next save.");
+            && file.loadFileAsString().contains("outputChannelIndices"), "Migration persists the unassigned channel map on the next save.");
     require(store.save(value).succeeded, "Optional audio preferences remain compatible with window-only settings.");
     const auto original = file.loadFileAsString();
-    require(!store.save({1, 1, true}).succeeded && file.loadFileAsString() == original,
-            "Invalid save preserves original.");
+    require(!store.save({0, 0, true}).succeeded && file.loadFileAsString() == original,
+            "Nonpositive window bounds are invalid and preserve the original.");
     for (const auto* invalid : {
              "{", R"({"version":99})",
              R"({"version":1,"windowWidth":"1200","windowHeight":800,"inspectorVisible":true})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":1})",
-             R"({"version":1,"windowWidth":1200,"windowHeight":1,"inspectorVisible":true})",
+             R"({"version":1,"windowWidth":1200,"windowHeight":0,"inspectorVisible":true})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[2,2]}})",
-             R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[]}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":4,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2,"outputChannelIndices":[0,"1"]}})",
              R"({"version":1,"windowWidth":1200,"windowHeight":800,"inspectorVisible":true,"audioSetup":{"backend":99,"inputName":"","outputName":"Device","sampleRate":48000,"bufferFrames":128,"inputChannels":0,"outputChannels":2}})"})
     {

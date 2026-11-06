@@ -28,15 +28,16 @@ class GraphEdit final : public Command
 public:
     GraphEdit(domain::Graph& graph, std::string label, domain::Graph alternate,
               std::vector<domain::GraphId> nodes, std::vector<domain::GraphId> connections,
-              domain::GraphId& activePatch)
+              domain::GraphId& activePatch, std::vector<domain::GraphId> endpoints = {})
         : graph_(graph), label_(std::move(label)), alternate_(std::move(alternate)),
-          nodes_(std::move(nodes)), connections_(std::move(connections)),
+          nodes_(std::move(nodes)), endpoints_(std::move(endpoints)), connections_(std::move(connections)),
           activePatch_(activePatch), patch_(activePatch) {}
 
     std::string_view name() const noexcept override { return label_; }
     Result execute() override
     {
         exchange(graph_.nodes, alternate_.nodes, nodes_);
+        exchange(graph_.endpoints, alternate_.endpoints, endpoints_);
         exchange(graph_.connections, alternate_.connections, connections_);
         activePatch_ = patch_;
         return Result::success();
@@ -61,10 +62,82 @@ private:
     domain::Graph& graph_;
     std::string label_;
     domain::Graph alternate_;
-    std::vector<domain::GraphId> nodes_, connections_;
+    std::vector<domain::GraphId> nodes_, endpoints_, connections_;
     domain::GraphId& activePatch_;
     domain::GraphId patch_;
 };
+}
+
+Result WorkspaceService::addHardwareEndpoint(domain::EndpointRole role, std::string name)
+{
+    if (role != domain::EndpointRole::hardwareInput && role != domain::EndpointRole::hardwareOutput)
+        return Result::failure("Select a supported hardware endpoint role.");
+    if (name.empty() || name.size() > 128
+        || std::all_of(name.begin(), name.end(), [](unsigned char ch) { return ch <= 32; })
+        || std::any_of(name.begin(), name.end(), [](unsigned char ch) { return ch < 32 || ch == 127; }))
+        return Result::failure("Use a non-blank endpoint label of 1-128 bytes without control characters.");
+    if (nextId_ >= std::numeric_limits<domain::GraphId>::max() - 1)
+        return Result::failure("The workspace has exhausted its stable object identities.");
+    const auto id = nextId_;
+    domain::Graph alternate;
+    alternate.endpoints.emplace(id, domain::HardwareEndpoint{id, role, std::move(name), true, 2, {}});
+    const auto result = history_.execute(std::make_unique<GraphEdit>(
+        activeGraph(), "Add hardware endpoint", std::move(alternate), std::vector<domain::GraphId>{},
+        std::vector<domain::GraphId>{}, state_.activePatch, std::vector{id}));
+    if (result.succeeded)
+    {
+        ++nextId_;
+        lastCreatedEndpoint_ = id;
+    }
+    return result;
+}
+
+Result WorkspaceService::removeHardwareEndpoint(domain::GraphId endpoint)
+{
+    const auto found = graph().endpoints.find(endpoint);
+    if (found == graph().endpoints.end())
+        return Result::failure("Select an existing hardware endpoint row.");
+    if (found->second.role == domain::EndpointRole::hardwareOutput
+        && std::count_if(graph().endpoints.begin(), graph().endpoints.end(), [](const auto& item)
+            { return item.second.role == domain::EndpointRole::hardwareOutput; }) <= 1)
+        return Result::failure("Keep at least one output row; disable or leave it unassigned instead.");
+    std::vector<domain::GraphId> incident;
+    for (const auto& [id, wire] : graph().connections)
+        if (wire.source.node == endpoint || wire.destination.node == endpoint)
+            incident.push_back(id);
+    domain::Graph alternate;
+    return history_.execute(std::make_unique<GraphEdit>(
+        activeGraph(), "Remove hardware endpoint", std::move(alternate), std::vector<domain::GraphId>{},
+        std::move(incident), state_.activePatch, std::vector{endpoint}));
+}
+
+Result WorkspaceService::editHardwareEndpoint(domain::GraphId endpoint, std::string name, bool enabled,
+                                                int layoutChannels, std::vector<std::string> channelNames)
+{
+    const auto found = graph().endpoints.find(endpoint);
+    if (found == graph().endpoints.end())
+        return Result::failure("The hardware endpoint row no longer exists.");
+    if (name.empty() || name.size() > 128
+        || std::all_of(name.begin(), name.end(), [](unsigned char ch) { return ch <= 32; })
+        || std::any_of(name.begin(), name.end(), [](unsigned char ch) { return ch < 32 || ch == 127; }))
+        return Result::failure("Use a non-blank endpoint label of 1-128 bytes without control characters.");
+    if (layoutChannels < 1 || layoutChannels > 32
+        || (!channelNames.empty() && static_cast<int>(channelNames.size()) != layoutChannels)
+        || std::any_of(channelNames.begin(), channelNames.end(), [](const auto& value)
+            { return value.empty() || value.size() > 4096 || value.find('\0') != std::string::npos; }))
+        return Result::failure("Endpoint layout must have 1-32 channels and either no assignment or one named channel per bus channel.");
+    auto replacement = found->second;
+    replacement.name = std::move(name);
+    replacement.enabled = enabled;
+    replacement.layoutChannels = layoutChannels;
+    replacement.channelNames = std::move(channelNames);
+    if (replacement == found->second)
+        return Result::success();
+    domain::Graph alternate;
+    alternate.endpoints.emplace(endpoint, std::move(replacement));
+    return history_.execute(std::make_unique<GraphEdit>(
+        activeGraph(), "Edit hardware endpoint", std::move(alternate), std::vector<domain::GraphId>{},
+        std::vector<domain::GraphId>{}, state_.activePatch, std::vector{endpoint}));
 }
 
 Result WorkspaceService::createNode(domain::Position position, std::string name, std::map<std::string, domain::Parameter> parameters)
@@ -136,16 +209,35 @@ Result WorkspaceService::moveNodes(const std::map<domain::GraphId, domain::Posit
         activeGraph(), "Move nodes", std::move(alternate), std::move(nodes), std::vector<domain::GraphId>{}, state_.activePatch));
 }
 
-Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint destination) const
+Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint destination,
+                                    domain::AudioAdapter adapter) const
 {
-    if (source.port != domain::Port::output || destination.port != domain::Port::input)
+    if (adapter != domain::AudioAdapter::none && adapter != domain::AudioAdapter::monoToStereo)
+        return Result::failure("This cable adapter is not supported.");
+    if (source.port != domain::Port::output || destination.port != domain::Port::input
+        || source.index != 0 || destination.index != 0)
         return Result::failure("Connect an output port to an input port.");
-    if (!graph().nodes.contains(source.node) || !graph().nodes.contains(destination.node))
+    const auto sourceNode = graph().nodes.find(source.node);
+    const auto destinationNode = graph().nodes.find(destination.node);
+    const auto sourceEndpoint = graph().endpoints.find(source.node);
+    const auto destinationEndpoint = graph().endpoints.find(destination.node);
+    const bool sourceExists = sourceNode != graph().nodes.end() || sourceEndpoint != graph().endpoints.end();
+    const bool destinationExists = destinationNode != graph().nodes.end() || destinationEndpoint != graph().endpoints.end();
+    if (!sourceExists || !destinationExists)
         return Result::failure("Both connection endpoints must belong to this graph.");
     if (source.node == destination.node)
         return Result::failure("A node cannot connect to itself.");
-    if (!domain::hasOutputPort(graph().nodes.at(source.node)) || !domain::hasInputPort(graph().nodes.at(destination.node)))
-        return Result::failure("Sources have no input and the hardware Output has no output port.");
+    const bool sourceHasOutput = sourceEndpoint != graph().endpoints.end()
+        ? sourceEndpoint->second.role == domain::EndpointRole::hardwareInput
+        : domain::hasOutputPort(sourceNode->second);
+    const bool destinationHasInput = destinationEndpoint != graph().endpoints.end()
+        ? destinationEndpoint->second.role == domain::EndpointRole::hardwareOutput
+        : domain::hasInputPort(destinationNode->second);
+    if (!sourceHasOutput || !destinationHasInput)
+        return Result::failure("Connect a source/generator output to a processor or hardware destination input.");
+    if (destinationEndpoint != graph().endpoints.end()
+        && destinationEndpoint->second.role != domain::EndpointRole::hardwareOutput)
+        return Result::failure("Hardware input rows are sources and cannot receive cables.");
 
     std::unordered_map<domain::GraphId, std::vector<domain::GraphId>> outgoing;
     outgoing.reserve(graph().nodes.size());
@@ -154,7 +246,8 @@ Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint de
         (void) id;
         if (wire.source == source && wire.destination == destination)
             return Result::failure("These ports are already connected.");
-        if (wire.destination == destination && !domain::isSumPort(graph().nodes.at(destination.node)))
+        if (wire.destination == destination
+            && (destinationNode == graph().nodes.end() || !domain::isSumPort(destinationNode->second)))
             return Result::failure("This input already has a connection. Use an explicit Sum utility to mix sources.");
         outgoing[wire.source.node].push_back(wire.destination.node);
     }
@@ -174,15 +267,15 @@ Result WorkspaceService::canConnect(domain::Endpoint source, domain::Endpoint de
     return Result::success();
 }
 
-Result WorkspaceService::connect(domain::Endpoint source, domain::Endpoint destination)
+Result WorkspaceService::connect(domain::Endpoint source, domain::Endpoint destination, domain::AudioAdapter adapter)
 {
-    if (auto result = canConnect(source, destination); !result.succeeded)
+    if (auto result = canConnect(source, destination, adapter); !result.succeeded)
         return result;
     if (nextId_ == std::numeric_limits<domain::GraphId>::max())
         return Result::failure("The workspace has exhausted its stable object identities.");
     const auto id = nextId_;
     domain::Graph alternate;
-    alternate.connections.emplace(id, domain::Connection{id, source, destination});
+    alternate.connections.emplace(id, domain::Connection{id, source, destination, adapter});
     auto result = history_.execute(std::make_unique<GraphEdit>(
         activeGraph(), "Connect ports", std::move(alternate), std::vector<domain::GraphId>{}, std::vector{id}, state_.activePatch));
     if (result.succeeded)

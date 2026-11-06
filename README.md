@@ -1,11 +1,15 @@
 # Visual Audio Lab
 
-The [typography and routing implementation plan](docs/plans/07-TypographyAndRoutingImplementation.md)
-records the current delivery boundary: embedded Inter/JetBrains Mono and a
-shared-width graph with explicit Sum, multiple roots, fan-out and inert
-disconnected nodes. The full fixed-endpoint/multi-port redesign remains staged;
-independent bus widths, layout adapters and multiple destinations are not shipped.
-Font sources and redistribution notices are in [resources/fonts](resources/fonts/README.md).
+The implementation includes bundled Inter/JetBrains Mono, fixed system-owned
+hardware endpoint lanes, independently sized buses, explicit Sum, fan-out,
+multiple destinations and lossless legacy Input/Output project migration.
+Hardware endpoints bind exact named channels from one configured audio session;
+only the implemented mono-to-stereo adapter is available. Application Capture,
+File Player/Writer, Virtual Audio Device, streaming and plugin hosting remain
+deferred. See the [endpoint implementation plan](docs/plans/08-HardwareEndpointLanesAndAudioSetupPlan.md),
+[routing design](docs/RoutingModelRedesign.md) and [project format](docs/ProjectFormat.md).
+Font sources and redistribution notices are in [resources/fonts](resources/fonts/README.md);
+the original application artwork and Windows icon wiring are in [resources/icons](resources/icons/README.md).
 
 C++20 / JUCE / CMake application for Windows and macOS. Product and design intent is in [docs](docs). This is not Release 0.1 or the full product vision: it contains a dark dockable workspace, node editor, versioned `.valab` persistence, native audio configuration and explicit transport, seven DSP processors, calibrated visualizers and a bounded VAL Script editor/compiler. Plugin hosting/export is not implemented. Audio never starts automatically.
 
@@ -21,7 +25,7 @@ C++20 / JUCE / CMake application for Windows and macOS. Product and design inten
 | `src/VisualAudioLab.Presentation` | Dark JUCE shell, command/menu/toolbar/status framework, project-backed docking, spatially indexed canvas, lightweight node/cable views and shared visualization widgets; Application, device-independent Audio and JUCE GUI. |
 | `src/VisualAudioLab.Desktop` | Native app entry point and explicit ownership/composition. |
 | `modules` | Reserved first-party module integration point; deliberately no DSP or empty processing targets. |
-| `resources` | Embedded shell limitation notice. |
+| `resources` | Embedded notices, typography assets and supplied application icon artwork. |
 | `tests` | Application/history/graph, persistence, audio discovery, local-adapter, dock-layout and shell/canvas tests registered with CTest; opt-in large-graph benchmark. |
 | `cmake` | Target-scoped C++20/warnings and dependency policy. |
 | `docs` | Product/design specifications and the implemented [project schema/workflows](docs/ProjectFormat.md). |
@@ -74,7 +78,7 @@ The executable/bundle is generated under `src/VisualAudioLab.Desktop/VisualAudio
 
 ## Shell, settings and diagnostics
 
-The component-scoped dark theme surrounds a menu bar, toolbar, transport, status bar and four fixed dock destinations (left, centre, right and bottom). Module Browser searches/inserts reusable audio functions as placed node instances and labels Input/Output as routing utilities; Properties / Script edits instance parameters, bypass and source; Signal hosts live visualization; Audio Setup configures the runtime. Project Explorer remains an informational panel; patch selection and file operations are in the shell. Panels in a shared dock are selectable tabs. Drag a panel's heading into a visible dock, or use its **Dock** selector to move it to any destination, including a collapsed dock. Peripheral docks collapse when empty; the empty centre remains a drop target. Projects retain window bounds, docking, visibility, splitter proportions and selected tabs. There are no floating dock panels or third-party docking packages (the pinned Signal Inspector is a separate non-modal window).
+The component-scoped dark theme surrounds a menu bar, toolbar, transport, status bar and three fixed workspace regions: Module Browser, always-visible Patch Canvas, and Property Inspector. The canvas owns pinned Inputs/Sources and Outputs/Destinations lanes around the movable processor patch. Module Browser inserts user processors, generators and explicit Sum; hardware Input/Output are system endpoints and cannot be inserted there. Properties / Script edits processor parameters, bypass and source; Signal hosts live visualization; Audio Setup configures backend/device/rate/buffer only. The endpoint lanes own channel assignment. Project Explorer remains informational; patch selection and file operations are in the shell. Panels cannot be globally docked, dragged or floated; the Signal Inspector is a separate non-modal window.
 
 Drag the dividers to resize occupied docks within bounded proportions; focused dividers also accept arrow keys. Use the panel selector to hide a secondary panel and the **View** menu to reopen/focus any named area. Patch Canvas cannot be hidden. **Reset Layout** restores default proportions and panel visibility, with Audio Setup hidden. Open **Audio Setup** occasionally and choose **Done** to hide it without changing transport; compact status remains visible. Setup is scrollable in small docks. **Start (F5)** / **Stop** and Shift+F5 control transport explicitly. Offline preview drives the same graph without opening a device, at GUI-timer cadence rather than real-time wall-clock speed.
 
@@ -88,17 +92,17 @@ Projects retain all patches, node/connection identities and geometry, scalar par
 
 ## Structural node editor
 
-A new project starts with one empty patch. **Module Browser** places reusable audio functions as node instances, with Input/Output explicitly labeled routing utilities. Seven effects, four analyzer views and Script retain their executable metadata. **Routing Draft**, **N**, or the canvas context menu creates a structural routing utility with no DSP, not an inferred processor; such projects remain editable and receive explicit runtime diagnostics. No edit, load or selection action opens a device. While transport is already running, valid content edits can update its graph. Save explicitly to retain content across application runs.
+A new project starts with unassigned fixed hardware Input and Main Output rows; neither selects channels or starts playback. Use **+ Add input/output** to create additional unassigned rows. Choose actual driver-named channels in the lanes; basic choices cover mono/stereo and Advanced supports wider exact channel sets. Input fan-out is allowed; physical output channel groups must be disjoint. A destination accepts one feed; use an explicit Sum processor before it when mixing. Mismatched layouts are rejected except for the visible mono-to-stereo adapter. The selected rows open as exact sparse native channel masks compacted into callback buses, with one backend/device session rather than unsynchronized devices. Device binding stays machine-local; saved project channel names and rows remain visible as Missing if unavailable. Generators, seven effects, four analyzer views and Script retain their executable metadata. **Routing Draft**, **N**, or the canvas context menu creates a structural routing utility with no DSP. No edit, load or selection action opens a stream; Start remains explicit. Legacy projects migrate old Input/Output nodes and preserve IDs and cables.
 
 | Interaction | Behavior |
 |---|---|
 | Select / multi-select | Click a node; Shift-click adds; Ctrl-click (Windows) / Command-click (macOS) toggles. Empty-space drag rubber-band selects intersecting node bodies; modifiers add/toggle. |
-| Move | Drag a selected body to preview one shared patch-space delta; release commits all selected nodes as one command. Escape or focus loss cancels the preview. |
-| Delete | Delete/Backspace or canvas Delete removes selected nodes and all incident wires; clicking a cable selects it for deletion. |
-| Wire | Drag either port to an opposite-direction port. Outputs allow fan-out; inputs accept one wire. Missing endpoints, self-links, duplicates, occupied inputs and cycles are rejected with a visible status explanation. No implicit replacement or conversion. |
+| Move | Drag a selected processor body to preview one shared patch-space delta; release commits all selected processors as one command. Input, generator and Output cards stay fixed. Escape or focus loss cancels the preview. |
+| Delete | Delete/Backspace or canvas Delete removes selected processors and all incident wires; fixed endpoint cards cannot be deleted. Clicking a cable selects it for deletion. |
+| Wire | Drag either port to an opposite-direction port. Outputs allow fan-out; only the explicit Sum input accepts multiple wires. Missing endpoints, self-links, duplicates, implicit fan-in and cycles are rejected with a visible status explanation. No implicit replacement or conversion. |
 | Disconnect | Right-click a cable, or choose a wire from a port's context menu. Delete a selected cable; **D** disconnects the focused node's incoming wire. Each is undoable. |
-| Zoom / pan | Wheel zooms around the pointer; +/- buttons or keys zoom around the viewport centre (2.5%-300%). Middle-drag or Space-drag pans; Shift-wheel pans. Fit frames the graph within these zoom limits; overview rendering suppresses unreadable node detail below 35%. |
-| Keyboard navigation | Arrow keys focus/select nodes in stable creation order and reveal offscreen targets; Tab leaves the canvas. Ctrl/Command+A selects all. **M**, arrows, then Enter moves the selection as one gesture; Escape cancels. **C**, arrows, then Enter connects the starting node's output to the focused node's input; Escape cancels. |
+| Zoom / pan | Wheel zooms around the pointer over the centre patch; +/- buttons or keys zoom around its centre (2.5%-300%). Middle-drag or Space-drag pans only the centre. Fixed rails remain pinned; their cards scroll independently. Fit frames processors. At 35-79% only titles remain; operational detail returns at 80% and 110%. |
+| Keyboard navigation | Arrow keys focus/select nodes in stable creation order and reveal offscreen processor targets; Tab leaves the canvas. Ctrl/Command+A selects processors, not fixed endpoints. **M**, arrows, then Enter moves processor selection as one gesture; Escape cancels. **C**, arrows, then Enter connects the starting node's output to the focused node's input; Escape cancels. |
 | Undo / redo | Shell buttons/menu or Ctrl/Command+Z and Ctrl/Command+Shift+Z in the canvas. Creation, deletion, grouped movement, connection and disconnection are reversible, including exact incident wire identities on restore. |
 
 Coordinates are finite patch units, independent of zoom/pan, bounded to +/-1,000,000 per node origin. Selection is navigation state: undo restores graph content but does not restore an earlier selection/viewport or select resurrected nodes automatically. A new accepted edit truncates redo; invalid edits, cancelled gestures and no-op moves do not. History retains the existing most recent 128 commands, not an unlimited session journal.
@@ -113,7 +117,7 @@ The focused graph tests and GUI tests cover edit/history invariants, invalid con
 
 Use the corresponding executable in your build directory/configuration; the optional benchmark is not part of ordinary application startup or CTest. Its software snapshot timings are not native GPU frame-rate measurements. Keyboard actions exist, but semantic screen-reader traversal of the graph and full platform accessibility qualification remain future work; an accessible component description alone does not provide complete graph semantics.
 
-The composition root stores **machine-local application preferences**, separate from `.valab` projects, in `VisualAudioLab/settings.json` below JUCE's user application-data directory (`%APPDATA%` on Windows and `~/Library` on macOS). Settings schema version 1 records window size, inspector visibility (now the Property Inspector), and optional validated audio setup hints (backend, device names, rate, buffer, widths and exact channel indices, never session tokens or playback state). Legacy counts explicitly migrate to first-N index vectors. Loading a project overrides the view with its own saved layout. Loads validate JSON types/ranges/version; failed settings loads preserve defaults and disable automatic preference writes, with a visible status message. Saves validate and use a sibling temporary replacement file. This is a single-process settings adapter, not concurrent editing or a power-loss durability guarantee.
+The composition root stores **machine-local application preferences**, separate from `.valab` projects, in `VisualAudioLab/settings.json` below JUCE's user application-data directory (`%APPDATA%` on Windows and `~/Library` on macOS). Settings schema version 1 records window size, inspector visibility and optional validated audio setup hints (backend, device names, rate, buffer and endpoint-ID-to-physical-channel indices, never session tokens or playback state). Saved channel indices are revalidated against current driver-reported names; unavailable identities are not replaced. Loading a project overrides the view with its own saved layout. Loads validate JSON types/ranges/version; failed settings loads preserve defaults and disable automatic preference writes, with a visible status message. Saves validate and use a sibling temporary replacement file. This is a single-process settings adapter, not concurrent editing or a power-loss durability guarantee.
 
 Local diagnostics are in the adjacent `Logs/shell.log`. Epoch-millisecond timestamps, severity and category are recorded; no project content, paths or names are logged by default. Current and previous files are capped at approximately 1 MiB each, with per-record truncation and control-character escaping. There is no telemetry or remote export. Write failures are surfaced separately, not recursively logged. Shutdown saves window and audio setup preferences; failures are visible and do not claim success.
 

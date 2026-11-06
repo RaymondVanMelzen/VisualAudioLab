@@ -153,28 +153,32 @@ text-size preference (§9). Line height is given as a multiple of the size.
 
 | Role | Font | Weight | Size | Line height | Notes |
 |------|------|--------|------|-------------|-------|
-| Application title | Inter | 600 | 15 | 1.2 | Title bar / about; tracking −0.01 em |
-| Panel title | Inter | 600 | 12 | 1.3 | Sentence case, tracking +0.01 em |
-| Section title | Inter | 600 | 10.5 | 1.3 | UPPERCASE, tracking +0.06 em, tertiary colour, `case` feature |
-| Node title | Inter | 600 | 12 | 1.25 | Colour-coded by category via accent bar, not text colour |
-| Control label | Inter | 500 | 10.5 | 1.25 | Secondary/tertiary colour, never below 10 px at 100% |
-| Parameter value | Inter, `tnum zero` | 600 | 13 | 1.15 | Larger than its label |
-| Parameter unit | Inter | 500 | 10.5 | 1.15 | 80% of value |
-| Meter scale (tick labels) | Inter, `tnum` | 500 | 9.5 | 1.1 | Minimum 9 px; falls back to fewer ticks, never smaller |
-| Meter readout (peak/RMS/LUFS) | Inter, `tnum zero` | 600 | 15 | 1.1 | Larger on analysis panels (§9) |
-| Code | JetBrains Mono | 400 | 13 | 1.5 | 1.45–1.55 acceptable |
-| Code line numbers | JetBrains Mono | 400 | 11.5 | 1.5 | Muted |
-| Diagnostics / compile messages | JetBrains Mono | 400 (message), 700 (severity tag) | 12 | 1.45 | |
-| Documentation / help body | Inter | 400 | 14 | 1.55 | Max line length 70–80 characters |
+| Application title | Inter | 600 | 17 | 1.2 | Title bar / about; tracking −0.01 em |
+| Panel title | Inter | 600 | 15 | 1.3 | Sentence case, tracking +0.01 em |
+| Section title | Inter | 600 | 14 | 1.3 | UPPERCASE, tracking +0.04 em, tertiary colour |
+| Node title | Inter | 600 | 15 | 1.25 | Colour-coded by category via accent bar, not text colour |
+| Control label | Inter | 500 | 13.5 | 1.25 | Secondary/tertiary colour |
+| Parameter value | Inter, `tnum zero` | 600 | 16 | 1.15 | Larger than its label |
+| Parameter unit | Inter | 500 | 13.5 | 1.15 | Quieter than value |
+| Meter scale (tick labels) | Inter, `tnum` | 500 | 13 | 1.1 | Fall back to fewer ticks, never smaller |
+| Meter readout (peak/RMS/LUFS) | Inter, `tnum zero` | 600 | 18 | 1.1 | Larger on analysis panels (§9) |
+| Code | JetBrains Mono | 400 | 14 | 1.5 | 1.45–1.55 acceptable |
+| Code line numbers | JetBrains Mono | 400 | 13 | 1.5 | Muted |
+| Diagnostics / compile messages | JetBrains Mono | 400 (message), 700 (severity tag) | 13.5 | 1.45 | |
+| Documentation / help body | Inter | 400 | 15 | 1.55 | Max line length 70–80 characters |
 | Documentation headings | Inter | 600 | 20 / 16 / 14 | 1.3 | H1/H2/H3 |
 | Documentation inline code | JetBrains Mono | 400 | 12.5 | inherit | Subtle background tint |
-| Status bar | Inter, `tnum` | 500 | 11 | 1.2 | Fixed-width segments for CPU/latency/rate |
-| Tooltips | Inter | 400 | 11.5 | 1.35 | Value in 600 |
-| Menus / dialogs | Inter | 400 | 12 | 1.35 | Dialog titles 14/600 |
+| Status bar | Inter, `tnum` | 500 | 13 | 1.2 | Fixed-width segments for CPU/latency/rate |
+| Tooltips | Inter | 400 | 13 | 1.35 | Value in 600 |
+| Menus / dialogs | Inter | 400 | 14 | 1.35 | Dialog titles 16/600 |
 
-**Minimum sizes:** 10 px for any text a user must read to operate a control;
-9 px only for non-essential tick labels. Below these sizes, content is
-dropped (see §6.3), not shrunk.
+**Readability revision:** user review of the first implementation found its
+original 10–12 px roles and 10 px canvas floor too small in the actual desktop
+window. The shared roles now use at least 13 px logical size for essential UI
+text, with a 14 px on-screen minimum for canvas labels; values/headings are
+larger. At small patch zoom, detail is reduced instead of shrinking operating
+labels. This is a practical legibility floor, not the deferred OS-level text
+size/high-contrast preference or proof of cross-platform behavior.
 
 ## 6. Parameters and the values-over-labels pattern
 
@@ -216,13 +220,13 @@ read-out above the pointer so a hand does not cover it.
 
 ```
  ┌─────────────────────────────────────────┐
- │▌ Compressor                      ⏻  ⋯   │   Title 12/600
+ │▌ Compressor                      ⏻  ⋯   │   Title 15/600
  │                                         │
- │  THRESHOLD      RATIO         ATTACK    │   Labels 10.5/500
- │  −18.4 dB       4.0 : 1       12 ms     │   Values 13/600
+ │  THRESHOLD      RATIO         ATTACK    │   Labels 13.5/500
+ │  −18.4 dB       4.0 : 1       12 ms     │   Values 16/600
  │                                         │
  │  GAIN REDUCTION                         │
- │  ▮▮▮▮▮▯▯▯▯▯▯▯▯▯▯▯          −6.2 dB     │   Readout 13/600 tnum
+ │  ▮▮▮▮▮▯▯▯▯▯▯▯▯▯▯▯          −6.2 dB     │   Readout 18/600 tnum
  └─────────────────────────────────────────┘
 ```
 
@@ -233,15 +237,16 @@ of detail**; each level defines what is shown, not just how big.
 
 | Zoom | LOD | Visible text |
 |------|-----|--------------|
-| ≥ 100% | **Full** | Title, all labels, all values with units, meters |
-| 60–99% | **Compact** | Title, values with units, labels shortened to abbreviation (`Thr`, `Rat`, `Att`) |
-| 35–59% | **Overview** | Title and 1–3 key values (e.g. Gain Reduction); text clamps at **11 px minimum on screen** by scaling up relative to node |
-| < 35% | **Glyph** | Icon + title only; title clamps at 12 px on screen; values replaced by meter colour/bar |
+| ≥ 110% | **Full** | Title, all labels, all values with units, meters |
+| 80–109% | **Compact** | Title, role and port labels, values with units |
+| 35–79% | **Overview** | Title only; operating labels are hidden rather than compressed below readable size |
+| < 35% | **Glyph** | Title only; values replaced by meter colour/bar |
 
 Rules:
 
-- Text size on screen **never goes below 10 px** (value readouts 11 px) when
-  shown. If it would, hide that tier.
+- The shipped canvas layer keeps its operational titles/labels at a minimum of
+  **14 px on screen**; the user review rejected the smaller original target
+  floor. If a tier cannot fit, hide that tier.
 - Text size **does not exceed 1.25×** its 100% size when the canvas zoom is
   above 100%; nodes grow, text grows slower, so the layout is controls-first.
 - Key value order for Overview/Glyph LOD is defined per module

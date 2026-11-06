@@ -11,4 +11,5 @@ juce_add_binary_data(VisualAudioLab.Resources
         fonts/JetBrainsMono-Bold.ttf
         fonts/JetBrainsMono-Italic.ttf
         fonts/Inter-OFL.txt
-        fonts/JetBrainsMono-OFL.txt)
+        fonts/JetBrainsMono-OFL.txt
+        icons/VAL_256x256.png)

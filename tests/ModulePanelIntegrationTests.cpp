@@ -3,6 +3,7 @@
 #include <val/presentation/ModulePanels.h>
 #include <val/script/Compiler.h>
 #include <val/presentation/ShellTheme.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -26,6 +27,14 @@ std::vector<T*> controls(juce::Component& parent)
 {
     std::vector<T*> result;
     collectControls(parent, result);
+    return result;
+}
+
+template <typename T>
+std::vector<T*> visibleControls(juce::Component& parent)
+{
+    auto result = controls<T>(parent);
+    std::erase_if(result, [](const auto* control) { return !control->isVisible(); });
     return result;
 }
 
@@ -128,6 +137,8 @@ void runModulePanelIntegrationTests()
     std::vector<RuntimeEdit> runtimeEdits;
     int changed{};
     editor.onChanged = [&] { ++changed; editor.refresh(); };
+    editor.onReadGeneratorMeters = [](std::uint64_t)
+    { return GeneratorMeterReadout{"Live", -12.0f, -15.01f, true, true}; };
     editor.onRuntimeParameter = [&](auto id, auto parameter, auto value, auto action)
     {
         runtimeEdits.push_back({id, parameter, value, action});
@@ -165,7 +176,7 @@ void runModulePanelIntegrationTests()
 
     add([&]
     {
-        require(list.getListBoxModel()->getNumRows() == 24 && list.getSelectedRow() >= 0
+        require(list.getListBoxModel()->getNumRows() == 22 && list.getSelectedRow() >= 0
                     && category.getNumItems() == 6,
                 "The actual catalog exposes the delivered modules and their populated categories.");
         category.setSelectedId(2, juce::sendNotificationSync);
@@ -178,8 +189,9 @@ void runModulePanelIntegrationTests()
         require(list.getListBoxModel()->getNumRows() == 7,
                 "Generators category exposes the seven separately insertable signal sources.");
         category.setSelectedId(5, juce::sendNotificationSync);
-        require(list.getListBoxModel()->getNumRows() == 3,
-                "Routing category contains Input, Output and explicit Sum utilities.");
+        require(list.getListBoxModel()->getNumRows() == 1
+                    && list.getListBoxModel()->getTooltipForRow(0).contains("Explicit unity sum"),
+                "Routing utilities keep explicit Sum; hardware endpoints are configured in fixed canvas lanes.");
         category.setSelectedId(6, juce::sendNotificationSync);
         require(list.getListBoxModel()->getNumRows() == 1
                     && list.getListBoxModel()->getTooltipForRow(0).contains("User-authored"),
@@ -222,8 +234,8 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        const std::array<std::string, 24> names{
-            "Input", "Output", "Sum", "Gain", "EQ", "Delay", "Compressor", "Distortion",
+        const std::array<std::string, 22> names{
+            "Sum", "Gain", "EQ", "Delay", "Compressor", "Distortion",
             "Chorus", "Reverb", "Signal Generator", "Impulse Generator", "Click Generator", "Burst Generator",
             "Chirp Generator", "Noise Generator", "DC Generator", "Oscilloscope", "Spectrum Analyzer",
             "Peak Meter", "RMS Meter", "Correlation Meter", "Guitar Tuner", "Script"};
@@ -236,11 +248,11 @@ void runModulePanelIntegrationTests()
             inserted.push_back(std::move(type));
         };
     });
-    for (int row = 0; row < 24; ++row)
+    for (int row = 0; row < 22; ++row)
         add([&, row] { list.selectRow(row); button(catalog, "Insert selected module").triggerClick(); });
     add([&]
     {
-        require(inserted.size() == 26 && catalogMatched,
+        require(inserted.size() == 24 && catalogMatched,
                 "Every actual catalog row can be selected and emits its module type through the insertion button.");
         catalog.onInsert = {};
         require(workspace.createNode({10, 20}, "EQ under test",
@@ -251,7 +263,10 @@ void runModulePanelIntegrationTests()
         require(editor.selected() == eq && editor.node() == eq, "Selection getters expose the inspected identity.");
         audio::EqNode processor;
         const auto specifications = processor.parameters();
-        require(controls<juce::Slider>(editor).size() == specifications.size(),
+        const auto allSliders = controls<juce::Slider>(editor);
+        const auto visibleSliders = std::count_if(allSliders.begin(), allSliders.end(),
+            [](const auto* item) { return item->isVisible(); });
+        require(static_cast<std::size_t>(visibleSliders) == specifications.size(),
                 "Every actual effect parameter has an editable slider.");
         for (const auto& specification : specifications)
         {
@@ -398,7 +413,7 @@ void runModulePanelIntegrationTests()
         editor.setNode(scriptId);
         const auto initial = script::Compiler::compile(ModuleEditor::defaultScriptSource());
         require(initial.value && (*initial.value)->inputs().size() == 1 && (*initial.value)->outputs().size() == 1
-                    && controls<juce::Slider>(editor).empty(),
+                    && visibleControls<juce::Slider>(editor).empty(),
                 "The default is a verified mono pass-through with no invented parameters.");
         const auto& draftLabel = control<juce::Label>(editor, [](const auto& label)
         {
@@ -465,14 +480,14 @@ void runModulePanelIntegrationTests()
                 "Compile / Apply persists exactly the successfully compiled authored text.");
         const auto& parameter = slider(editor, "AMOUNT saved base value");
         require(parameter.getMinimum() == 0 && parameter.getMaximum() == 1 && parameter.getValue() == 0.75
-                    && controls<juce::Slider>(editor).size() == 1,
+                    && visibleControls<juce::Slider>(editor).size() == 1,
                 "Script parameter controls come from the verified authored program.");
         require(std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("custom.note")) == "script state",
                 "Applying source preserves unrelated node state.");
         require(workspace.undo().succeeded && workspace.graph() == beforeScript,
                 "One undo restores the previous script source and all document state.");
         editor.refresh();
-        require(controls<juce::Slider>(editor).empty(), "Undo refresh removes parameters absent from restored source.");
+        require(visibleControls<juce::Slider>(editor).empty(), "Undo refresh removes parameters absent from restored source.");
         require(workspace.redo().succeeded, "Redo the authored source application.");
         editor.refresh();
         slider(editor, "AMOUNT saved base value").setValue(0.5, juce::sendNotificationSync);
@@ -526,7 +541,7 @@ void runModulePanelIntegrationTests()
             const auto program = *compiled.value;
             const auto expectedChannels = example == 4 ? std::size_t{2} : std::size_t{1};
             require(program->outputs().size() == expectedChannels
-                        && controls<juce::Slider>(editor).size() == program->parameters().size(),
+                        && visibleControls<juce::Slider>(editor).size() == program->parameters().size(),
                     "Example bus declarations and parameter controls match the saved compiled artifact.");
             for (const auto& definition : program->parameters())
             {
@@ -567,13 +582,64 @@ void runModulePanelIntegrationTests()
                     && !workspace.canUndo(),
                 "Revert restores the loaded saved source without creating history or applying the previous project's draft.");
         require(workspace.createNode({0, 0}, "Signal Generator",
-                    {{"audio.type", std::string("Signal Generator")}}).succeeded,
+                    {{"audio.type", std::string("Signal Generator")},
+                     {"audio.param.levelDb", -12.0}}).succeeded,
                 "Create a zero-input source for end-to-end typed control editor tests.");
         generator = workspace.lastCreatedNode();
         editor.setNode(generator);
         saveScreenshotIfRequested(editor, "VAL_TOOLKIT_EDITOR_SCREENSHOT");
+        const auto editorBounds = editor.getBounds();
+        editor.setBounds(editorBounds.getX(), editorBounds.getY(), 360, 600);
+        saveScreenshotIfRequested(editor, "VAL_TOOLKIT_EDITOR_COMPACT_SCREENSHOT");
+        editor.setBounds(editorBounds);
+        auto& goal = control<juce::ComboBox>(editor, [](const auto& item) { return item.getTitle() == "Signal goal"; });
+        auto& goalLabel = control<juce::Label>(editor, [](const auto& item)
+            { return item.getText() == "Start with a goal"; });
+        auto& peakReadout = control<juce::Label>(editor, [](const auto& item)
+            { return item.getTitle() == "Measured sample peak in dBFS over the latest 50 milliseconds"; });
+        require(goal.getText() == "Fixed tone" && goal.getNumItems() == 5
+                    && slider(editor, "Output Level target peak in dBFS").isVisible()
+                    && goalLabel.getFont().getHeight() >= 16
+                    && peakReadout.getFont().getHeight() >= 18
+                    && control<juce::Component>(editor, [](const auto& item)
+                        { return item.getName() == "Generator waveform and sweep preview"; }).isVisible(),
+                "The generator opens on a readable task layout with five goals, target level and a static signal preview.");
+        require(peakReadout.getText().contains("-12.0 dBFS")
+                    && control<juce::Label>(editor, [](const auto& item)
+                    { return item.getTitle() == "Measured RMS in dBFS over a rolling 300 millisecond window"; })
+                    .getText().contains("-15.0 dBFS"),
+                "The task editor distinguishes measured sample peak and RMS readouts.");
+        auto& mute = control<juce::ToggleButton>(editor,
+            [](const auto& item) { return item.getTitle() == "Mute generator output without stopping transport"; });
+        require(mute.isVisible() && !mute.getToggleState(),
+                "The task editor exposes a clear, initially unmuted output control.");
+        mute.setToggleState(true, juce::dontSendNotification);
+        mute.onClick();
+        require(savedNumber(workspace, generator, "audio.param.muted") == 1,
+                "Mute output persists through the generator's validated parameter path.");
+        mute.setToggleState(false, juce::dontSendNotification);
+        mute.onClick();
+        goal.setSelectedId(2, juce::sendNotificationSync);
+        require(savedNumber(workspace, generator, "audio.param.mode") == 1
+                    && slider(editor, "Sweep start frequency in hertz").isVisible()
+                    && slider(editor, "Sweep end frequency in hertz").isVisible(),
+                "Choosing Frequency Sweep exposes its distinct start/end controls and persists the requested mode.");
+        goal.setSelectedId(1, juce::sendNotificationSync);
+        goal.setSelectedId(4, juce::sendNotificationSync);
+        auto& noiseColor = control<juce::ComboBox>(editor, [](const auto& item) { return item.getTitle() == "Noise color"; });
+        noiseColor.setSelectedId(2, juce::sendNotificationSync);
+        require(savedNumber(workspace, generator, "audio.param.waveform") == 5,
+                "The Noise goal exposes White/Pink choices without replacing the existing waveform DSP mode.");
+        goal.setSelectedId(1, juce::sendNotificationSync);
+        auto& automationDisclosure = control<juce::TextButton>(editor, [](const auto& item)
+            { return item.getTitle() == "Show or hide automation controls"; });
+        require(automationDisclosure.isEnabled() && automationDisclosure.isVisible(),
+                "Automation disclosure is available to the user.");
+        automationDisclosure.setToggleState(true, juce::dontSendNotification);
+        automationDisclosure.onClick();
         auto& controlTarget = control<juce::ComboBox>(editor,
             [](const auto& item) { return item.getTitle() == "Continuous parameter receiving a scalar control mapping"; });
+        require(controlTarget.isVisible(), "Automation disclosure reveals the control-mapping editor.");
         auto& controlSource = control<juce::ComboBox>(editor,
             [](const auto& item) { return item.getTitle() == "Typed scalar source for the selected parameter"; });
         auto selectTarget = [&](const juce::String& name)
@@ -589,8 +655,7 @@ void runModulePanelIntegrationTests()
         textControl(editor, "Control mapping depth in destination parameter units").setText("20", false);
         textControl(editor, "LFO rate in hertz").setText("2", false);
         auto& controlSave = button(editor, "Save typed control mapping");
-        require(controlSource.getSelectedId() == 2 && controlSave.isVisible() && controlSave.isEnabled()
-                    && controlSave.isShowing(),
+        require(controlSource.getSelectedId() == 2 && controlSave.isVisible() && controlSave.isEnabled(),
                 "LFO mapping editor is active and save action is enabled.");
         controlChangedBefore = changed;
         controlSave.triggerClick();
@@ -644,7 +709,7 @@ void runModulePanelIntegrationTests()
                 controlTarget.setSelectedId(controlTarget.getItemId(item), juce::sendNotificationSync);
         controlSource.setSelectedId(3, juce::sendNotificationSync);
         textControl(editor, "Control mapping offset in destination parameter units").setText("0", false);
-        textControl(editor, "Control mapping depth in destination parameter units").setText("60", false);
+        textControl(editor, "Control mapping depth in destination parameter units").setText("12", false);
         textControl(editor, "Envelope attack duration in seconds").setText("0.1", false);
         textControl(editor, "Envelope hold duration in seconds").setText("0.2", false);
         textControl(editor, "Envelope release duration in seconds").setText("0.5", false);
@@ -665,13 +730,24 @@ void runModulePanelIntegrationTests()
                     + diagnostics.getText().toStdString());
         require(workspace.createNode({0, 0}, "Gain").succeeded, "Create a generic node with a misleading display name.");
         editor.setNode(workspace.lastCreatedNode());
-        require(controls<juce::Slider>(editor).empty() && diagnostics.getText().contains("explicit audio.type"),
+        require(visibleControls<juce::Slider>(editor).empty() && diagnostics.getText().contains("explicit audio.type"),
                 "Display names never grant DSP capability to a generic node.");
         editor.setNode(999999);
-        require(controls<juce::Slider>(editor).empty() && diagnostics.getText().contains("no longer exists"),
+        require(visibleControls<juce::Slider>(editor).empty() && diagnostics.getText().contains("no longer exists"),
                 "Absent selection is rejected visibly.");
         editor.setNode(0);
         require(diagnostics.getText().contains("Select an audio module"), "Empty selection has a clear editor state.");
+        require(workspace.createNode({0, 0}, "Noise under test",
+                    {{"audio.type", std::string("Noise Generator")}}).succeeded,
+                "Create a standalone Noise Generator for legacy level-key coverage.");
+        const auto noiseId = workspace.lastCreatedNode();
+        editor.setNode(noiseId);
+        require(control<juce::ComboBox>(editor, [](const auto& item) { return item.getTitle() == "Noise color"; }).isVisible()
+                    && slider(editor, "Output Level target peak in dBFS").isVisible(),
+                "Noise Generator uses its own task editor with clear color and target-level controls.");
+        slider(editor, "Output Level target peak in dBFS").setValue(-12, juce::sendNotificationSync);
+        require(savedNumber(workspace, noiseId, "audio.param.levelDbRms") == -12,
+                "Output Level keeps the existing project key so legacy noise settings remain compatible.");
         editor.setStatusMessage("Host scheduling admission failure");
         require(diagnostics.getText() == "Host scheduling admission failure", "Host runtime errors are visible in the editor.");
     });

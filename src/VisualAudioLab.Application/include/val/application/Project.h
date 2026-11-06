@@ -41,8 +41,17 @@ struct ProjectLayout final
 /** Complete editable project snapshot, independent of JSON and platform storage. */
 struct ProjectState final
 {
+    [[nodiscard]] static Patch initialPatch()
+    {
+        Patch patch;
+        patch.graph.endpoints.emplace(2, domain::HardwareEndpoint{2, domain::EndpointRole::hardwareInput,
+            "Hardware Input 1", true, 2, {}});
+        patch.graph.endpoints.emplace(3, domain::HardwareEndpoint{3, domain::EndpointRole::hardwareOutput,
+            "Main Output", true, 2, {}});
+        return patch;
+    }
     domain::Workspace workspace;
-    std::map<domain::GraphId, Patch> patches{{1, Patch{}}};
+    std::map<domain::GraphId, Patch> patches{{1, initialPatch()}};
     domain::GraphId activePatch{1};
     ProjectLayout layout;
     bool operator==(const ProjectState&) const = default;

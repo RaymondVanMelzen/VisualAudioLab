@@ -1,5 +1,6 @@
 #include <val/infrastructure/LocalSettingsStore.h>
 #include <juce_core/juce_core.h>
+#include <charconv>
 #include <optional>
 
 namespace val::infrastructure
@@ -79,7 +80,7 @@ application::SettingsLoadResult LocalSettingsStore::load()
         auto& setup = *settings.audioSetup;
         const auto readIndices = [&](const char* key, int count, std::vector<int>& indices)
         {
-            if (!audio->hasProperty(key)) { indices = application::legacyAudioChannels(count); return true; }
+            if (!audio->hasProperty(key)) return true;
             const auto* array = audio->getProperty(key).getArray();
             if (!array) return false;
             for (const auto& index : *array)
@@ -87,11 +88,38 @@ application::SettingsLoadResult LocalSettingsStore::load()
                 if (!index.isInt()) return false;
                 indices.push_back(static_cast<int>(index));
             }
-            return application::validAudioChannelSelection(indices, count);
+            return indices.empty() || application::validAudioChannelSelection(indices, count);
         };
         if (!readIndices("inputChannelIndices", setup.inputChannels, setup.inputChannelIndices)
             || !readIndices("outputChannelIndices", setup.outputChannels, setup.outputChannelIndices))
             return loadFailure("Audio setup contains invalid channel identities; original preserved.");
+        if (audio->hasProperty("endpointChannelIndices"))
+        {
+            const auto* bindings = audio->getProperty("endpointChannelIndices").getArray();
+            if (!bindings) return loadFailure("Endpoint channel bindings are invalid; original preserved.");
+            for (const auto& bindingValue : *bindings)
+            {
+                auto* binding = bindingValue.getDynamicObject();
+                if (!binding || !binding->getProperty("endpointId").isString())
+                    return loadFailure("Endpoint channel binding identity is invalid; original preserved.");
+                const auto identity = binding->getProperty("endpointId").toString().toStdString();
+                std::uint64_t endpoint{};
+                const auto parsedIdentity = std::from_chars(identity.data(), identity.data() + identity.size(), endpoint);
+                const auto* channels = binding->getProperty("channels").getArray();
+                std::vector<int> indices;
+                if (identity.empty() || parsedIdentity.ec != std::errc{} || parsedIdentity.ptr != identity.data() + identity.size()
+                    || endpoint == 0 || !channels)
+                    return loadFailure("Endpoint channel binding identity/layout is invalid; original preserved.");
+                for (const auto& channel : *channels)
+                {
+                    if (!channel.isInt()) return loadFailure("Endpoint driver channel index is invalid; original preserved.");
+                    indices.push_back(static_cast<int>(channel));
+                }
+                if (!application::validAudioChannelSelection(indices, static_cast<int>(indices.size()))
+                    || !setup.endpointChannelIndices.emplace(endpoint, std::move(indices)).second)
+                    return loadFailure("Endpoint channel bindings are duplicate or invalid; original preserved.");
+            }
+        }
     }
     const auto validation = application::validateSettings(settings);
     if (!validation.succeeded)
@@ -132,14 +160,25 @@ application::Result LocalSettingsStore::save(const application::Settings& settin
         audio->setProperty("bufferFrames", setup.bufferFrames);
         audio->setProperty("inputChannels", setup.inputChannels);
         audio->setProperty("outputChannels", setup.outputChannels);
-        const auto writeIndices = [&](const char* key, const std::vector<int>& indices, int count)
+        const auto writeIndices = [&](const char* key, const std::vector<int>& indices)
         {
             juce::Array<juce::var> values;
-            for (int index : indices.empty() ? application::legacyAudioChannels(count) : indices) values.add(index);
+            for (int index : indices) values.add(index);
             audio->setProperty(key, values);
         };
-        writeIndices("inputChannelIndices", setup.inputChannelIndices, setup.inputChannels);
-        writeIndices("outputChannelIndices", setup.outputChannelIndices, setup.outputChannels);
+        writeIndices("inputChannelIndices", setup.inputChannelIndices);
+        writeIndices("outputChannelIndices", setup.outputChannelIndices);
+        juce::Array<juce::var> endpointBindings;
+        for (const auto& [endpoint, indices] : setup.endpointChannelIndices)
+        {
+            auto* binding = new juce::DynamicObject();
+            binding->setProperty("endpointId", juce::String(std::to_string(endpoint)));
+            juce::Array<juce::var> channels;
+            for (int index : indices) channels.add(index);
+            binding->setProperty("channels", channels);
+            endpointBindings.add(juce::var(binding));
+        }
+        audio->setProperty("endpointChannelIndices", endpointBindings);
         object->setProperty("audioSetup", juce::var(audio));
     }
     const juce::TemporaryFile temporary(file);

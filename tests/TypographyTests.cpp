@@ -23,6 +23,12 @@ void checkFonts()
     require(Typography::code().getTypefaceName().contains("JetBrains"), "Source uses bundled JetBrains Mono.");
     require(Typography::code(13, true).getTypefacePtr()->getStyle().containsIgnoreCase("bold"), "Bold is an actual bundled face.");
     require(Typography::code(13, false, true).getTypefacePtr()->getStyle().containsIgnoreCase("italic"), "Italic is an actual bundled face.");
+    require(Typography::font(TextRole::body).getHeight() >= 15
+            && Typography::font(TextRole::panelTitle).getHeight() >= 15
+            && Typography::font(TextRole::menu).getHeight() >= 14
+            && Typography::font(TextRole::status).getHeight() >= 14
+            && Typography::font(TextRole::label).getHeight() >= 13,
+            "The revised product type ramp uses comfortably readable body, heading and essential-detail sizes.");
     const auto width = [](const juce::Font& font, const char* text) { return juce::GlyphArrangement::getStringWidth(font, text); };
     require(std::abs(width(Typography::numeric(), "111111") - width(Typography::numeric(), "888888")) < 0.01f,
             "Shaped tabular digits have identical advances (not just feature metadata).");
@@ -60,7 +66,9 @@ void checkFonts()
         }
     require(visibleUnit, "The stable unit region contains actual rendered text.");
     require(Typography::detail(0.349f) == TextDetail::glyph && Typography::detail(0.35f) == TextDetail::overview
-            && Typography::detail(0.6f) == TextDetail::compact && Typography::detail(1) == TextDetail::full, "Exact semantic zoom thresholds.");
+            && Typography::detail(0.6f) == TextDetail::overview && Typography::detail(0.8f) == TextDetail::compact
+            && Typography::detail(1.0f) == TextDetail::compact && Typography::detail(1.1f) == TextDetail::full,
+            "Readable semantic zoom tiers hide small detail before it becomes too small to read.");
     for (float zoom : {0.1f, 0.35f, 0.59f, 0.6f, 0.99f, 1.0f, 1.5f, 3.0f})
         require(Typography::canvasHeight(12, zoom, 11) * zoom >= 10.999f
                 && Typography::canvasHeight(12, zoom, 11) * zoom <= 15.001f, "Canvas text respects screen floor and 1.25x ceiling.");
@@ -69,8 +77,8 @@ void screenshots(const juce::File& directory)
 {
     require(directory.createDirectory().wasOk(), "Create evidence directory.");
     val::application::WorkspaceService workspace;
-    for (auto item : {std::pair{"Input", val::domain::Position{0, 0}}, {"DC Generator", {0, 140}},
-                      {"Sum", {240, 70}}, {"Output", {480, 70}}, {"Delay", {240, 230}}})
+    for (auto item : {std::pair{"Input", val::domain::Position{-600, 0}}, {"DC Generator", {-500, 140}},
+                      {"Sum", {0, 70}}, {"Output", {900, 70}}, {"Delay", {0, 230}}})
         require(workspace.createNode(item.second, item.first, {{"audio.type", std::string(item.first)}}).succeeded, "Create review graph.");
     std::vector<val::domain::GraphId> ids;
     for (const auto& [id, node] : workspace.graph().nodes) { juce::ignoreUnused(node); ids.push_back(id); }
@@ -79,7 +87,16 @@ void screenshots(const juce::File& directory)
             && workspace.connect({ids[1], Port::output}, {ids[2], Port::input}).succeeded
             && workspace.connect({ids[2], Port::output}, {ids[3], Port::input}).succeeded, "Review graph is executable and includes inert Delay.");
     MainComponent shell(workspace); // Empty backend factory: no native discovery or playback.
+    shell.setSize(1000, 700);
+    shell.dockWorkspace().canvas().fitGraph();
+    save(shell.createComponentSnapshot(shell.getLocalBounds(), true, 1.0f, juce::SoftwareImageType{}),
+         directory.getChildFile("shell-default.png"));
+    shell.setSize(800, 600);
+    shell.dockWorkspace().canvas().fitGraph();
+    save(shell.createComponentSnapshot(shell.getLocalBounds(), true, 1.0f, juce::SoftwareImageType{}),
+         directory.getChildFile("shell-compact.png"));
     shell.setSize(1440, 900);
+    shell.dockWorkspace().canvas().fitGraph();
     for (float scale : {1.0f, 1.25f, 1.5f, 2.0f})
         save(shell.createComponentSnapshot(shell.getLocalBounds(), true, scale, juce::SoftwareImageType{}),
              directory.getChildFile("shell-" + juce::String(scale * 100, 0) + ".png"));

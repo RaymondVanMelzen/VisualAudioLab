@@ -24,6 +24,9 @@ struct NodeProcessContext
     int channels{}, stride{}, frames{};
     const application::AudioBuffer& hardware;
     int hardwareOffset{};
+    /** Endpoint-local channel to compact host-buffer slot; null keeps the legacy identity map. */
+    const int* hardwareChannelMap{};
+    bool hardwareEndpointActive{true};
 };
 
 /** Stable physical-domain parameter metadata; linear target ramps have sample-time duration. */

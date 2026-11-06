@@ -242,7 +242,68 @@ void testExplicitRouting()
     graph.connections = {{1, 3}, {2, 3}, {3, 4}, {3, 2}};
     require(!engine.publish(graph, 2).succeeded, "Sources reject incoming edges.");
     graph.nodes.push_back({5, AudioNodeType::output});
-    require(!engine.publish(graph, 2).succeeded, "Multiple destinations are explicitly deferred, not last-writer-wins.");
+    require(!engine.publish(graph, 2).succeeded, "Legacy identity-mapped destinations cannot overlap host channels.");
+    require(engine.stop().succeeded, "Stop initial explicit-sum route.");
+
+    AudioGraph multiOutput;
+    AudioNodeDefinition source{10, AudioNodeType::dcGenerator};
+    source.channels = 1;
+    source.parameters = {{0, 0.25f}};
+    AudioNodeDefinition left{11, AudioNodeType::output};
+    left.channels = 1; left.hardwareEndpoint = true; left.hardwareChannelMap = {1};
+    AudioNodeDefinition right{12, AudioNodeType::output};
+    right.channels = 1; right.hardwareEndpoint = true; right.hardwareChannelMap = {3};
+    multiOutput.nodes = {source, left, right};
+    multiOutput.connections = {{10, 11}, {10, 12}};
+    std::array<float, 32> channel0{}, channel1{}, channel2{}, channel3{};
+    float* outputs[]{channel0.data(), channel1.data(), channel2.data(), channel3.data()};
+    AudioBuffer fourChannelOutput{nullptr, outputs, 0, 4, 8};
+    const auto multiOutputStarted = engine.startOffline({48000, 128, 512, 0, 4}, multiOutput, 1);
+    require(multiOutputStarted.succeeded, multiOutputStarted.error);
+    render(engine, fourChannelOutput);
+    require(channel0[0] == 0 && channel1[7] == 0.25f && channel2[0] == 0 && channel3[7] == 0.25f,
+            "Sparse output rows write only their exact compact stream channels.");
+    auto overlap = multiOutput;
+    overlap.nodes[2].hardwareChannelMap = {1};
+    require(!engine.publish(overlap, 2).succeeded, "Overlapping output endpoint rows fail explicitly.");
+    require(engine.stop().succeeded, "Stop multi-output routing.");
+
+    AudioGraph adapted;
+    AudioNodeDefinition mono{20, AudioNodeType::dcGenerator};
+    mono.channels = 1; mono.parameters = {{0, -0.5f}};
+    AudioNodeDefinition stereo{21, AudioNodeType::output};
+    stereo.channels = 2; stereo.hardwareEndpoint = true; stereo.hardwareChannelMap = {0, 2};
+    adapted.nodes = {mono, stereo};
+    adapted.connections = {{20, 21, val::domain::AudioAdapter::monoToStereo}};
+    require(engine.startOffline({48000, 128, 512, 0, 3}, adapted, 1).succeeded,
+            "Explicit dual-mono adapter connects a mono source to a stereo destination.");
+    std::array<float, 32> adapted0{}, adapted1{}, adapted2{};
+    float* adaptedOutputs[]{adapted0.data(), adapted1.data(), adapted2.data()};
+    AudioBuffer adaptedBuffer{nullptr, adaptedOutputs, 0, 3, 8};
+    render(engine, adaptedBuffer);
+    require(adapted0[0] == -0.5f && adapted1[0] == 0 && adapted2[0] == -0.5f,
+            "Explicit adapter duplicates mono into the destination's selected channels only.");
+    auto implicit = adapted; implicit.connections[0].adapter = val::domain::AudioAdapter::none;
+    require(!engine.publish(implicit, 2).succeeded, "Unequal source and destination widths require a visible adapter.");
+    require(engine.stop().succeeded, "Stop adapter routing.");
+
+    AudioGraph sparseInput;
+    AudioNodeDefinition input{30, AudioNodeType::input};
+    input.channels = 1; input.hardwareEndpoint = true; input.hardwareChannelMap = {1};
+    AudioNodeDefinition output{31, AudioNodeType::output};
+    output.channels = 1; output.hardwareEndpoint = true; output.hardwareChannelMap = {0};
+    sparseInput.nodes = {input, output};
+    sparseInput.connections = {{30, 31}};
+    std::array<float, 16> input0{}, input1{}, output0{};
+    input0.fill(0.125f); input1.fill(-0.75f);
+    const float* sparseInputs[]{input0.data(), input1.data()};
+    float* sparseOutputs[]{output0.data()};
+    AudioBuffer sparseBuffer{sparseInputs, sparseOutputs, 2, 1, 8};
+    require(engine.startOffline({48000, 128, 512, 2, 1}, sparseInput, 1).succeeded,
+            "Input and output endpoint widths are independent and may be sparse.");
+    render(engine, sparseBuffer);
+    require(output0[0] == -0.75f, "Input map selects the exact named channel packed by the stream mapping.");
+    require(engine.stop().succeeded, "Stop sparse endpoint route.");
 }
 
 thread_local std::uint64_t ticks{};

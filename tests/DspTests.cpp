@@ -12,6 +12,7 @@
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <numeric>
 #include <type_traits>
 
 namespace
@@ -389,6 +390,38 @@ void testGeneratorSources()
     const auto tone = renderSource(oscillator, 480, 17);
     require(std::abs(tone[12] - 0.5f) < 1.0e-5f && std::abs(tone[24]) < 1.0e-5f,
             "Signal Generator produces the requested 1 kHz sine at a -6.0206 dBFS peak.");
+
+    SignalGeneratorNode square;
+    initial(square, signalWaveform, static_cast<float>(SignalWaveform::square));
+    initial(square, signalFrequency, 1000);
+    initial(square, signalLevelDb, -12);
+    prepare(square, 48000, 1);
+    const auto squareSamples = renderSource(square, 48000, 127);
+    const auto squarePeak = *std::max_element(squareSamples.begin(), squareSamples.end());
+    const auto squareRms = std::sqrt(std::inner_product(squareSamples.begin(), squareSamples.end(),
+        squareSamples.begin(), 0.0) / static_cast<double>(squareSamples.size()));
+    const auto targetPeak = std::pow(10.0, -12.0 / 20.0);
+    require(std::abs(squarePeak - targetPeak) < 1.0e-5
+                && std::abs(20.0 * std::log10(squareRms) + 12.0) < 0.001,
+            "Square Output Level is target sample peak; its measured RMS equals that peak.");
+
+    NoiseGeneratorNode whiteQuiet, whiteLoud;
+    initial(whiteQuiet, 0, 0);
+    initial(whiteQuiet, 1, -18);
+    initial(whiteQuiet, 2, 12345);
+    initial(whiteLoud, 0, 0);
+    initial(whiteLoud, 1, -12);
+    initial(whiteLoud, 2, 12345);
+    prepare(whiteQuiet, 48000, 1); prepare(whiteLoud, 48000, 1);
+    const auto quietNoise = renderSource(whiteQuiet, 48000, 113);
+    const auto loudNoise = renderSource(whiteLoud, 48000, 251);
+    const auto expectedGainRatio = std::pow(10.0, 6.0 / 20.0);
+    require(std::abs(loudNoise[100] / quietNoise[100] - expectedGainRatio) < 1.0e-5,
+            "Noise uses the same dB-to-linear peak-referenced scale while preserving deterministic seed behavior.");
+    const auto noiseRms = std::sqrt(std::inner_product(loudNoise.begin(), loudNoise.end(),
+        loudNoise.begin(), 0.0) / static_cast<double>(loudNoise.size()));
+    require(std::abs(20.0 * std::log10(noiseRms) + 12.0) < 0.15,
+            "White-noise RMS is measured separately from its configured peak-referenced amplitude scale.");
 
     const auto configuredSweep = [](SignalGeneratorNode& node)
     {

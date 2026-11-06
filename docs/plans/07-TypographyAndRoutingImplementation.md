@@ -17,7 +17,7 @@ first layer removes that restriction without inventing independent device buses.
 
 | Area | Decision |
 |---|---|
-| Endpoint identity/lifetime | Keep document-local stable GraphIds and existing Input/Output instances in this layer. Do not silently replace/delete legacy instances or change their IDs. Fixed system-owned rails require the next schema/UI layer. |
+| Endpoint identity/lifetime | Keep document-local stable GraphIds and existing Input/Output instances in this layer. Do not silently replace/delete legacy instances or change their IDs. The UI follow-up pins the existing instances visually; true system-owned descriptors/lifetime still require a schema/model layer. |
 | Supported endpoints | Selected hardware input, the seven existing internal generators, zero-input scripts and the main hardware output. Application Capture, File Player, Virtual Audio Device, Recorder, Streaming and plugins are deferred. |
 | Machine binding | Device tokens are inventory-scoped; project files must not persist them. Existing machine-local settings retain explicit backend/device names and selected driver indices. Discovery/inspection errors remain visible; Start never falls back. |
 | Channel identity | AudioBackends already opens explicit BigInteger masks and rejects changed active masks. RuntimePanel exposes named contiguous groups. Keep these exact indices; do not replace them with first-N selection. |
@@ -60,6 +60,26 @@ Windows validation is not macOS qualification. Offline rendering/tests are not
 physical audio, multi-monitor DPI transition, screen-reader or long-session
 fatigue qualification. Record actual results and remaining gaps with delivery.
 
+## Follow-up canvas presentation
+
+The follow-up review layer places existing hardware Input and generator source
+instances in a fixed, scrollable Sources rail, existing Main Output in a fixed
+Destinations rail, and keeps user processors in the panning/zooming center.
+Rail cards route through their original graph IDs; their serialized node
+positions remain for version-1 compatibility, while canvas selection cannot
+move or delete endpoints. It is a presentation/lifetime guard only, **not** the
+target system-owned endpoint registry, readiness/device-binding model, or
+per-bus schema. Device and exact named channels remain configured in Audio
+Setup; only the currently implemented hardware input, internal generators and
+Main Output are represented.
+
+User legibility review raised shared menu/body/status/label roles and node
+titles above the original dense 10–12 px ramp. Canvas operational labels keep
+at least 14 screen pixels at semantic zoom levels; below 80% only titles remain
+and full detail returns at 110%. Analysis visibility also stays active down to
+65% zoom after Fit on the narrower center canvas. This does not add a global
+scale preference or OS text size/high-contrast integration.
+
 ## Verification recorded for this layer
 
 - Windows x64 Release: clean all-target build, followed by rebuilt final
@@ -69,7 +89,8 @@ fatigue qualification. Record actual results and remaining gaps with delivery.
 - Typography tests load every embedded face, check actual tabular/monospace
   advances, feature settings, formatting thresholds, stable unit placement and
   semantic zoom limits. Windows software-rendered shell snapshots at 100%, 125%,
-  150% and 200%, a dialog, script editor and canvas zoom tiers were captured.
+  150% and 200%, default 1000x700, constrained 800x600, a dialog, script editor
+  and canvas zoom tiers were captured.
   Representative shell/dialog/editor/zoom captures were inspected.
 - Audio tests exercise multi-root Sum/fan-out, direct routes, inert branches,
   duplicate/cycle/dimension rejection, capture inactivity and callback allocation

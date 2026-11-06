@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 #include <val/presentation/MainComponent.h>
+#include <val/presentation/WindowPlacement.h>
+#include <array>
 
 template <typename ComponentType>
 ComponentType* findControl(juce::Component& parent)
@@ -103,6 +105,42 @@ int main(int argc, char** argv)
         const juce::ScopedJuceInitialiser_GUI initialise;
         using namespace val::presentation;
         ShellTheme::setGlowEnabled(true);
+        const auto placement = fitWindowToUserArea({-600, -400, 1800, 1200}, {100, 50, 1280, 720});
+        require(placement.bounds == juce::Rectangle<int>(100, 50, 1280, 720)
+                    && placement.minimumWidth == 640 && placement.minimumHeight == 380
+                    && placement.maximumWidth == 1280 && placement.maximumHeight == 720,
+                "Oversized and off-screen window bounds fit the logical usable display area.");
+        const auto smallDisplayPlacement = fitWindowToUserArea({-50, 20, 1000, 700}, {-1280, 100, 640, 480});
+        require(smallDisplayPlacement.bounds == juce::Rectangle<int>(-1280, 100, 640, 480)
+                    && smallDisplayPlacement.minimumWidth == 640 && smallDisplayPlacement.minimumHeight == 380,
+                "Small-display fitting adapts resize minima to keep the full usable area reachable.");
+        const std::array<juce::Rectangle<int>, 4> scaledWorkAreas{{
+            {0, 0, 1536, 834}, // 1920x1080 at 125%, less logical taskbar/work-area insets.
+            {0, 0, 1280, 693}, // 150%.
+            {0, 0, 1097, 577}, // 175%, including a logical taskbar inset.
+            {0, 0, 960, 520}   // 200%.
+        }};
+        for (const auto area : scaledWorkAreas)
+        {
+            const auto fitted = fitWindowToUserArea({0, 0, 1100, 720}, area);
+            require(fitted.bounds.getWidth() <= area.getWidth()
+                        && fitted.bounds.getHeight() <= area.getHeight()
+                        && fitted.bounds.getX() >= area.getX()
+                        && fitted.bounds.getY() >= area.getY()
+                        && fitted.bounds.getRight() <= area.getRight()
+                        && fitted.bounds.getBottom() <= area.getBottom()
+                        && fitted.minimumWidth <= fitted.bounds.getWidth()
+                        && fitted.minimumHeight <= fitted.bounds.getHeight(),
+                    "Scaled logical work areas, including 1920x1080 at 175%, fit without a 800x600 minimum.");
+        }
+        const auto highDpi175 = fitWindowToUserArea({0, 0, 1100, 720}, scaledWorkAreas[2]);
+        require(highDpi175.bounds == juce::Rectangle<int>(0, 0, 1097, 577)
+                    && highDpi175.minimumWidth == 640 && highDpi175.minimumHeight == 380,
+                "The 175% work-area regression preserves usable bounds and product-sized resize minima.");
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        if (const auto* primary = displays.getPrimaryDisplay())
+            require(displayForRestoredBounds(displays, {100000, 100000, 800, 600}) == primary,
+                    "A saved window on a disconnected monitor recovers to the primary display.");
         val::application::WorkspaceService service;
         MainComponent shell(service);
         shell.setSize(1000, 700);
@@ -112,12 +150,30 @@ int main(int argc, char** argv)
         shell.setInspectorVisible(false);
         require(!shell.inspectorVisible(), "Inspector can collapse without a backend.");
         shell.setSize(800, 600);
+        shell.setSize(500, 400);
+        require(shell.getChildComponent(1)->getHeight() == 66
+                    && shell.getChildComponent(2)->getHeight() == 30
+                    && shell.getChildComponent(5)->getY()
+                        >= shell.getChildComponent(2)->getBottom(),
+                "Compact windows reflow toolbar actions and transport/patch controls into reachable rows.");
+        shell.setSize(1097, 577);
+        for (int i = 0; i < shell.getNumChildComponents(); ++i)
+        {
+            const auto bounds = shell.getChildComponent(i)->getBounds();
+            require(bounds.getY() >= 0 && bounds.getBottom() <= shell.getHeight(),
+                    "Essential shell and workspace components remain inside a 175%-scaled logical work area.");
+        }
+        const auto* startAtHighDpi = findButton(shell, "Start (F5)");
+        require(startAtHighDpi != nullptr && startAtHighDpi->isVisible()
+                    && !startAtHighDpi->getLocalBounds().isEmpty(),
+                "The transport action remains available at 175%-geometry logical dimensions.");
+        shell.setSize(800, 600);
         shell.setInspectorVisible(true);
         shell.showStatus("Test status");
 
         juce::Array<juce::CommandID> commands;
         shell.getAllCommands(commands);
-        require(commands.size() == 16, "Shell registers fixed-panel, project, effects and explicit transport commands.");
+        require(commands.size() == 17, "Shell registers fixed-panel, project, effects, transport and About commands.");
         auto commandId = [&](const juce::String& name)
         {
             for (const auto id : commands)
@@ -131,6 +187,8 @@ int main(int argc, char** argv)
         };
         require(menuContains(shell.getMenuForIndex(3, "Audio"), "Audio Setup"),
                 "Audio menu contains the sole Audio Setup entry.");
+        require(menuContains(shell.getMenuForIndex(4, "Help"), "About Visual Audio Lab"),
+                "Help menu exposes About Visual Audio Lab.");
         require(menuContains(shell.getMenuForIndex(2, "View"), "Reduced effects (no glow)"),
                 "View menu exposes a discoverable reduced-effects mode.");
         const auto reducedEffects = commandId("Reduced effects (no glow)");
@@ -145,8 +203,12 @@ int main(int argc, char** argv)
         require(findButton(shell, "Audio Setup") == nullptr,
                 "Main toolbar and view contain no Audio Setup button.");
         const auto audioMenu = shell.getMenuForIndex(3, "Audio");
-        require(menuContains(audioMenu, "Start") && menuContains(audioMenu, "Stop"),
-                "Audio menu exposes explicit Start and Stop.");
+        require(menuContains(audioMenu, "Start (F5)") && menuContains(audioMenu, "Stop (Shift+F5)"),
+                "Audio menu distinguishes the F5 toggle from the explicit Shift+F5 stop.");
+        juce::ApplicationCommandInfo startInfo(commandId("Start (F5)"));
+        shell.getCommandInfo(startInfo.commandID, startInfo);
+        require((startInfo.flags & juce::ApplicationCommandInfo::isDisabled) == 0,
+                "Start remains invokable with an invalid or unfinished device configuration so F5 can explain the issue.");
 
         auto& canvas = shell.dockWorkspace().canvas();
         const auto dropPoint = canvas.viewport().getCentre();
@@ -173,6 +235,17 @@ int main(int argc, char** argv)
                     && std::get<std::string>(tunerNode.parameters.at("visualization.kind")) == "Guitar Tuner"
                     && service.graph().connections.empty() && !shell.runtime().running(),
                 "The Guitar Tuner is a pass-through analyzer instance with its own view and no implicit wiring or playback.");
+        shell.insertModule("Signal Generator", dropPoint.toFloat());
+        const auto& signalGenerator = service.graph().nodes.rbegin()->second;
+        require(std::get<std::string>(signalGenerator.parameters.at("audio.type")) == "Signal Generator"
+                    && std::get<double>(signalGenerator.parameters.at("audio.param.levelDb")) == -6.0,
+                "A newly inserted Signal Generator starts at an adjustable -6 dBFS peak target.");
+        shell.insertModule("Noise Generator", dropPoint.toFloat());
+        const auto& noiseGenerator = service.graph().nodes.rbegin()->second;
+        require(std::get<std::string>(noiseGenerator.parameters.at("audio.type")) == "Noise Generator"
+                    && std::get<double>(noiseGenerator.parameters.at("audio.param.levelDbRms")) == -6.0
+                    && service.graph().connections.empty() && !shell.runtime().running(),
+                "A newly inserted Noise Generator uses the peak-reference starting target without wiring or starting audio.");
 
         require(shell.perform(juce::ApplicationCommandTarget::InvocationInfo(commandId("Audio Setup"))),
                 "Audio Setup command opens its dialog.");
@@ -223,7 +296,7 @@ int main(int argc, char** argv)
                 && fixed.panel(PanelId::patchCanvas).isVisible(),
                 "Patch Canvas cannot be collapsed.");
 
-        require(shell.getMenuBarNames() == juce::StringArray{"File", "Edit", "View", "Audio"},
+        require(shell.getMenuBarNames() == juce::StringArray{"File", "Edit", "View", "Audio", "Help"},
                 "All shell menu groups are discoverable.");
         for (int index = 0; index < shell.getMenuBarNames().size(); ++index)
             require(shell.getMenuForIndex(index, {}).getNumItems() > 0, "Menus contain framework entries.");

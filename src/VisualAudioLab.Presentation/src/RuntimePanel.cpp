@@ -35,8 +35,7 @@ bool hasZeroInputSourceOnOutput(const audio::AudioGraph& graph)
             || node.type == audio::AudioNodeType::burstGenerator
             || node.type == audio::AudioNodeType::chirpGenerator
             || node.type == audio::AudioNodeType::noiseGenerator
-            || node.type == audio::AudioNodeType::dcGenerator
-            || (node.type == audio::AudioNodeType::script && node.script && node.script->inputs().empty());
+            || node.type == audio::AudioNodeType::dcGenerator;
         if (generated && std::binary_search(dependencies.begin(), dependencies.end(), node.id))
             return true;
     }
@@ -955,20 +954,6 @@ void RuntimePanel::timerCallback()
             else ++it;
     }
     if (++ticks_ % 15 != 0) return;
-    for (const auto& node : acceptedAudio_.nodes)
-        if (node.type == audio::AudioNodeType::script)
-        {
-            const auto fault = engine_.scriptFault(revision_, node.id);
-            if (fault.value && fault.value->code != script::FaultCode::none)
-            {
-                const auto failed = *fault.value;
-                const auto stopped = stop();
-                message("Script node " + juce::String(node.id) + " fault " + juce::String(static_cast<int>(failed.code))
-                    + " at " + juce::String(failed.source.line) + ":" + juce::String(failed.source.column)
-                    + (stopped.succeeded ? ". Transport stopped; fix and restart." : ". Stop failed: " + text(stopped.error)));
-                return;
-            }
-        }
     const auto latency = value.reportedOutputLatencySeconds ? Typography::quantity(*value.reportedOutputLatencySeconds * 1000, 1, "ms") + " reported out"
                                                             : juce::String("latency unavailable");
     const auto inputLatency = value.reportedInputLatencySeconds ? Typography::quantity(*value.reportedInputLatencySeconds * 1000, 1, "ms") + " in"

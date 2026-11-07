@@ -87,15 +87,15 @@ width so numbers still do not shift.
 ### 3.2 Decision
 
 **Standard code font: JetBrains Mono (Regular 400, Bold 700 for keywords).**
-Ligatures are **off by default** (a script language with `<=`, `:=` and `->`
-should show the characters the user types) and available as a preference.
+Ligatures are **off by default** so technical notation such as `<=`, `:=` and
+`->` remains visually explicit.
 
 Fallback stack (code): JetBrains Mono → Cascadia Mono → Consolas (Windows) →
 SF Mono → Menlo (macOS) → monospace.
 
-Used for: VAL Script editor, diagnostics and compile messages, expression and
-formula fields, hex/bit and sample-index columns, log panes, file paths in
-error text. It is **not** used for ordinary numeric parameter readouts.
+Used for: technical identifiers, expression and formula fields, hex/bit and
+sample-index columns, log panes, and file paths in error text. It is **not**
+used for ordinary numeric parameter readouts.
 
 ## 4. Data typography
 
@@ -119,7 +119,7 @@ smaller and quieter.
   "monospace = something I can type or paste".
 
 Exceptions where mono is allowed: multi-column numeric tables (FFT peak list,
-sample dumps, MIDI/hex), and any value that is a literal in a script.
+sample dumps, MIDI/hex), and literal technical values.
 
 ### 4.3 Formatting rules
 
@@ -262,7 +262,7 @@ Rules:
 | **Parameter value** | **Never truncated.** Reduce decimals, then switch SI prefix (`1250 Hz` → `1.25 kHz`); widen the field if needed |
 | Unit | Never hidden when value is shown |
 | Endpoint / device names (rails) | End-ellipsis after 24 chars, tooltip shows full name and channel list |
-| Script names, file names | Middle-ellipsis to keep extension |
+| Source names, file names | Middle-ellipsis to keep extension |
 
 ### 7.4 Weight compensation
 
@@ -312,73 +312,7 @@ supporting numbers, then axes.
 - Updates throttle numeric text to ≤ 10 Hz for readability (graphics
   continue at display rate); peak-hold values freeze for 1.5 s.
 
-## 9. Script editor
-
-The editor is intended to feel like a modern, readable successor to the
-Turbo Pascal / Delphi / Visual Basic IDE: classic blocks, a clear gutter,
-a message pane at the bottom, and a restrained high-contrast palette.
-
-### 9.1 Typography
-
-| Element | Font | Weight | Size | Notes |
-|---------|------|--------|------|-------|
-| Code | JetBrains Mono | 400 | 13 | Line height 1.5, ligatures off |
-| Keywords (`begin`, `end`, `if`, `procedure`) | JetBrains Mono | 700 | 13 | Bold keywords as in Delphi |
-| Line numbers | JetBrains Mono | 400 | 11.5 | Right-aligned, muted, tabular by nature |
-| Gutter markers (breakpoint, error, warning) | Icons + shape | — | 12 | Not colour-only |
-| Diagnostics list | JetBrains Mono | 400 | 12 | Severity tag bold |
-| Status line (`Ln 12, Col 8  UTF-8  VAL`) | Inter `tnum` | 500 | 11 | |
-
-### 9.2 Syntax colour roles
-
-Roles are defined here; exact hex values live in the theme tokens
-(`docs/plans/06-PremiumPaletteAndGlowGuidelines.md`). Every role also differs
-in weight or style so the scheme survives colour-vision deficiency.
-
-| Role | Style | Hue family |
-|------|-------|-----------|
-| Keyword | **Bold** | Blue/cyan |
-| Type / module name | Regular | Teal |
-| Function / procedure | Regular | Warm yellow |
-| Number / unit literal | Regular | Orange |
-| String | Regular | Green |
-| Comment | *Italic*, reduced contrast (4.5:1 minimum) | Neutral grey-blue |
-| Operator / punctuation | Regular | Light neutral |
-| Parameter / I/O port name | Underline dotted | Magenta |
-| Error | Wavy underline + gutter ✕ | Red |
-| Warning | Dotted underline + gutter ▲ | Amber |
-| Selection | Background plate | Accent at 30% |
-| Matching bracket | Box outline | Accent |
-
-Comments are the only italic style (kept italic in the editor only; code
-font italic must be an actual italic face, not a synthesized slant).
-
-### 9.3 Diagnostics and compile messages
-
-```
- Messages                                                [Errors 2] [Warnings 1]
- ✕ E012  eq.val(14,9)   Undefined identifier 'cutof'. Did you mean 'cutoff'?
- ✕ E031  eq.val(22,1)   Expected 'end' to close 'begin' at line 18.
- ▲ W004  eq.val(9,5)    Variable 'gain' is assigned but never read.
- ✓ Compiled 0.12 s · 3 modules · 128 samples block
-```
-
-- Severity word is always present with a glyph (`✕ E`, `▲ W`, `ⓘ H`), not
-  colour alone.
-- Location (`file(line,col)`) is clickable and in tabular mono.
-- Messages are sentence-style, one line, wrap at the pane width with hanging
-  indent. Suggested fixes use quotes in code font.
-- A summary line (`✓ Compiled…` / `✕ 2 errors`) is 12/600 in Inter.
-
-### 9.4 Classic-IDE familiarity
-
-- Blocky, left-aligned layout; the gutter has a thin vertical rule.
-- Bold keywords and keyword-style indentation (2 spaces default; tab width
-  configurable) as in Pascal editors.
-- A status line under the editor: `Ln:Col | Insert/Overwrite | Modified | VAL`.
-- Bottom Messages pane (Delphi style) and an optional blue-on-grey
-  "Classic" theme as a nostalgic preset (Turbo Pascal navy) alongside Dark and
-  Light.
+## 9. Accessibility and platform support
 
 ## 10. Accessibility and platform support
 
@@ -477,12 +411,6 @@ font italic must be an actual italic face, not a synthesized slant).
  ● Running   48 kHz · 64 samples · 1.3 ms    CPU 12 %    Dropouts 0    Out: Main
 ```
 Segments are fixed-width tabular so changing numbers never move neighbours.
-
-### 12.4 Script diagnostic
-
-```
- ✕ E012  gain.val(14,9)   Undefined identifier 'cutof'. Did you mean 'cutoff'?
-```
 
 ## 13. Rationale summary
 

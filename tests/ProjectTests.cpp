@@ -2,6 +2,7 @@
 #include <val/application/ProjectSession.h>
 #include <val/infrastructure/LocalProjectStore.h>
 #include <juce_core/juce_core.h>
+#include <algorithm>
 #include <limits>
 
 namespace
@@ -60,6 +61,18 @@ void testProjects(const ProjectDirectory& directory)
     require(workspace.createNode({300, 10}, "Destination").succeeded, "Create second node.");
     const auto b = workspace.lastCreatedNode();
     require(workspace.connect({a, domain::Port::output}, {b, domain::Port::input}).succeeded, "Connect nodes.");
+    const std::string legacySource = "NODE LegacyPass AT AUDIO;\nINPUT X: REAL;\nOUTPUT Y: REAL;\nBEGIN Y := X END.";
+    require(workspace.setParameter(a, "audio.type", std::string("Script")).succeeded
+            && workspace.setParameter(a, "audio.script", legacySource).succeeded
+            && workspace.setParameter(a, "audio.param.Gain", 0.75).succeeded
+            && workspace.setParameter(b, "audio.type", std::string("Gain")).succeeded
+            && workspace.setParameter(b, "audio.control.gain.source", std::string("script")).succeeded
+            && workspace.setParameter(b, "audio.control.gain.offset", 0.1).succeeded
+            && workspace.setParameter(b, "audio.control.gain.depth", 0.5).succeeded
+            && workspace.setParameter(b, "audio.control.gain.minimum", 0.0).succeeded
+            && workspace.setParameter(b, "audio.control.gain.maximum", 1.0).succeeded
+            && workspace.setParameter(b, "audio.control.gain.script", std::string("legacy scalar source")).succeeded,
+            "Seed an unsupported legacy Script module and scalar mapping as ordinary project metadata.");
     require(workspace.setParameter(a, "gain", 0.125).succeeded
             && workspace.setParameter(a, "enabled", true).succeeded
             && workspace.setParameter(a, "label", std::string("hello")).succeeded
@@ -90,7 +103,16 @@ void testProjects(const ProjectDirectory& directory)
             "Save As Unicode project: " + saved.error + " (result=" + std::to_string(saved.succeeded)
                 + ", dirty=" + std::to_string(session.dirty()) + ")");
     const auto loaded = store.read(unicodePath);
-    require(loaded.file && loaded.file->state == original, "All patches, graphs, parameters and layout round-trip.");
+    require(loaded.file && loaded.file->state == original,
+            "Loaded project preserves all patches and saved document data.");
+    const auto legacyPatch = std::find_if(loaded.file->state.patches.begin(), loaded.file->state.patches.end(),
+        [&](const auto& patch) { return patch.second.graph.nodes.contains(a) && patch.second.graph.nodes.contains(b); });
+    require(legacyPatch != loaded.file->state.patches.end()
+            && std::get<std::string>(legacyPatch->second.graph.nodes.at(a).parameters.at("audio.script")) == legacySource
+            && std::get<std::string>(legacyPatch->second.graph.nodes.at(b).parameters.at("audio.control.gain.script"))
+                == "legacy scalar source"
+            && legacyPatch->second.graph.connections.size() == 1,
+            "All patches, legacy VAL Script source/mapping parameters and graph connections round-trip without loss.");
     require(loaded.file->source.find('\n') != std::string::npos, "JSON is human readable.");
     require(session.recent().size() == 1 && session.save().succeeded && session.recent().size() == 1,
             "Save deduplicates Recent Files.");

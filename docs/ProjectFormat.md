@@ -115,6 +115,16 @@ All shown fields are required. Additional patches use the same structure. Node a
 
 Parameters are a JSON object with nonempty keys up to 128 UTF-8 bytes and values of `null`, boolean, finite binary64 number or string. Structural and application-level metadata remain scalar; the DSP mapper interprets only explicit, supported keys. Examples include `audio.type`, numeric `audio.param.<name>` base values, boolean `audio.bypass`, the Signal Generator's `audio.scaleIntervals` comma-separated semitone string, and typed scalar mappings such as `audio.control.frequencyHz.source`, `.offset`, `.depth` and `.rateHz`. Mapping fields identify a single continuous destination parameter and an explicit source; they do not represent audio connections. Unknown or invalid DSP types/ranges/bindings are rejected when mapping a runtime graph rather than guessed. Runtime automation/overrides are transient and are not serialized as curves. Collections, processor state blobs and arbitrary parameter automation are not schema 1.1 value types.
 
+VAL Script project data is a compatibility exception in behavior, not a schema
+feature: old scalar keys including `audio.type: "Script"`, `audio.script`,
+`audio.control.<parameter>.source: "script"` and related mapping parameters
+remain intact as ordinary values. Node IDs, geometry, names and connections
+also remain unchanged. The codec does not compile, execute, strip or migrate
+these fields. The retired runtime rejects affected nodes/mappings with an
+explicit diagnostic; saving preserves them so users can replace unsupported
+content without losing the original source or topology. See
+[ValScriptRetirementPlan.md](ValScriptRetirementPlan.md).
+
 Node origins are bounded to +/-1,000,000 patch units. Zoom is 0.025-3.0 and viewport offsets are bounded to +/-3,000,000 pixels. Connections must be output-to-input, with valid node references, no self-links/cycles/duplicate wires and at most one incoming wire per input, except an explicit `audio.type: "Sum"` utility. Outputs allow fan-out. These are the same rules as editor-created graphs.
 
 Dock numbers are `0 = left`, `1 = centre`, `2 = right`, `3 = bottom`. Canvas visibility must be true. Ratios are left/right/bottom, finite and within 0.1-0.5. `selectedPanels` contains one known-panel index for each dock (left/centre/right/bottom), with indices matching the panel list above and `-1` for none. Invalid or unavailable selected tabs fall back to an existing tab without losing any panel. Window width is 800-7680, height 600-4320, and x/y within +/-1,000,000; usable placement is reconciled with the current displays.

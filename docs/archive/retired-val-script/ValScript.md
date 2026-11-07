@@ -1,11 +1,15 @@
 # VAL Script version 1: implemented audio kernels
 
+> Archived historical specification. VAL Script was retired; this document
+> does not describe supported application behavior. See
+> [ValScriptRetirementPlan.md](../../ValScriptRetirementPlan.md).
+
 This is the implemented subset of [ValScriptArchitecture.md](ValScriptArchitecture.md),
 not a claim that every proposed feature exists. The local C++20 compiler emits verified
 typed register IR, **not native machine code**. `ScriptNode` executes that finite plan
 once per sample frame inside the existing `AudioGraph`. This is actual buffer processing,
 not a parse-only prototype. The desktop Properties / Script panel now provides source
-editing/loading, examples, Compile/Apply and diagnostics; see [DesktopWorkflow.md](DesktopWorkflow.md).
+editing/loading, examples, Compile/Apply and diagnostics; see [DesktopWorkflow.md](../../DesktopWorkflow.md).
 Loading a project never starts playback. Valid applied source can update an already-running
 graph. There is no plugin integration or external compiler dependency.
 

@@ -1,14 +1,14 @@
 # Signal Generator and Test & Measurement Toolkit
 
 **Status:** implementation is in review qualification. The seven zero-input
-DSP generator classes, editor controls, typed per-parameter LFO/Envelope/
-VAL Script mappings, output-only rendering, worker-backed node previews,
+DSP generator classes, editor controls, typed per-parameter LFO/Envelope
+mappings, output-only rendering, worker-backed node previews,
 generator-aware inspector context, floating Signal Inspector and eight stopped
-`.valab` examples are implemented. The Windows Release build and all 20
-non-device tests pass on the current tree; the native-discovery test is
-deliberately excluded to honor the no-device-probe requirement. Remaining delivery work is
-representative UI evidence, final release-bundle verification and review
-delivery. Nothing here establishes hardware calibration, acoustic
+`.valab` examples are implemented. The Windows Release build and all 18
+non-device CTest tests pass on the current tree; native discovery is
+deliberately excluded to honor the no-device-probe requirement. Representative
+UI evidence remains a separate qualification task. Nothing here establishes
+hardware calibration, acoustic
 qualification or plugin hosting.
 
 This design extends the current [DSP module framework](../DspModules.md),
@@ -49,8 +49,8 @@ preparation-time allocation, block-partition-independent render ownership,
 sample-timestamped parameter event queues and an analyzer worker. This work
 adds seven product sources, saved examples and a bounded per-parameter control
 mapping path. These mappings are explicit project settings, not visible
-control cables or additional audio inputs; the existing audio-rate Script node
-is not repurposed as an audio connection. Persistent automation curves and
+control cables or additional audio inputs. Retired VAL Script nodes remain
+opaque legacy project data and are rejected by the runtime. Persistent automation curves and
 arbitrary plugin hosting remain outside this implementation.
 
 ## Module set and user-facing behavior
@@ -252,22 +252,15 @@ The mapping equation is `effective = base + offset + depth * source`. LFO is a
 sine with normalized range [-1, 1], phase reset by explicit transport Start
 and rate 0.01-20 Hz. One-shot Envelope is a linear 0..1 attack, hold, and
 linear release started by explicit transport Start; its time is derived from
-prepared sample frames. Both use instance-local render state. A Control Script
-is compiled before graph activation, must declare one `INPUT Time: REAL`, one
-REAL output, and no parameters, and receives monotonic elapsed seconds from
-explicit Start. Its declared output range is checked on every sample. All
-sources are evaluated against sample time, never UI refresh or host block
-length, and execute without callback allocation, deallocation, locks,
-compilation, logging, or UI calls.
+prepared sample frames. Both use instance-local render state. All sources are
+evaluated against sample time, never UI refresh or host block length, and
+execute without callback allocation, deallocation, locks, logging, or UI calls.
 
 Only parameters with a continuous smoothing policy can be mapped; discrete
 waveform, mode, scale, mute, seed, transport, and trigger choices reject the
 mapping. Declared source extrema plus offset/depth must stay inside the
 destination's physical domain for the saved base and for subsequently
-accepted parameter events. An out-of-declared-range or failed Script source
-latches a numerical fault and silences that processor until graph replacement
-or explicit restart; it never falls back silently to the base signal.
-Related mapping fields are saved as one undoable node edit and project
+accepted parameter events. Related mapping fields are saved as one undoable node edit and project
 round-trip through the existing scalar parameter format. Runtime scheduled
 events remain session-ephemeral; persistent automation curves/arrangements
 are separate and not implied by these mappings.
@@ -369,7 +362,7 @@ playback, while the measurement workflow indicates which results need capture.
 | Impulse, Click, Burst, Chirp. | Four module editors and shared event/tone primitives. | Exact impulse placement/count, interval rounding, overlap rejection, burst envelope duration, chirp endpoint/phase invariants. |
 | Node preview, inspector and floating monitors. | `NodeView`, `ModuleEditor`, `VisualizationWidgets`, `VisualizationSession`. | UI path tests, worker data freshness, open/close/re-target/freeze behavior, bounded rendering workload and saved monitor state. |
 | Oscilloscope/Spectrum/Peak/RMS/Correlation and patches. | Existing analysis service, analyzer catalog and `.valab` examples. | Correct generator routing, stereo correlation sign/variance and mono-unavailable state, project load/edit/save/reload, explicit Start and stopped-on-open. |
-| Automation, control signals, LFO, Envelope, VAL Script control. | Typed control graph/parameter mapping, scheduler and script boundary. | Type/range/cycle/fan-in rejection, discrete timestamp semantics, sample/block invariance, queue saturation/errors, no allocations/locks. |
+| Automation, control signals, LFO, Envelope. | Typed parameter mapping and scheduler. | Type/range/cycle/fan-in rejection, discrete timestamp semantics, sample/block invariance, queue saturation/errors, no allocations/locks. |
 | Safety, portability and truthful calibration. | Generator editors, audio setup/transport, docs/examples. | Defaults are quiet; no autoplay/fallback; over-range disclosed; room/latency/calibration caveats in each relevant example. |
 
 ## Implementation status and acceptance gates
@@ -386,12 +379,14 @@ inside collapsed Advanced, Automation and Developer disclosures. Noise keeps
 its legacy persisted `levelDbRms` key while the editor labels it as a
 peak-reference target.
 
-The Windows x64 Release build passes all 22 CTest tests, including DSP
-allocation instrumentation, generator-level math, visualization and panel
-integration. Software-rendered default and constrained-width task-editor
-screenshots were captured without starting transport. The review-bundle
-update and PR delivery are tracked separately; this evidence does not qualify
-physical audio output, acoustic calibration, macOS or multi-monitor DPI.
+The Windows x64 Release build passes all 18 non-device CTest tests, including
+DSP allocation instrumentation, generator-level math, visualization and panel
+integration. Native device discovery is excluded to avoid probing hardware.
+Software-rendered default and constrained-width task-editor screenshots were
+captured without starting transport in an earlier review. The current
+retirement PR updates the Windows review bundle but does not refresh those
+screenshots. This evidence does not qualify physical audio output, acoustic
+calibration, macOS or multi-monitor DPI.
 
 No phase claims hard realtime deadlines based only on average CPU or a
 lock-free queue. User hardware, ASIO/vendor drivers, acoustic transducers,
@@ -401,8 +396,8 @@ calibration, plugin hosting and macOS/ARM require their own qualification.
 
 **Implemented:** zero-input DSP source nodes for all seven generator modules;
 prepared DSP lifecycle and per-node state; base parameter layers and bounded
-sample-frame events; typed per-parameter LFO, one-shot Envelope and stateless
-VAL Script scalar mappings for continuous parameters; output-only transport;
+sample-frame events; typed per-parameter LFO and one-shot Envelope mappings
+for continuous parameters; output-only transport;
 deterministic note/custom-scale parsing; scalar project persistence; the
 musician-focused Signal Generator and Noise Generator task editors with
 mode-specific controls, shape previews, output mute and live sample Peak/RMS

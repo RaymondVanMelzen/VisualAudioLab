@@ -26,7 +26,7 @@ Assumptions and unresolved decisions:
 - **A2 - State ownership:** The project system coordinates authoritative editable project state. The editor presents that state; persistence stores it; audio routing maintains active audio state. This is a conceptual ownership rule, not a prescribed data structure.
 - **A3 - Modules:** Reusable patch groupings are a working interpretation of the requested module system. Richer organization/reuse remains proposed 2.0 discovery under FR-13; nested structures, interfaces, sharing, and versioning require design.
 - **A4 - Visualizers:** Basic values and audio/routing status support the existing workflow. Dedicated signal inspection, such as waveform or frequency displays, remains future discovery rather than an MVP promise.
-- **A5 - Scripting:** [ValScriptArchitecture.md](ValScriptArchitecture.md) refines the requested future scripting boundary into bounded DSP-node compilation, not unrestricted project automation. The PRD excludes a custom-code environment from the MVP and does not commit scripting to any later release.
+- **A5 - Custom DSP authoring:** The earlier VAL Script proposal is retired. Visual Audio Lab has no in-product scripting/compiler environment; custom DSP development takes place externally in a FreePascal-based DSP environment. The archived design documents and migration impact are recorded in [ValScriptRetirementPlan.md](ValScriptRetirementPlan.md).
 - **A6 - Processing semantics:** [DspArchitecture.md](DspArchitecture.md) proposes typed rates, explicit channels/conversions, deterministic scheduling and cycle rejection. Detailed limits and budgets still need qualification. Unsupported behavior must be identified rather than guessed.
 - **A7 - Persistence and compatibility:** Local save/reopen is foundational. File representation, external-resource handling, recovery mechanisms, and migration policy are undecided; compatibility and original-preservation requirements still apply.
 - **A8 - Future plugins:** Support future VST3 hosting and plugin export architecturally without making them required for core use or assigning a release. A reusable patch module is not a native plugin. Export packaging and hosting are separate workflows with unresolved eligibility, compatibility and trust policies.
@@ -42,7 +42,6 @@ Assumptions and unresolved decisions:
 | Audio routing | Connection validity, active signal flow, audio processing, and run/stop state. | Saving projects or choosing physical devices on its own. |
 | Audio device manager | Available output capabilities, selection, readiness, and device status. | Patch structure or sound-generation behavior. |
 | Visualizers | Presentation of supported values, status, and optional observations. | Altering sound merely by observing it. |
-| Scripting system | If approved for delivery, local compilation into bounded validated DSP-node artifacts. | Arbitrary host APIs, a bypass around validation, or a prerequisite for visual patching. |
 | Persistence layer | Local read/write outcomes, stored representation, and compatibility reporting. | Deciding user edits or starting audio. |
 
 ## 1. Project system
@@ -61,7 +60,7 @@ Assumptions and unresolved decisions:
 - User lifecycle requests and proposed patch/parameter/layout changes from the patch editor.
 - Node and, when supported, module definitions and validation outcomes.
 - Loaded project content, compatibility findings, and save results from persistence.
-- Routing acceptance, activation outcomes, and runtime status; verified script-node definitions if VAL Script is approved for delivery.
+- Routing acceptance, activation outcomes, and runtime status.
 
 ### Outputs
 
@@ -288,41 +287,7 @@ Assumptions and unresolved decisions:
 
 **Source alignment:** FR-03, FR-04, FR-06; NFR-03, NFR-05, NFR-06; PRD future signal-inspection discovery.
 
-## 8. Scripting system
-
-**Scope:** An optional future conceptual boundary, not a currently approved feature or a requirement for Releases 0.1, 0.5, 1.0, or 2.0. All core workflows must remain usable without scripts.
-
-### Responsibilities
-
-- If approved for delivery, compile VAL Script locally into bounded DSP-node definitions using the language design in ValScriptArchitecture.md.
-- Validate types, ports, resource limits and realtime-safe operation plans outside rendering; report source/compilation/runtime faults explicitly.
-- Preserve project ownership, compiled-versus-active visibility and audio stop behavior; never bypass graph validation.
-- Prohibit script file access, networking, threads and dynamic allocation. Define artifact trust/version policy before loaded content can execute.
-
-### Inputs
-
-- Source text, explicit compile/activation intent and the closed language vocabulary.
-- Node interfaces, parameter/rate metadata and graph validation context.
-- Compilation, preparation and activation outcomes.
-
-### Outputs
-
-- Verified node artifacts for the node system and graph preparation, plus source-aware diagnostics and visible compilation/activation status.
-- Optional persisted script content only if a later product decision defines its ownership and portability.
-- No script hardware, file, network, thread or allocation access; host persistence of source is not script storage permission.
-
-### Dependencies
-
-- **Project system:** Accepted node changes, edit history, and consistent validation.
-- **Node system/audio routing:** Validated node interfaces, verified plans and off-callback preparation; no parser/compiler services in rendering.
-- **Patch editor:** Source editing if approved, compile intent and visible outcomes; source is never a prerequisite for visual use.
-- **Persistence layer, conditional:** Retention of content only after a format/trust decision.
-
-**Open decisions:** Language version, exact resource/precision limits, artifact persistence/trust and release placement remain subject to the language design and validation. VAL Script proposes custom DSP nodes, not AI-generated logic, cloud execution, unrestricted native compilation or automatic execution merely on opening a project. Native plugin loading/export does not expand script capabilities.
-
-**Source alignment:** The PRD explicitly excludes a custom-code environment from the MVP; FR-13 does not commit to a scripting language.
-
-## 9. Persistence layer
+## 8. Persistence layer
 
 ### Responsibilities
 
@@ -337,7 +302,7 @@ Assumptions and unresolved decisions:
 - Explicit load/save requests and local destinations.
 - Consistent project snapshots supplied by the project system.
 - Stored content and declared format/version information.
-- Approved compatibility rules and, only if later supported, module/script content or settings.
+- Approved compatibility rules and supported module content or settings.
 
 ### Outputs
 
@@ -373,7 +338,7 @@ These are architectural requirements from the revision, not a tenth MVP subsyste
 
 | Capability | Responsibilities, inputs and outputs | Dependencies and unresolved decisions |
 |---|---|---|
-| VST3 hosting | Accept explicit discovery/instance requests and plugin descriptors/state; expose validated processor-node metadata and prepared instances, visible scan/load failures, and editor lifecycle/status. Keep discovery/loading and state capture off rendering. | Node system, routing, project/persistence and a JUCE hosting adapter. Decide scan/runtime isolation, binary trust, missing-plugin preservation, automation/latency/tail semantics and support matrix. Arbitrary native plugins are not sandboxed by VAL Script rules. |
+| VST3 hosting | Accept explicit discovery/instance requests and plugin descriptors/state; expose validated processor-node metadata and prepared instances, visible scan/load failures, and editor lifecycle/status. Keep discovery/loading and state capture off rendering. | Node system, routing, project/persistence and a JUCE hosting adapter. Decide scan/runtime isolation, binary trust, missing-plugin preservation, automation/latency/tail semantics and support matrix. Arbitrary native plugins require a separate safety policy. |
 | Plugin export | Accept an eligible validated patch, selected buses/exposed parameters, resources and build/package intent; produce a native plugin artifact or explicit eligibility/build/distribution diagnostics through a future export adapter. | Device-independent routing engine, node validation, versioned state and JUCE/CMake packaging. Export workflow/formats, resource redistribution, identifiers/toolchain UX and supported graphs remain open. No automatic third-party bundling or code-generation commitment. |
 | External-host rendering | Accept host-provided buffers, rate/layout, parameter/timing context and state; return initialized audio, bounded status and declared latency/tails without requiring a window or physical device. | Reusable DSP engine plus future JUCE processor wrapper, separate from the standalone device manager. Reconcile host lifecycle/transport and parameter precision before support claims. |
 
@@ -381,13 +346,13 @@ Future hosted-node dependencies must be identified and preserved when unavailabl
 
 ## Cross-subsystem rules and unresolved policies
 
-- **Single meaning for edits:** Node and connection rules apply equally to user edits, loaded projects, undo/redo, future modules, and any approved scripts.
+- **Single meaning for edits:** Node and connection rules apply equally to user edits, loaded projects, undo/redo and supported modules.
 - **Visible failure:** Validation, load/save, activation, and device failures must reach user-facing feedback. No subsystem may conceal failure behind a success-shaped result.
 - **Independent core:** Saving, help, definitions, examples, patching, and sound use cannot depend on account authentication, cloud services, or AI. Optional future boundaries cannot become mandatory.
 - **Portable intent:** Preserve supported patch meaning across Windows and macOS; treat unavailable hardware settings as reassignment needs, not grounds for losing the patch.
 - **Observability without authority drift:** Editors and visualizers present accepted/active state; they do not become competing sources of patch truth.
 - **Recovery and safety policy:** Live-edit failure handling, automatic restart behavior, default output levels, and recovery after interruption require explicit design. This architecture promises neither uninterrupted audio nor guaranteed hearing protection.
-- **Scope discipline:** The core project/editor/node/routing/device/persistence path supports the PRD's proposed 0.1/0.5 loop. The proposed 1.0 strengthens compatibility and reliability; richer module reuse remains proposed 2.0 discovery. Advanced visualizers and scripting have no approved release placement.
+- **Scope discipline:** The core project/editor/node/routing/device/persistence path supports the PRD's proposed 0.1/0.5 loop. The proposed 1.0 strengthens compatibility and reliability; richer module reuse remains proposed 2.0 discovery. VAL Script is retired and has no implementation target.
 - **Future compatibility without scope expansion:** Keep device/UI ownership outside the render contract for future VST3 hosting and plugin export. Those user-facing features remain outside the MVP and unassigned to Releases 0.1, 0.5, 1.0 and 2.0.
 
 This document establishes functional responsibilities and handoffs only. Implementation design and measurable quality budgets remain separate work.

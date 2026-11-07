@@ -2,7 +2,7 @@
 
 ## Scope and boundaries
 
-`VisualAudioLab.Audio` is a standard C++20 library depending on Application/Domain and the device-independent Script target. It implements `AudioEngine`, `AudioGraph`, Input/Output/Sum, the [DSP module framework](DspModules.md) and verified [VAL Script](ValScript.md) kernels. `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
+`VisualAudioLab.Audio` is a standard C++20 library depending on Application/Domain. It implements `AudioEngine`, `AudioGraph`, Input/Output/Sum and the [DSP module framework](DspModules.md). `AudioProcessorNode` is now an alias of the unified `AudioNode` base; Gain has not been duplicated. Infrastructure implements the Application-owned stream boundary through JUCE. The engine includes no device or UI headers, plugins, resampler or parallel scheduler. Runtime parameter scheduling is implemented; editable/persisted automation lanes are not.
 
 The desktop composes the engine and backend through [occasional Audio Setup and explicit transport](DesktopWorkflow.md). Nothing opens or starts audio on startup/load. The user selects endpoints/configuration and starts transport; valid edits can then publish new prepared graphs. Load/patch switch stops transport. Hardware playback is not an implicit side effect of persistence.
 
@@ -13,7 +13,7 @@ The desktop composes the engine and backend through [occasional Audio Setup and 
 - Gain multiplies samples by a finite linear factor in `[0,4]` (default 1). Live gain messages ramp to the target over five milliseconds, independent of block partitioning. The initial/prepared value applies immediately. There is no implicit limiter; callers must control output levels before enabling live input routing.
 - Output copies one upstream bus to the corresponding device output channels. Outputs are cleared before execution, so an empty graph or disconnected Output produces silence.
 - Every nonempty runtime graph has exactly one main Output. Inputs accept at most one cable **except the explicit Sum utility**. Input/generators cannot receive wires and Output cannot send them. Missing references, cycles, duplicate cables and duplicate/zero identities fail preparation, including in inactive islands.
-- Sum adds corresponding channels with unity coefficients, without normalization, conversion or limiting. Fan-out branches and multiple hardware/generator/script roots may reunite at Sum. Check levels: summing can exceed full scale. Sum has no bypass or gain parameters.
+- Sum adds corresponding channels with unity coefficients, without normalization, conversion or limiting. Fan-out branches and multiple hardware/generator roots may reunite at Sum. Check levels: summing can exceed full scale. Sum has no bypass or gain parameters.
 - Disconnected processors and branches are legal and inert: their definitions are validated/prepared, but they do not advance DSP state, publish captures or enter callback processing. Only ancestors of the main Output execute. A direct Input-to-Output cable is valid. The presentation warns when output-only transport has no connected zero-input source.
 - Independent bus widths, multiple destinations, visible layout adapters and system-owned endpoint rails remain the next architecture layer; see [the implementation boundary and dependency order](plans/07-TypographyAndRoutingImplementation.md).
 - An unconnected Gain reads the prepared silent bus. Empty graphs are valid silence. Invalid new graphs leave the last valid graph active and return an error.
@@ -23,11 +23,16 @@ The desktop composes the engine and backend through [occasional Audio Setup and 
 
 | Parameter | Meaning |
 |---|---|
-| `audio.type` | Exact string `Input`, `Output`, `Sum`, `Gain`, `EQ`, `Delay`, `Compressor`, `Distortion`, `Chorus`, `Reverb`, `Analyzer`, `Script`, or one of the seven [generator names](modules/SignalGeneratorToolkit.md); mandatory for each mapped node. |
-| `audio.script` | Source string required on Script; compiled off-callback by the explicit structural mapper. |
+| `audio.type` | Exact string `Input`, `Output`, `Sum`, `Gain`, `EQ`, `Delay`, `Compressor`, `Distortion`, `Chorus`, `Reverb`, `Analyzer`, or one of the seven [generator names](modules/SignalGeneratorToolkit.md); mandatory for each mapped node. |
 | `audio.gain` | Optional finite double in `[0,4]`, only on Gain. |
 | `audio.param.<name>` | Optional finite scalar from the processor's documented parameter domains; cannot duplicate `audio.gain`. |
-| `audio.bypass` | Optional boolean for effects/analyzers/Script/generators (dry for effects, silence for sources), not routing Input/Output/Sum. |
+| `audio.bypass` | Optional boolean for effects/analyzers/generators (dry for effects, silence for sources), not routing Input/Output/Sum. |
+
+The schema remains generic and preserves legacy scalar fields such as
+`audio.type: "Script"`, `audio.script`, and `audio.control.*.source: "script"`
+without interpreting or rewriting them. The runtime explicitly rejects retired
+Script nodes and scalar mappings; see the [VAL Script retirement report](ValScriptRetirementPlan.md)
+for migration behavior and recovery guidance.
 
 Stable node IDs and directed connections are preserved; display names and positions do not affect processing. Ordinary generic editor nodes are **not** silently converted into processors. `fromStructural` maps data; `prepare` still validates the complete graph/configuration. Unknown processor types/parameters are rejected. The desktop catalog supplies explicit metadata and its inspector edits saved targets. Existing persistence retains these scalar fields without a schema change.
 

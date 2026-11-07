@@ -77,9 +77,9 @@ The current audio path already accepts zero device inputs. This does **not**
 mean every graph can generate sound: an empty graph or disconnected Output
 renders silence; a nonempty graph needs one Output and every node must feed it.
 The graph has no mixer and rejects multiple upstream sources per input.
-`GeneratorNode` is an extension point, not a shipped oscillator. A zero-input
-VAL Script can generate a constant in the existing documented example, but it
-is not the requested fixed-frequency oscillator. See
+`GeneratorNode` is the base for shipped zero-input signal generators. A
+Signal Generator can emit a configured DC value, but it is not a separate
+fixed-frequency Oscillator module. See
 `docs\AudioEngine.md`, `docs\DspModules.md`, `docs\DesktopWorkflow.md`,
 `src\VisualAudioLab.Audio\src\AudioGraph.cpp` and
 `tests\AudioEngineTests.cpp`.

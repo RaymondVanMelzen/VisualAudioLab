@@ -257,7 +257,7 @@ The Performance Monitoring workspace provides Locate Consumer, Reduce Visual Qua
 | Plugin visualizers | Host-owned output taps can use the normal pipeline, but third-party native editor UI remains a separate lifecycle/security/performance boundary. Do not call arbitrary plugin visualizer callbacks from audio or claim that a native editor obeys these budgets. Future plugin export remains editor-independent. |
 | Custom visual widgets | A versioned descriptor names typed inputs, units, result schema, required products, minimum readable size, accessibility summary and declared resource demand. Approved widgets consume immutable results on allowed contexts, never own device buffers or get arbitrary realtime callbacks. |
 
-Start with built-in trusted analyzers. Third-party native extensions can violate resource and process safety; a descriptor is not a sandbox. Admission, trust/isolation, cancellation and extension packaging/licensing need separate decisions before third-party execution. VAL Script's existing prohibition on networking, files, threads and dynamic allocation is not relaxed; it is not implicitly a visualization scripting engine. No extension requires a cloud renderer or AI service.
+Start with built-in trusted analyzers. Third-party native extensions can violate resource and process safety; a descriptor is not a sandbox. Admission, trust/isolation, cancellation and extension packaging/licensing need separate decisions before third-party execution. Visual Audio Lab has no visualization scripting engine. No extension requires a cloud renderer or AI service.
 
 ## 8. Architecture decision records
 

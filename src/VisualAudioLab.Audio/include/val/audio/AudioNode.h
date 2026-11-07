@@ -3,7 +3,6 @@
 #include <val/application/AudioStream.h>
 #include <val/application/Result.h>
 #include <val/audio/SignalCaptureBuffer.h>
-#include <val/script/Program.h>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -41,14 +40,13 @@ struct ParameterSpec
 enum class ParameterAction { base, automation, overrideValue, releaseOverride, disableAutomation };
 
 /** Explicit scalar source mapped onto one named destination parameter in physical units. */
-enum class ParameterControlSource { lfo, envelope, script };
+enum class ParameterControlSource { lfo, envelope };
 struct ParameterControlBinding
 {
     std::uint16_t parameter{};
     ParameterControlSource source{ParameterControlSource::lfo};
     float offset{}, depth{1}, rateHz{1}, attackSeconds{0.01f}, holdSeconds{}, releaseSeconds{0.5f};
     float sourceMinimum{-1}, sourceMaximum{1};
-    std::shared_ptr<const script::Program> program;
 };
 
 /** Deterministic linear sample smoother; inputs must be finite/validated, durations 0-1 s and rates 8-384 kHz. */
@@ -86,7 +84,7 @@ public:
     [[nodiscard]] bool parameterEvent(std::uint16_t parameter, float value, ParameterAction action) noexcept;
     /** Set persisted base values before prepare, never concurrently with rendering. */
     [[nodiscard]] bool initialParameter(std::uint16_t parameter, float value) noexcept;
-    /** Set one prepared scalar control mapping before prepare; script scratch is allocated off callback. */
+    /** Set one prepared scalar control mapping before prepare. */
     [[nodiscard]] bool initialControl(ParameterControlBinding binding);
     void initialBypass(bool bypassed) noexcept { initialBypass_ = bypassed; }
     [[nodiscard]] virtual int latencyFrames() const noexcept { return 0; }
@@ -104,8 +102,6 @@ protected:
     virtual void endFrame() noexcept {}
     [[nodiscard]] virtual float sample(int channel, float input) noexcept = 0;
     [[nodiscard]] virtual bool usesInput() const noexcept { return true; }
-    /** Latched executable faults force silence even while bypassed; no failed script may leak dry output. */
-    [[nodiscard]] virtual bool failed() const noexcept { return false; }
     [[nodiscard]] virtual bool validTarget(std::uint16_t, float) const noexcept { return true; }
     [[nodiscard]] float value(std::size_t index) const noexcept { return values_[index]; }
     [[nodiscard]] float safe(float value) noexcept;
@@ -115,7 +111,6 @@ private:
     struct ControlRuntime
     {
         ParameterControlBinding binding;
-        std::unique_ptr<script::Value[]> scratch;
         double phase{};
         std::uint64_t frame{};
     };
@@ -142,7 +137,6 @@ private:
     std::size_t dryPosition_{};
     std::atomic<std::uint64_t> faults_{};
     std::atomic<std::uint64_t> processedFrames_{};
-    std::atomic<bool> controlFailed_{};
 };
 
 /** Audio-to-audio processor; bypass crossfades against latency-aligned dry samples. */

@@ -3,7 +3,6 @@
 #include <val/audio/AudioEngine.h>
 #include <val/audio/AudioGraph.h>
 #include <val/audio/GeneratorNodes.h>
-#include <val/script/Compiler.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -800,42 +799,29 @@ void testTypedParameterControls()
                 + std::to_string(envelopeOutput[960]) + ", " + std::to_string(envelopeOutput[1200]) + ", "
                 + std::to_string(envelopeOutput[1920]) + ").");
 
-    const auto script = val::script::Compiler::compile(
-        "NODE ScalarControl AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\n"
-        "BEGIN\n  Value := Time;\nEND.");
-    require(script.value.has_value(), "Compile stateless Time-to-scalar VAL Script control off callback.");
-    GainNode scripted(0);
-    ParameterControlBinding scriptBinding;
-    scriptBinding.parameter = 0;
-    scriptBinding.source = ParameterControlSource::script;
-    scriptBinding.depth = 1;
-    scriptBinding.sourceMinimum = 0;
-    scriptBinding.sourceMaximum = 1;
-    scriptBinding.program = *script.value;
-    configureGainControl(scripted, std::move(scriptBinding));
-    const auto scriptedOutput = render(scripted, std::vector<float>(32, 1), 1, 7);
-    require(scriptedOutput[0] == 0 && scriptedOutput[1] > 0
-            && near(scriptedOutput[31], 31.0 / 48000.0, 1.0e-8),
-            "Stateless Script scalar control executes against monotonic sample time without audio inputs.");
-    const auto invalidScript = val::script::Compiler::compile(
-        "NODE BadControl AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\n"
-        "BEGIN\n  Value := 2.0;\nEND.");
-    require(invalidScript.value.has_value(), "Compile the deliberately out-of-range Script-control test.");
-    GainNode failedControl(0.5f);
-    auto invalidBinding = ParameterControlBinding{};
-    invalidBinding.parameter = 0;
-    invalidBinding.source = ParameterControlSource::script;
-    invalidBinding.depth = 1;
-    invalidBinding.sourceMinimum = 0;
-    invalidBinding.sourceMaximum = 1;
-    invalidBinding.program = *invalidScript.value;
-    require(failedControl.initialControl(std::move(invalidBinding)),
-            "Accept Script control with an explicit declared output range.");
-    prepare(failedControl);
-    const auto failedOutput = render(failedControl, std::vector<float>(32, 1), 1, 7);
-    require(std::all_of(failedOutput.begin(), failedOutput.end(), [](float sample) { return sample == 0; })
-            && failedControl.numericalFaults() == 1,
-            "Out-of-range Script control latches a visible numerical fault and silences the affected processor instead of falling back.");
+    val::domain::Graph legacyScript;
+    val::domain::Node scriptNode{1, "Legacy Script"};
+    scriptNode.parameters["audio.type"] = std::string("Script");
+    scriptNode.parameters["audio.script"] = std::string("NODE Old AT AUDIO; OUTPUT Value: REAL; BEGIN Value := 1 END.");
+    scriptNode.parameters["audio.param.Gain"] = 0.75;
+    legacyScript.nodes.emplace(1, std::move(scriptNode));
+    const auto retiredNode = AudioGraph::fromStructural(legacyScript, 1);
+    require(!retiredNode.value && retiredNode.error.message.find("retired") != std::string::npos,
+            "Legacy Script nodes are rejected for execution with a retirement diagnostic.");
+
+    val::domain::Graph legacyControl;
+    val::domain::Node gainWithLegacyControl{2, "Gain"};
+    gainWithLegacyControl.parameters["audio.type"] = std::string("Gain");
+    gainWithLegacyControl.parameters["audio.control.gain.source"] = std::string("script");
+    gainWithLegacyControl.parameters["audio.control.gain.offset"] = 0.0;
+    gainWithLegacyControl.parameters["audio.control.gain.depth"] = 1.0;
+    gainWithLegacyControl.parameters["audio.control.gain.minimum"] = 0.0;
+    gainWithLegacyControl.parameters["audio.control.gain.maximum"] = 1.0;
+    gainWithLegacyControl.parameters["audio.control.gain.script"] = std::string("legacy scalar source");
+    legacyControl.nodes.emplace(2, std::move(gainWithLegacyControl));
+    const auto retiredControl = AudioGraph::fromStructural(legacyControl, 1);
+    require(!retiredControl.value && retiredControl.error.message.find("retired") != std::string::npos,
+            "Legacy Script scalar controls are rejected with a retirement diagnostic.");
 
     GainNode outOfRange(0.5f);
     lfo.depth = 1;

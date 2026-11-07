@@ -164,7 +164,7 @@ readiness must never be conveyed by color alone.
 4. **Processor contracts:** Audit every shipped processor and generator.
    Initially declare only layouts each implementation actually processes.
    Same-width mono and stereo layouts are supported only after tests verify
-   node behavior and scripts' declared dimensions. A processor with no
+   node behavior and declared port dimensions. A processor with no
    implementation for a requested layout is invalid, not silently adapted.
 5. **Explicit adaptation:** Materialize a deterministic adapter as a visible,
    editable, persisted cable-stage/processor. The first required adapter is
@@ -349,8 +349,9 @@ count is available.
   delivery.
 - Processor input/output layouts are declared explicitly; that contract does
   not imply every DSP algorithm supports every width. New or changed processors
-  must be tested at each declared width. VAL Script input/output declarations
-  remain dimensionally exact unless the visible supported adapter is inserted.
+  must be tested at each declared width. Built-in processor port layouts
+  remain explicit; only a visible supported adapter may change a connection's
+  declared channel layout.
 - Driver names may be duplicated, unstable or absent. The local resolver must
   expose ambiguity instead of guessing. JUCE may compact sparse masks in a
   backend-specific way; verify the mapping via injected backend tests and

@@ -33,16 +33,11 @@ private:
 
 /**
  * Message-thread inspector borrowing a stable WorkspaceService; the service must outlive it.
- * Resolves explicit audio.type only. Persisted base, bypass and successfully compiled source edits
- * use setParameter and its undo history. Overrides/automation are transient runtime-only actions.
+ * Resolves explicit audio.type only. Persisted base and bypass edits use setParameter and its
+ * undo history. Overrides/automation are transient runtime-only actions.
  * The host supplies runtime/transport admission, reports failures with setStatusMessage, and calls
  * refresh after undo/redo, patch replacement or externally edited selected-node content.
- * Unsaved script drafts survive refresh and selection changes, keyed by patch/node identity.
- * A saved-source change while a draft exists is labelled; compiling explicitly replaces saved text.
- * Drafts are editor-instance memory only: project Save excludes them and editor destruction loses
- * them. Loading source replaces the current draft; loading a project with reused patch/node IDs may
- * retain an earlier draft with a saved-source conflict label. Revert to saved source explicitly
- * discards the selected draft; only Compile / Apply persists source.
+ * Retired VAL Script nodes remain opaque project data and are diagnosed as unsupported.
  * No devices, transport, rendering thread, or audio processing is owned by this component.
  */
 class ModuleEditor final : public juce::Component
@@ -56,8 +51,6 @@ public:
     [[nodiscard]] std::uint64_t selected() const noexcept { return node(); }
     void refresh();
     void setStatusMessage(const juce::String& message);
-    /** Runnable mono default for newly inserted Script nodes; no external file dependency. */
-    [[nodiscard]] static std::string defaultScriptSource();
 
     /** Called after an accepted persisted edit; the host decides whether to republish its graph. */
     std::function<void()> onChanged;

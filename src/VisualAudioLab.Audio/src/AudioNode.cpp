@@ -81,8 +81,6 @@ application::Result AudioNode::prepare(ProcessingSpec spec)
         {
             ControlRuntime runtime;
             runtime.binding = binding;
-            if (binding.source == ParameterControlSource::script)
-                runtime.scratch = std::make_unique<script::Value[]>(script::Program::maxSlots);
             controls_.push_back(std::move(runtime));
         }
         prepareState();
@@ -100,10 +98,6 @@ std::size_t AudioNode::requiredStorageBytes(ProcessingSpec spec) const noexcept
     auto bytes = latencyFrames() > 0
         ? static_cast<std::size_t>(latencyFrames() + 1) * spec.channels * sizeof(float) : 0;
     bytes += initialControls_.size() * sizeof(ControlRuntime);
-    for (const auto& control : initialControls_)
-        if (control.source == ParameterControlSource::script)
-            bytes += script::Program::maxSlots * sizeof(script::Value)
-                + (control.program ? control.program->storageBytes() : 0);
     return bytes;
 }
 void AudioNode::reset() noexcept
@@ -124,7 +118,6 @@ void AudioNode::reset() noexcept
     dryPosition_ = 0;
     faults_.store(0, std::memory_order_relaxed);
     processedFrames_.store(0, std::memory_order_relaxed);
-    controlFailed_.store(false, std::memory_order_relaxed);
     for (auto& control : controls_) { control.phase = 0; control.frame = 0; }
     resetState();
 }
@@ -157,7 +150,7 @@ bool AudioNode::initialControl(ParameterControlBinding binding)
     {
         case ParameterControlSource::lfo:
             if (!std::isfinite(binding.rateHz) || binding.rateHz < 0.01f || binding.rateHz > 20
-                || binding.sourceMinimum != -1 || binding.sourceMaximum != 1 || binding.program)
+                || binding.sourceMinimum != -1 || binding.sourceMaximum != 1)
                 return false;
             break;
         case ParameterControlSource::envelope:
@@ -165,24 +158,9 @@ bool AudioNode::initialControl(ParameterControlBinding binding)
                 || !std::isfinite(binding.releaseSeconds) || binding.attackSeconds < 0
                 || binding.holdSeconds < 0 || binding.releaseSeconds <= 0
                 || binding.attackSeconds > 60 || binding.holdSeconds > 60 || binding.releaseSeconds > 60
-                || binding.sourceMinimum != 0 || binding.sourceMaximum != 1 || binding.program)
+                || binding.sourceMinimum != 0 || binding.sourceMaximum != 1)
                 return false;
             break;
-        case ParameterControlSource::script:
-        {
-            const auto timeName = binding.program && binding.program->inputs().size() == 1
-                ? std::string_view(binding.program->inputs().front().name) : std::string_view{};
-            const bool hasTimeInput = timeName.size() == 4
-                && (timeName[0] == 'T' || timeName[0] == 't')
-                && (timeName[1] == 'I' || timeName[1] == 'i')
-                && (timeName[2] == 'M' || timeName[2] == 'm')
-                && (timeName[3] == 'E' || timeName[3] == 'e');
-            if (!binding.program || binding.program->inputs().size() != 1
-                || binding.program->outputs().size() != 1 || !binding.program->parameters().empty()
-                || !hasTimeInput)
-                return false;
-            break;
-        }
         default: return false;
     }
     const auto first = initial_[binding.parameter] + binding.offset
@@ -216,7 +194,6 @@ bool AudioNode::initialControl(ParameterControlBinding binding)
 }
 float AudioNode::controlSample(ControlRuntime& control) noexcept
 {
-    if (controlFailed_.load(std::memory_order_relaxed)) return 0;
     float source{};
     switch (control.binding.source)
     {
@@ -234,22 +211,6 @@ float AudioNode::controlSample(ControlRuntime& control) noexcept
             if (time < attack && attack > 0) source = static_cast<float>(time / attack);
             else if (time < holdEnd) source = 1;
             else if (time < releaseEnd) source = static_cast<float>(1.0 - (time - holdEnd) / control.binding.releaseSeconds);
-            break;
-        }
-        case ParameterControlSource::script:
-        {
-            const auto& program = *control.binding.program;
-            control.scratch[program.inputs().front().slot] =
-                script::Value::fromReal(static_cast<float>(static_cast<double>(control.frame) / spec_.sampleRate));
-            const auto result = program.execute({control.scratch.get(), program.slots()});
-            const auto value = control.scratch[program.outputs().front().slot].real;
-            if (result.code != script::FaultCode::none || !std::isfinite(value)
-                || value < control.binding.sourceMinimum || value > control.binding.sourceMaximum)
-            {
-                faults_.fetch_add(1, std::memory_order_relaxed);
-                controlFailed_.store(true, std::memory_order_relaxed);
-            }
-            else source = value;
             break;
         }
     }
@@ -355,9 +316,7 @@ void AudioNode::process(const NodeProcessContext& context) noexcept
                 dry = dryDelay_[offset + (dryPosition_ + 1) % delayLength];
             }
             const auto output = safe(sample(channel, inputs[channel]));
-            context.destination[channel * context.stride + frame] =
-                failed() || controlFailed_.load(std::memory_order_relaxed)
-                    ? 0 : safe(dry * (1 - wet) + output * wet);
+            context.destination[channel * context.stride + frame] = safe(dry * (1 - wet) + output * wet);
         }
         if (latency > 0) dryPosition_ = (dryPosition_ + 1) % delayLength;
         endFrame();

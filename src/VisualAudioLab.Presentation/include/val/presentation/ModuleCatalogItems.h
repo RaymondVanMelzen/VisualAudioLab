@@ -12,7 +12,6 @@ enum class ModuleCategory : int
     generators,
     analysis,
     routing,
-    customDsp
 };
 
 struct ModuleCatalogEntry
@@ -22,7 +21,7 @@ struct ModuleCatalogEntry
     std::string_view description;
 };
 
-inline constexpr std::array<ModuleCatalogEntry, 22> moduleCatalog{
+inline constexpr std::array<ModuleCatalogEntry, 21> moduleCatalog{
     ModuleCatalogEntry{"Sum", ModuleCategory::routing, "Explicit unity sum of corresponding channels; may exceed full scale. No limiter."},
     ModuleCatalogEntry{"Gain", ModuleCategory::effects, "Adjusts linear signal level."},
     ModuleCatalogEntry{"EQ", ModuleCategory::effects, "Shapes frequency response."},
@@ -43,11 +42,10 @@ inline constexpr std::array<ModuleCatalogEntry, 22> moduleCatalog{
     ModuleCatalogEntry{"Peak Meter", ModuleCategory::analysis, "Displays peak level."},
     ModuleCatalogEntry{"RMS Meter", ModuleCategory::analysis, "Displays average level."},
     ModuleCatalogEntry{"Correlation Meter", ModuleCategory::analysis, "Measures mean-removed stereo correlation over the RMS window."},
-    ModuleCatalogEntry{"Guitar Tuner", ModuleCategory::analysis, "Tunes a connected guitar signal to equal-tempered notes."},
-    ModuleCatalogEntry{"Script", ModuleCategory::customDsp, "User-authored audio function; may define a source or effect."}};
+    ModuleCatalogEntry{"Guitar Tuner", ModuleCategory::analysis, "Tunes a connected guitar signal to equal-tempered notes."}};
 
-inline constexpr std::array<std::string_view, 6> moduleCategoryNames{
-    "All modules", "Effects", "Generators", "Analysis", "Routing utilities", "Custom DSP"};
+inline constexpr std::array<std::string_view, 5> moduleCategoryNames{
+    "All modules", "Effects", "Generators", "Analysis", "Routing utilities"};
 
 [[nodiscard]] constexpr bool isModuleCatalogType(std::string_view type) noexcept
 {

@@ -38,8 +38,8 @@ readout.
 endpoint. `docs\AudioEngine.md` requires graph nodes to feed the Output and
 does not provide implicit channel mapping. `src\VisualAudioLab.Presentation\src\ModulePanels.cpp`
 maps visualization catalog items to an `Analyzer` node. `docs\DesktopWorkflow.md`
-requires explicit Start and documents output-only Script generation. The tuner
-should follow the same no-autoplay and no-hidden-capture guarantees.
+requires explicit Start and documents the current transport behavior. The
+tuner should follow the same no-autoplay and no-hidden-capture guarantees.
 
 ## Proposed product behavior and design targets
 

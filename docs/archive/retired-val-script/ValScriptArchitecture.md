@@ -1,5 +1,9 @@
 # Visual Audio Lab: VAL Script Architecture
 
+> Archived historical design. VAL Script was retired; this document is kept
+> for provenance and is not an implementation plan. See
+> [ValScriptRetirementPlan.md](../../ValScriptRetirementPlan.md).
+
 ## Status and purpose
 
 VAL Script is a proposed Pascal/Delphi-inspired language for defining DSP graph nodes. This document specifies language and compilation architecture only. Grammar and examples are specification material, not a compiler implementation, generated code, or files to execute.
@@ -9,9 +13,9 @@ An implemented, intentionally narrower AUDIO-kernel subset is now described in
 resource limits. This architecture remains the broader design; CONTROL ticks and
 native code generation are not implemented.
 
-The requested capability refines the previously unresolved scripting direction in [FunctionalArchitecture.md](FunctionalArchitecture.md) and [TechnicalArchitecture.md](TechnicalArchitecture.md). Unlike general project-automation scripting, VAL Script describes bounded node computation. It does not expose application commands or arbitrary host APIs.
+The historical proposal refined the previously unresolved scripting direction in [FunctionalArchitecture.md](../../FunctionalArchitecture.md) and [TechnicalArchitecture.md](../../TechnicalArchitecture.md). Unlike general project-automation scripting, VAL Script describes bounded node computation. It does not expose application commands or arbitrary host APIs.
 
-Use the graph, parameter, rate, revision, and realtime rules in [DspArchitecture.md](DspArchitecture.md), the platform boundaries in [AudioPlatformStrategy.md](AudioPlatformStrategy.md), and the independent visual workflow in [ProductVision.md](ProductVision.md) and [PRD.md](PRD.md). VAL Script is now a requested language design, not an automatic addition to the MVP or a named release. Visual patching must remain usable without it.
+Use the graph, parameter, rate, revision, and realtime rules in [DspArchitecture.md](../../DspArchitecture.md), the platform boundaries in [AudioPlatformStrategy.md](../../AudioPlatformStrategy.md), and the independent visual workflow in [ProductVision.md](../../ProductVision.md) and [PRD.md](../../PRD.md). This proposal is archived and retired, not an active product direction. Visual patching remains independent of custom-code authoring.
 
 The host application follows the revised C++20/JUCE/CMake direction, with primary standalone Windows/ASIO and macOS/CoreAudio paths. The language itself remains independent of UI, audio-device APIs and native plugin formats. Future VST3 hosting and plugin export are separate architectural capabilities, not permission for scripts to load native plugins or a commitment to export script-containing patches.
 

@@ -130,7 +130,7 @@ Dependency checks and architecture-focused tests should verify these rules once 
 | Audio routing | Domain validation, Application orchestration, Audio runtime. | Separates accepted edit state from prepared/active audio state; Infrastructure connects device output. |
 | Audio device manager | Application-facing capability; Infrastructure implementation using Audio device contracts. | Presents platform-neutral status and configuration choices; device settings do not define project identity. |
 | Visualizers | Presentation views; Application status models; Audio observation bridge. | Basic status is supported conceptually; advanced signal displays remain discovery. Observing must not become required for processing. |
-| Scripting system | No baseline implementation/target; see ValScriptArchitecture.md for the requested design. | Future local compiler prepares bounded DSP-node plans off-callback; only verified plans execute in Audio. No arbitrary host APIs or general-purpose script execution on the callback. |
+| Custom DSP authoring | No in-product scripting/compiler target. VAL Script was retired; custom DSP development is external to Visual Audio Lab. | No source compiler, script runtime or script editor is part of the application. Legacy project data receives an explicit unsupported diagnostic and remains preserved. |
 | Persistence layer | Application store contracts; Infrastructure representation and local I/O. | Domain validation and project acceptance remain separate from storage success. |
 
 ## Presentation architecture: MVVM-style separation in JUCE
@@ -288,7 +288,7 @@ Before implementation, select or validate:
 - Local project representation, dependency identification, migration/original-preservation policy, settings ownership, and crash-recovery scope.
 - C++ ownership/handoff and notification implementation; logging sink, local retention/redaction policy, and JUCE accessibility/UI testing approach.
 - Single-document versus multi-document behavior and ownership of concurrent audio use.
-- Separate release approval and persistence/trust details for VAL Script; advanced visualizers and module reuse remain subject to the PRD's scope decisions.
+- Advanced visualizers and module reuse remain subject to the PRD's scope decisions; VAL Script is retired and has no release approval or implementation target.
 - VST3 scan/runtime isolation, parameter/event fidelity, host transport mapping, export eligibility/formats/toolchain UX, latency compensation and state compatibility. No plugin feature has a release assignment.
 
 Validate dependency direction, domain/use-case rules, view-model transitions, subscription lifetime, save/load round trips, activation revision handling, and device failure on both platforms. Exercise the render contract device-free to detect hidden GUI/device dependencies. Before plugin release, add host/processor compatibility, multiple-instance and editor-free tests. Audio workload and UI responsiveness require real integration measurements; unit tests cannot establish real-time suitability. No implementation or benchmark results are claimed by this document.

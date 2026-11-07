@@ -90,7 +90,7 @@ claim that every listed source or destination has shipped):
   Capture, File Player, Virtual Audio Device.
 - **DestinationNode kinds:** Main Output, Headphones, Recorder, File Writer,
   Streaming Output.
-- **ProcessorNode kinds:** EQ, Compressor, Delay, Reverb, VAL Script, VST3
+- **ProcessorNode kinds:** EQ, Compressor, Delay, Reverb, VST3
   Plugin, plus existing modules (Gain, analyzers, …).
 
 ### 2.2 Bus, port and channel model
@@ -264,7 +264,7 @@ delivered to a stereo bus and a 5.1 stream output.
 │ ▼ Hardware Inputs    │                                      │ ▼ Main Output   │
 │  ┌──────────────────┐│     ┌───────────────┐                │  L R            │
 │  │ Drums 1-8  (8ch)≡≡●≡≡≡≡▶● Channel Map   ●══[8→2 map]═══╗ │  ┌────────────┐ │
-│  │ ▮▮▮▮▮▮▮▮         ││     │  (VAL Script) │              ╚▶● Σ  stereo  │ │
+│  │ ▮▮▮▮▮▮▮▮         ││     │  (Compressor) │              ╚▶● Σ  stereo  │ │
 │  └─ expand ▾        ││     └───────────────┘                │  └────────────┘ │
 │   1 Kick  ●          ││                                      │ ▼ Streaming     │
 │   2 Snare ●          ││     ┌───────────────┐                │  ┌────────────┐ │

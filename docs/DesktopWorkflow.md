@@ -1,6 +1,6 @@
 # Desktop audio workflow
 
-The desktop composes the existing backend, audio engine, DSP, VAL Script and
+The desktop composes the existing backend, audio engine, built-in DSP and
 visualization services. Device enumeration starts automatically; playback never
 starts automatically. Project editing and offline preview do not require an audio device.
 
@@ -114,12 +114,12 @@ offline-preview item moves from ID 5 to 6 (offline is not a persisted backend).
 ## Try DSP without opening hardware
 
 Choose **Offline preview (no hardware)**. It offers a 48 kHz, 512-frame preview
-with selectable output bus width. Select one channel before inserting a mono
-script example.
+with selectable output bus width. Select one channel before inserting a
+mono-configured generator.
 
 Use the **Module Browser** category filter and search to find a shipped entry.
-Categories are **Effects**, **Analysis**, **Routing utilities**, and **Custom
-DSP**; unavailable/future modules are not listed as empty categories. The
+Categories are **Effects**, **Generators**, **Analysis**, and **Routing utilities**;
+unavailable/future modules are not listed as empty categories. The
 Routing utilities category contains the explicit **Sum** processor; hardware
 Input and Output are fixed endpoints, not browser modules. Insert
 the selected result with the button, double-click, or Enter, or drag it onto
@@ -128,7 +128,7 @@ edit with its runtime identity already attached. Dragging outside the canvas
 area is rejected with a visible status message. Insertion never auto-wires:
 connect ports explicitly.
 A **module** is a reusable audio function; a placed **node** is its instance
-with its own saved parameters/source and runtime state. The fixed left Inputs
+with its own saved parameters and runtime state. The fixed left Inputs
 lane contains configured hardware input rows and inserted built-in generator
 source cards; the fixed right Outputs lane contains hardware output rows.
 Endpoint rows have stable project identities and cannot be moved as processors.
@@ -142,30 +142,18 @@ patch packaging is not newly implemented.
 Supported source kinds are configured hardware inputs and the shipped internal
 generators; the supported destination kind is the configured main hardware
 output. Input is optional, so generators can feed output without capture.
-Unassigned/disabled rows remain inert. A zero-input Script is also supported;
-the inserted pass-through Script is not itself a generator, and a disconnected
-or input-dependent route can render silence. Application Capture, File Player,
+Unassigned/disabled rows remain inert. A disconnected route can render silence.
+Application Capture, File Player,
 Virtual Audio Device, Recorder/File Writer, Streaming and plugin-hosted
 endpoints are not implemented.
 
-For a device-free example:
+For a device-free built-in DSP example:
 
-1. Insert **Script**, **Gain** and **Oscilloscope**.
-2. Connect `Script -> Gain -> Oscilloscope ->` the configured output row.
-3. Select Script and use **Properties / Script** to load an example into the
-   draft, or enter the following mono audio-rate source:
-
-   ```pascal
-   NODE Preview AT AUDIO;
-   OUTPUT Y: REAL;
-   PARAM Level: REAL = 0.25 RANGE 0 .. 1;
-   BEGIN
-     Y := Level
-   END.
-   ```
-
-4. Click **Compile / Apply**. Set Gain's saved gain target to `0.5`.
-5. Start offline preview. Select the Oscilloscope node to see the live signal
+1. Insert **Signal Generator**, **Gain** and **Oscilloscope**.
+2. Connect `Signal Generator -> Gain -> Oscilloscope ->` the configured output row.
+3. In the generator's Properties, choose the DC waveform, set its DC value to
+   `0.25` under Advanced, and set output level to `0 dB`. Set Gain to `0.5`.
+4. Start offline preview. Select the Oscilloscope node to see the live signal
    (constant amplitude `0.125` in this example). Stop explicitly when finished.
 
 Offline processing uses silent input and sends output only to observation
@@ -210,39 +198,30 @@ an explicit named parameter restores its default through a prepared graph
 revision. Structural/source revisions reset processor state and cancel
 automation for the old revision.
 
-## Script source and persistence
+## Legacy VAL Script projects
 
-The Script editor provides multi-line source, asynchronous **Load Source**,
-four built-in example drafts, compiler diagnostics with line/column, and
-**Compile / Apply**. Input/output counts must match the selected runtime bus
-(or a script can have zero inputs); mono examples require a mono bus.
-Only the already implemented stateless audio-rate mode is executable; CONTROL
-mode and prohibited capabilities produce diagnostics, not a substitute mode.
-
-Source is visibly a **draft, not saved until Compile / Apply**. Refresh,
-selection and undo preserve unapplied drafts in memory. **Load Source** replaces
-the selected draft; **Revert to saved source** deliberately restores the current
-saved source without editing project history. A loaded project with reused
-identities can retain a conflicting draft: the conflict is labeled, and Revert
-restores the loaded source. Drafts are not recovered after editor destruction/
-application close; compile/apply source you intend to retain.
-
-Successful compilation persists `audio.script` as one edit. Incompatible saved
-parameter targets block apply with a diagnostic instead of being discarded.
-Compiler work, graph validation, preparation and reclamation run off the audio
-callback.
+VAL Script execution, source editing, compilation and catalog insertion have
+been retired. The `.valab` schema and generic scalar-parameter codec remain
+unchanged: legacy module type/source, scalar mapping fields, other parameters,
+node identity/geometry and graph connections are retained on load and save.
+They are opaque data, not executable features. Starting a graph that contains
+a retired Script node or a `source: "script"` scalar mapping produces an
+explicit unsupported-feature diagnostic; the application does not execute,
+silently disable, delete or rewrite that content. Replace affected modules and
+mappings with supported built-in modules before running the patch. Custom DSP
+authoring is external to Visual Audio Lab; see
+[ValScriptRetirementPlan.md](ValScriptRetirementPlan.md).
 
 **File > Save Project / Save Project As / Load Project / Recent Files** retain
-module identity (`audio.type`), script source, named parameter targets, bypass,
-analyzer display kind, graph topology, patches and the existing window layout
-in human-readable `.valab` JSON. The existing schema/unknown-field preservation
-rules apply; no format migration is needed. Dirty-project consent remains in
-the existing file workflow. Load and patch switches quiesce transport before
-replacement and never restart automatically.
+module identity, scalar parameters, bypass, analyzer display kind, graph
+topology, patches and the existing window layout in human-readable `.valab`
+JSON. Dirty-project consent remains in the existing file workflow. Load and
+patch switches quiesce transport before replacement and never restart
+automatically.
 
 ## Live graph and signal inspection
 
-Canvas edits, undo/redo, parameter changes and successful source apply synchronize
+Canvas edits, undo/redo and parameter changes synchronize
 the active patch with the engine. Position/name-only changes do not rebuild DSP.
 Invalid structural/source edits remain editable and display **last accepted audio
 continues**; Stop stays available. Rejected parameter delivery stops transport
@@ -282,7 +261,7 @@ callback misses. Missing latency/xrun data and whole-process CPU are explicitly
 **unavailable**, not zero. Reported latency is not a physical round-trip
 measurement. Capture gaps and source/epoch/revision provenance are shown in the
 signal views. See [SignalVisualization.md](SignalVisualization.md) for calibration
-and [ValScript.md](ValScript.md) for language/resource limits.
+and [ProjectFormat.md](ProjectFormat.md) for persistence and compatibility.
 
 Native hardware timing, audible processing and macOS device operation require
 platform/hardware qualification; offline and injected-device GUI tests do not

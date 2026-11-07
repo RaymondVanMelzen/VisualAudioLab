@@ -9,7 +9,7 @@ namespace val::infrastructure
  * Explicit-path, versioned JSON preferences adapter using JUCE only inside its implementation.
  * Validates schema/types/ranges before returning data. Writes through a sibling temporary
  * file; invalid existing data is not overwritten. Single-process/control-thread use only.
- * This stores application window preferences, never projects, devices, scripts or secrets.
+ * This stores application window preferences, never project content, devices or secrets.
  */
 class LocalSettingsStore final : public application::SettingsStore
 {

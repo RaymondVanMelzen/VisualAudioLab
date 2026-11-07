@@ -233,7 +233,7 @@ void runRuntimeIntegrationTests()
         require(workspace.createNode({0, 0}, "Output", {{"audio.type", std::string("Output")}}).succeeded,
                 "Create a valid output-only graph with no generator.");
         require(runtime.start().succeeded && runtime.status().contains("may render silence"),
-                "An output-only graph can run explicitly, but the UI warns when no zero-input Script reaches Output.");
+                "An output-only graph can run explicitly, but the UI warns when no generator reaches Output.");
         require(runtime.stop().succeeded, "Stop the no-source output-only preview explicitly.");
     }
     for (const auto kind : testedBackends)
@@ -483,8 +483,9 @@ void runRuntimeIntegrationTests()
                 "Offline preview uses an explicit virtual bus without reintroducing channel assignment controls into Audio Setup.");
         require(!legacy.createNode({0, 0}, "Invalid", {{"audio.gain", std::numeric_limits<double>::quiet_NaN()}}).succeeded
                 && legacy.graph().nodes.empty() && !legacy.canUndo(), "Invalid initial metadata never creates a partial module/history edit.");
-        require(legacy.createNode({0, 0}, "Source", {{"audio.type", std::string("Script")},
-            {"audio.script", std::string("NODE Source AT AUDIO; OUTPUT Y: REAL; BEGIN Y := 1 END.")}}).succeeded, "Create source atomically.");
+        require(legacy.createNode({0, 0}, "Source",
+            {{"audio.type", std::string("DC Generator")}, {"audio.param.value", 1.0},
+             {"audio.param.muted", 0.0}}).succeeded, "Create source atomically.");
         const auto sourceNode = legacy.lastCreatedNode();
         require(legacy.createNode({180, 0}, "Legacy Gain", {{"audio.type", std::string("Gain")}, {"audio.gain", 0.5}}).succeeded, "Create legacy saved gain.");
         const auto gainNode = legacy.lastCreatedNode();
@@ -570,7 +571,7 @@ void runRuntimeIntegrationTests()
     auto& runtime = shell.runtime();
     runtime.configureOffline(1);
     mock = nullptr;
-    shell.insertModule("Script"); const auto script = service.lastCreatedNode();
+    shell.insertModule("Signal Generator"); const auto generator = service.lastCreatedNode();
     shell.insertModule("Gain"); const auto gain = service.lastCreatedNode();
     shell.insertModule("Oscilloscope"); const auto analyzer = service.lastCreatedNode();
     domain::GraphId output{};
@@ -580,21 +581,21 @@ void runRuntimeIntegrationTests()
     shell.insertModule("Output");
     require(service.graph().nodes.size() == nodeCount && output != 0,
             "Hardware Output is no longer inserted from the module browser.");
-    require(service.moveNodes({{script, {30, 80}}, {gain, {260, 80}}, {analyzer, {490, 80}}}).succeeded, "Arrange executable patch.");
-    const std::string source = "NODE Preview AT AUDIO; OUTPUT Y: REAL; PARAM Level: REAL = 0.25 RANGE 0 .. 1; BEGIN Y := Level END.";
-    require(service.setParameter(script, "audio.script", source).succeeded
-            && service.setParameter(gain, "audio.param.gain", 0.5).succeeded, "Persist authored Script and FX targets.");
-    require(service.connect({script, domain::Port::output}, {gain, domain::Port::input}).succeeded
+    require(service.moveNodes({{generator, {30, 80}}, {gain, {260, 80}}, {analyzer, {490, 80}}}).succeeded, "Arrange executable patch.");
+    require(service.setParameter(generator, "audio.param.waveform", 6.0).succeeded
+            && service.setParameter(generator, "audio.param.levelDb", 0.0).succeeded
+            && service.setParameter(generator, "audio.param.dcValue", 0.25).succeeded
+            && service.setParameter(gain, "audio.param.gain", 0.5).succeeded, "Persist generator and FX targets.");
+    require(service.connect({generator, domain::Port::output}, {gain, domain::Port::input}).succeeded
             && service.connect({gain, domain::Port::output}, {analyzer, domain::Port::input}).succeeded
-            && service.connect({analyzer, domain::Port::output}, {output, domain::Port::input}).succeeded, "Wire Script -> FX -> Analyzer -> Output with real edit commands.");
+            && service.connect({analyzer, domain::Port::output}, {output, domain::Port::input}).succeeded, "Wire generator -> FX -> Analyzer -> Output with real edit commands.");
     shell.dockWorkspace().canvas().synchronise();
-    shell.dockWorkspace().canvas().fitGraph();
     shell.dockWorkspace().signalPreview().setTarget(analyzer);
     shell.dockWorkspace().showPanel(PanelId::propertyInspector);
     screenshot(shell, "desktop-review-workspace.png");
-    const auto path = std::filesystem::path(directory.getChildFile("script-fx.valab").getFullPathName().toWideCharPointer());
+    const auto path = std::filesystem::path(directory.getChildFile("generator-fx.valab").getFullPathName().toWideCharPointer());
     const auto saved = shell.saveProjectTo(path);
-    require(saved.succeeded, "Integrated executable source/FX/analysis metadata saves through File workflow: " + saved.error);
+    require(saved.succeeded, "Integrated executable generator/FX/analysis metadata saves through File workflow: " + saved.error);
     require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && runtime.running() && creations == 1,
             "Explicit desktop F5 command starts real offline engine with zero device interaction.");
     require(shell.keyPressed(juce::KeyPress(juce::KeyPress::F5Key)) && !runtime.running(),
@@ -603,6 +604,7 @@ void runRuntimeIntegrationTests()
             "F5 starts the stopped engine again without changing configuration.");
     std::uint64_t initialRevision{};
     std::uint64_t beforeScheduled{};
+    std::uint64_t beforeGeneratorEdit{};
     int observedTicks{};
     Phases phases({
         [&]
@@ -613,7 +615,7 @@ void runRuntimeIntegrationTests()
             initialRevision = stats.value->activeRevision;
             std::array<float, 32> samples{}; float* destination[]{samples.data()};
             runtime.engine().process({nullptr, destination, 0, 1, 32});
-            require(std::abs(samples[0] - 0.125f) < 0.0001f, "Authored script and effect execute expected samples, not a fake preview.");
+            require(std::abs(samples[0] - 0.125f) < 0.0001f, "Built-in generator and effect execute expected samples, not a fake preview.");
             shell.dockWorkspace().canvas().selectRectangle({490, 80, 140, 80}, false, false);
             shell.dockWorkspace().showSignalInspector();
             return true;
@@ -641,7 +643,7 @@ void runRuntimeIntegrationTests()
             shell.dockWorkspace().canvas().selectRectangle({30, 80, 140, 80}, false, false);
             for (auto* child : shell.dockWorkspace().panel(PanelId::propertyInspector).getChildren())
                 if (auto* tabs = dynamic_cast<juce::TabbedComponent*>(child)) tabs->setCurrentTabIndex(0);
-            screenshot(shell, "desktop-integration-script.png");
+            screenshot(shell, "desktop-integration-module.png");
             require(service.setParameter(gain, "audio.param.gain", 0.25).succeeded, "Edit saved FX target while running.");
             runtime.synchronize();
             return true;
@@ -656,19 +658,20 @@ void runRuntimeIntegrationTests()
             runtime.synchronize();
             require(runtime.running() && runtime.status().contains("last accepted audio"), "Non-executable structural content is diagnosed while last valid audio remains active.");
             require(service.undo().succeeded, "Undo generic structural insertion."); runtime.synchronize();
-            require(service.setParameter(script, "audio.script",
-                std::string("NODE Edited AT AUDIO; OUTPUT Y: REAL; BEGIN Y := 0.125 END.")).succeeded,
-                "Edit and publish script source through the persisted parameter boundary.");
+            require(service.setParameter(generator, "audio.param.dcValue", 0.125).succeeded,
+                "Edit and publish a supported generator parameter through the persisted boundary.");
+            beforeGeneratorEdit = runtime.engine().telemetry().value->samplePosition;
             runtime.synchronize();
             return true;
         },
         [&]
         {
             const auto stats = runtime.engine().telemetry();
-            if (stats.value->activeRevision <= initialRevision) return false;
+            if (stats.value->samplePosition < beforeGeneratorEdit + 256) return false;
+            require(stats.value->activeRevision == initialRevision, "A live generator target keeps the prepared graph revision.");
             std::array<float, 32> samples{}; float* destination[]{samples.data()};
             runtime.engine().process({nullptr, destination, 0, 1, 32});
-            require(std::abs(samples[0] - 0.0625f) < 0.0001f, "Live script revision executes new generated DSP through existing plan handoff.");
+            require(std::abs(samples[0] - 0.0625f) < 0.0001f, "Live generator parameter reaches the prepared graph through its existing control path.");
             runtime.schedule(gain, 0, 0.75f, 0.1);
             beforeScheduled = runtime.engine().telemetry().value->appliedEvents;
             return true;
@@ -678,21 +681,10 @@ void runRuntimeIntegrationTests()
             const auto stats = runtime.engine().telemetry();
             if (stats.value->appliedEvents <= beforeScheduled) return false;
             require(stats.value->missedEvents == 0, "UI scheduling maps seconds ahead to the correct epoch/sample frame.");
-            require(service.setParameter(script, "audio.script",
-                std::string("NODE Fault AT AUDIO; OUTPUT Y: REAL; PARAM Divisor: REAL = 0 RANGE 0 .. 1; BEGIN Y := 1 / Divisor END.")).succeeded,
-                "Publish a valid bounded kernel with a runtime arithmetic fault.");
-            runtime.synchronize();
-            return true;
-        },
-        [&]
-        {
-            if (runtime.running()) return false;
-            require(runtime.status().contains("Script node") && runtime.status().contains("fault")
-                    && runtime.status().contains("Transport stopped"), "Latched script fault reaches source-aware desktop diagnostics and safely stops transport.");
             require(shell.loadProjectFrom(path).succeeded && !runtime.running(), "Project load quiesces audio before replacement; never automatically restarts.");
-            require(std::get<std::string>(service.graph().nodes.at(script).parameters.at("audio.script")) == source
+            require(std::get<double>(service.graph().nodes.at(generator).parameters.at("audio.param.dcValue")) == 0.25
                     && std::get<double>(service.graph().nodes.at(gain).parameters.at("audio.param.gain")) == 0.5,
-                    "Source, module identities, visualization kind and effect targets survive actual JSON round trip.");
+                    "Generator settings, module identities, visualization kind and effect targets survive actual JSON round trip.");
             return true;
         },
         [&]
@@ -750,7 +742,7 @@ void runRuntimeIntegrationTests()
                     "Refresh/restore/inspection does not queue endpoint onChange callbacks that later erase capabilities.");
             require(runtime.start().succeeded && mock->opens == 1 && mock->target, "Explicit native Start negotiates selected settings and attaches real engine through injected device seam.");
             require(mock->openedRequest.inputChannels == 0,
-                    "The native output-only Script graph opens with input disabled; an input endpoint is not required.");
+                    "The native output-only generator graph opens with input disabled; an input endpoint is not required.");
             auto* setupWindow = runtime.findParentComponentOfClass<juce::DocumentWindow>();
             control<juce::TextButton>(runtime, "Done")->onClick();
             require(runtime.running() && setupWindow && !setupWindow->isVisible(),
@@ -765,6 +757,6 @@ void runRuntimeIntegrationTests()
     });
     phases.run();
     window.setVisible(false); window.clearContentComponent();
-    require(directory.getChildFile("script-fx.valab").deleteFile() && directory.getChildFile("recent.json").deleteFile(), "Clean exact test persistence files.");
+    require(directory.getChildFile("generator-fx.valab").deleteFile() && directory.getChildFile("recent.json").deleteFile(), "Clean exact test persistence files.");
     require(directory.deleteFile(), "Remove now-empty fixture directory.");
 }

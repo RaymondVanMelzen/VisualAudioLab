@@ -879,16 +879,19 @@ void MainComponent::restoreProjectView()
     dockWorkspace_.restoreLayout(layout);
     if (auto* window = dynamic_cast<juce::DocumentWindow*>(getTopLevelComponent()))
     {
+        window->setFullScreen(false);
         juce::Rectangle<int> desired(layout.x, layout.y, layout.width, layout.height);
         const auto& displays = juce::Desktop::getInstance().getDisplays();
-        if (const auto* display = displayForRestoredBounds(displays, desired))
+        const auto frame = windowFrameSize(*window);
+        auto outerBounds = desired;
+        frame.addTo(outerBounds);
+        if (const auto* display = displayForRestoredBounds(displays, outerBounds))
         {
-            const auto placement = fitWindowToUserArea(desired, display->userArea);
+            const auto placement = fitWindowToUserArea(desired, display->userArea, frame);
             window->setResizeLimits(placement.minimumWidth, placement.minimumHeight,
                                     placement.maximumWidth, placement.maximumHeight);
             desired = placement.bounds;
         }
-        window->setFullScreen(false);
         window->setBounds(desired);
     }
     displayedPatch_ = workspace_.project().activePatch;

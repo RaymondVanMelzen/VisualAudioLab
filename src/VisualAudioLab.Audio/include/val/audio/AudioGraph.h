@@ -4,7 +4,6 @@
 #include <val/application/Result.h>
 #include <val/application/IAudioBackend.h>
 #include <val/domain/Graph.h>
-#include <val/script/Program.h>
 #include <memory>
 #include <vector>
 
@@ -13,7 +12,7 @@ namespace val::audio
 /** Built-in prepared processors; no plugin hosting or implicit processor-name inference. */
 enum class AudioNodeType
 {
-    input, gain, output, eq, delay, compressor, distortion, chorus, reverb, analyzer, script,
+    input, gain, output, eq, delay, compressor, distortion, chorus, reverb, analyzer,
     signalGenerator, impulseGenerator, clickGenerator, burstGenerator, chirpGenerator, noiseGenerator, dcGenerator, sum
 };
 /** Control-owned node definition with stable identity, initial physical-domain parameters and bypass. */
@@ -30,8 +29,6 @@ struct AudioNodeDefinition
     std::vector<ParameterControlBinding> controls;
     /** Optional already-admitted observation transport; control retains ownership until callback retirement. */
     std::shared_ptr<SignalCaptureBuffer> capture;
-    /** Immutable compiler-produced artifact; no parsing/compilation is allowed during processing. */
-    std::shared_ptr<const script::Program> script;
     /** Native bus width for source/sink endpoints and generators; pass-through nodes inherit input width. */
     int channels{};
     /** Endpoint-local channel order to the compact stream buffer; empty means unresolved/unassigned. */
@@ -75,7 +72,6 @@ public:
                                      ParameterAction action, std::size_t& index) const noexcept;
     void parameterEvent(std::size_t index, std::uint16_t parameter, float value, ParameterAction action) noexcept;
     [[nodiscard]] std::optional<AnalyzerSnapshot> analyzerSnapshot(std::uint64_t node) const noexcept;
-    [[nodiscard]] std::optional<script::RuntimeFault> scriptFault(std::uint64_t node) const noexcept;
     [[nodiscard]] std::uint64_t numericalFaults() const noexcept;
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
     [[nodiscard]] application::AudioStreamFormat format() const noexcept { return format_; }

@@ -34,7 +34,7 @@ These are overlapping audiences, not separate product tiers. The experience shou
 
 Visual Audio Lab is a cross-platform desktop environment for visual audio programming. It combines the approachable, direct feel associated with classic programming tools such as Turbo Pascal and Visual Basic with the visual-flow clarity of LabVIEW and Pure Data, and the creative flexibility of modular audio systems.
 
-Its defining interaction is visual patching: users work with connected audio structures rather than relying solely on text-based programming. The product is intended for creative exploration and learning, with an offline-first, open-source foundation. It is not positioned around a subscription, cloud service, or AI dependency.
+Its defining interaction is visual patching: users work with connected audio structures rather than relying solely on text-based programming. The product is intended for creative exploration and learning, with an offline-first, open-source foundation. Custom DSP development is external to Visual Audio Lab and uses a dedicated FreePascal-based environment; this application focuses on routing, built-in processing, visualization, analysis, module hosting and the desktop experience. It is not positioned around a subscription, cloud service, or AI dependency.
 
 ## Key differentiators
 

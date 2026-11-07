@@ -110,13 +110,14 @@ void screenshots(const juce::File& directory)
     dialog.setLookAndFeel(nullptr);
     ModuleEditor editor(workspace);
     editor.setLookAndFeel(&theme);
-    require(workspace.createNode({0, 0}, "Readable script", {{"audio.type", std::string("Script")},
-                {"audio.script", ModuleEditor::defaultScriptSource()}}).succeeded, "Create code review fixture.");
+    require(workspace.createNode({0, 0}, "Retired VAL Script", {{"audio.type", std::string("Script")},
+                {"audio.script", std::string("Legacy source retained as project data.")}}).succeeded,
+            "Create unsupported legacy-module review fixture.");
     editor.setNode(workspace.lastCreatedNode());
     WorkspacePanel editorPanel(PanelId::propertyInspector, {}, &editor);
     editorPanel.setLookAndFeel(&theme);
     editorPanel.setSize(640, 800);
-    save(editorPanel.createComponentSnapshot(editorPanel.getLocalBounds(), true, 1.0f, juce::SoftwareImageType{}), directory.getChildFile("script-editor.png"));
+    save(editorPanel.createComponentSnapshot(editorPanel.getLocalBounds(), true, 1.0f, juce::SoftwareImageType{}), directory.getChildFile("retired-module-notice.png"));
     editorPanel.setLookAndFeel(nullptr);
     editor.setLookAndFeel(nullptr);
     juce::Image image(juce::Image::RGB, 1000, 560, true, juce::SoftwareImageType{});

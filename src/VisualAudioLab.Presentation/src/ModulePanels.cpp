@@ -2,10 +2,8 @@
 #include <val/presentation/ModuleCatalogItems.h>
 #include <val/audio/AudioGraph.h>
 #include <val/audio/GeneratorNodes.h>
-#include <val/audio/ScriptNode.h>
 #include <val/presentation/ShellTheme.h>
 #include <val/presentation/Typography.h>
-#include <val/script/Compiler.h>
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -17,48 +15,6 @@ namespace val::presentation
 {
 namespace
 {
-constexpr const char* passThrough = R"(NODE PassThrough AT AUDIO;
-INPUT InSample: REAL;
-OUTPUT OutSample: REAL;
-BEGIN
-  OutSample := InSample
-END.
-)";
-constexpr const char* gainExample = R"(NODE ScriptGain AT AUDIO;
-INPUT InSample: REAL;
-OUTPUT OutSample: REAL;
-PARAM Gain: REAL = 0.5 RANGE 0.0 .. 2.0;
-BEGIN
-  OutSample := InSample * Gain
-END.
-)";
-constexpr const char* constantExample = R"(// Constant DC source, not an oscillator.
-NODE ConstantSource AT AUDIO;
-OUTPUT OutSample: REAL;
-PARAM Level: REAL = 0.125 RANGE -1.0 .. 1.0;
-BEGIN
-  OutSample := Level
-END.
-)";
-constexpr const char* stereoExample = R"(NODE StereoGate AT AUDIO;
-INPUT LeftIn: REAL;
-INPUT RightIn: REAL;
-OUTPUT LeftOut: REAL;
-OUTPUT RightOut: REAL;
-PARAM Threshold: REAL = 0.1 RANGE 0.0 .. 1.0;
-FUNCTION Gate(Value: REAL): REAL;
-BEGIN
-  IF (Value >= Threshold) OR (Value <= -Threshold) THEN
-    Gate := Value
-  ELSE
-    Gate := 0.0
-END;
-BEGIN
-  LeftOut := Gate(LeftIn);
-  RightOut := Gate(RightIn)
-END.
-)";
-
 std::unique_ptr<audio::AudioNode> prototype(const std::string& type)
 {
     if (type == "Input") return std::make_unique<audio::InputNode>();
@@ -80,15 +36,6 @@ std::unique_ptr<audio::AudioNode> prototype(const std::string& type)
     if (type == "Noise Generator") return std::make_unique<audio::NoiseGeneratorNode>();
     if (type == "DC Generator") return std::make_unique<audio::DcGeneratorNode>();
     return {};
-}
-
-juce::String diagnostics(const script::CompilationResult<std::shared_ptr<const script::Program>>& result)
-{
-    juce::String text;
-    for (const auto& error : result.diagnostics)
-        text += "Line " + juce::String(error.source.line) + ", column "
-            + juce::String(error.source.column) + ": " + juce::String(error.message) + "\n";
-    return text.isEmpty() ? "Compilation failed without a verified program." : text.trimEnd();
 }
 
 bool parseNumber(const juce::String& text, double& value)
@@ -449,33 +396,6 @@ public:
         seconds_.setTitle("Seconds ahead for scheduled automation target");
         seconds_.setTooltip("Nonnegative seconds ahead of the host's current running session position. "
                             "The host validates epoch, revision, queue capacity and ordering.");
-        source_.setTitle("VAL Script source draft");
-        sourceLabel_.setText("Source draft - not saved until Compile / Apply", juce::dontSendNotification);
-        source_.setMultiLine(true, true);
-        source_.setReturnKeyStartsNewLine(true);
-        source_.setTabKeyUsedAsCharacter(true);
-        source_.setScrollbarsShown(true);
-        source_.setFont(Typography::font(TextRole::code));
-        source_.onTextChange = [this]
-        {
-            if (!loadingSource_)
-            {
-                rememberDraft();
-                status("Source draft changed; Compile / Apply is required. Saved-source parameters remain active.");
-            }
-        };
-        examples_.setTextWhenNothingSelected("Load example into draft...");
-        examples_.addItem("Mono pass-through (safe default)", 1);
-        examples_.addItem("Mono gain", 2);
-        examples_.addItem("Mono constant DC source", 3);
-        examples_.addItem("Stereo gate", 4);
-        examples_.onChange = [this]
-        {
-            const auto id = examples_.getSelectedId();
-            if (id == 0) return;
-            source_.setText(id == 1 ? passThrough : id == 2 ? gainExample : id == 3 ? constantExample : stereoExample);
-            examples_.setSelectedId(0, juce::dontSendNotification);
-        };
         frequencyEntryLabel_.setText("Frequency entry: Hz, MIDI 69, A4, or A4 (A=442 Hz)",
                                      juce::dontSendNotification);
         frequencyEntry_.setTitle("Convert Hz, MIDI note or named note to saved fixed frequency");
@@ -496,7 +416,6 @@ public:
         controlSource_.addItem("Off", 1);
         controlSource_.addItem("LFO", 2);
         controlSource_.addItem("One-shot Envelope", 3);
-        controlSource_.addItem("VAL Script (Time -> scalar)", 4);
         controlSource_.setSelectedId(1, juce::dontSendNotification);
         controlSource_.onChange = [this] { updateControlVisibility(); };
         controlTarget_.onChange = [this] { loadControlEditor(); };
@@ -506,47 +425,24 @@ public:
         controlAttack_.setTitle("Envelope attack duration in seconds");
         controlHold_.setTitle("Envelope hold duration in seconds");
         controlRelease_.setTitle("Envelope release duration in seconds");
-        controlMinimum_.setTitle("Declared minimum VAL Script scalar output");
-        controlMaximum_.setTitle("Declared maximum VAL Script scalar output");
-        controlScript_.setTitle("Stateless VAL Script scalar control source");
-        controlScript_.setFont(Typography::font(TextRole::code));
-        controlScript_.setMultiLine(true, true);
-        controlScript_.setReturnKeyStartsNewLine(true);
-        controlScript_.setScrollbarsShown(true);
-        controlScript_.setText("NODE ScalarControl AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\nBEGIN\n  Value := Time * 0.1;\nEND.", false);
         controlOffset_.setTextToShowWhenEmpty("Offset", ShellTheme::textSecondary());
         controlDepth_.setTextToShowWhenEmpty("Depth", ShellTheme::textSecondary());
         controlRate_.setTextToShowWhenEmpty("Rate Hz", ShellTheme::textSecondary());
         controlAttack_.setTextToShowWhenEmpty("Attack s", ShellTheme::textSecondary());
         controlHold_.setTextToShowWhenEmpty("Hold s", ShellTheme::textSecondary());
         controlRelease_.setTextToShowWhenEmpty("Release s", ShellTheme::textSecondary());
-        controlMinimum_.setTextToShowWhenEmpty("Output min", ShellTheme::textSecondary());
-        controlMaximum_.setTextToShowWhenEmpty("Output max", ShellTheme::textSecondary());
         for (auto* editor : {&frequencyEntry_, &scaleIntervals_, &controlOffset_, &controlDepth_,
-                             &controlRate_, &controlAttack_, &controlHold_, &controlRelease_,
-                             &controlMinimum_, &controlMaximum_, &seconds_})
+                             &controlRate_, &controlAttack_, &controlHold_, &controlRelease_, &seconds_})
             editor->setFont(Typography::font(TextRole::value));
         controlSave_.onClick = [this] { saveControlEditor(); };
-        compile_.onClick = [this] { applyScript(); };
-        load_.onClick = [this] { loadSource(); };
-        revert_.onClick = [this]
-        {
-            if (!editable() || !script_) return;
-            drafts_.erase({patch_, selected_});
-            script_ = false;
-            refresh();
-            status(savedSource_ ? "Draft discarded. The currently saved source is shown."
-                                : "Draft discarded. No source is saved; the safe default draft is shown.");
-        };
         for (auto* child : std::initializer_list<juce::Component*>{
-                 &title_, &bypass_, &explanation_, &scheduleLabel_, &seconds_, &sourceLabel_, &source_,
-                 &examples_, &compile_, &load_, &revert_, &frequencyEntryLabel_, &frequencyEntry_,
+                 &title_, &bypass_, &explanation_, &scheduleLabel_, &seconds_, &frequencyEntryLabel_, &frequencyEntry_,
                  &frequencyApply_, &scaleIntervalsLabel_, &scaleIntervals_, &scaleApply_})
             content_.addAndMakeVisible(child);
         for (auto* child : std::initializer_list<juce::Component*>{
                  &controlLabel_, &controlTarget_, &controlSource_, &controlOffset_,
                  &controlDepth_, &controlRate_, &controlAttack_, &controlHold_,
-                 &controlRelease_, &controlMinimum_, &controlMaximum_, &controlScript_, &controlSave_})
+                 &controlRelease_, &controlSave_})
             content_.addAndMakeVisible(child);
         for (auto* child : std::initializer_list<juce::Component*>{
                  &generatorGoalLabel_, &generatorGoal_, &generatorWaveformLabel_, &generatorWaveform_,
@@ -567,8 +463,7 @@ public:
 
     void status(const juce::String& message)
     {
-        status_.setFont(script_ ? Typography::font(TextRole::diagnostics)
-                                : type_.find("Generator") != std::string::npos
+        status_.setFont(type_.find("Generator") != std::string::npos
                                     ? Typography::ui(15) : Typography::ui(12));
         status_.setText(message, false);
     }
@@ -935,9 +830,7 @@ public:
     }
     void setNode(std::uint64_t id)
     {
-        rememberDraft();
         rememberScaleDraft();
-        script_ = false;
         frequencyEntry_.clear();
         selected_ = id;
         refresh();
@@ -945,15 +838,12 @@ public:
     std::uint64_t node() const noexcept { return selected_; }
     void refresh()
     {
-        rememberDraft();
         rememberScaleDraft();
         ++generation_;
         rows_.clear();
         processor_.reset();
-        program_.reset();
         controlTarget_.clear(juce::dontSendNotification);
         controlTarget_.setSelectedId(0, juce::dontSendNotification);
-        script_ = false;
         valid_ = false;
         patch_ = workspace_.project().activePatch;
         const auto* selected = current();
@@ -969,37 +859,7 @@ public:
             else
             {
                 type_ = *type;
-                script_ = type_ == "Script";
-                if (script_)
-                {
-                    const auto sourceField = selected->parameters.find("audio.script");
-                    const auto* saved = sourceField == selected->parameters.end()
-                        ? nullptr : std::get_if<std::string>(&sourceField->second);
-                    savedSource_ = saved ? std::optional<std::string>(*saved) : std::nullopt;
-                    const auto key = std::pair{patch_, selected_};
-                    auto draft = drafts_.find(key);
-                    if (draft != drafts_.end() && saved && draft->second.text == *saved)
-                    {
-                        drafts_.erase(draft);
-                        draft = drafts_.end();
-                    }
-                    loadingSource_ = true;
-                    source_.setText(draft != drafts_.end() ? juce::String(draft->second.text)
-                                                         : saved ? juce::String(*saved) : juce::String(passThrough), false);
-                    loadingSource_ = false;
-                    if (!saved) status("No saved script source. A safe mono pass-through draft is ready; Compile / Apply to save.");
-                    else
-                    {
-                        const auto result = script::Compiler::compile(*saved);
-                        if (!result.value) status(diagnostics(result));
-                        else
-                        {
-                            program_ = *result.value;
-                            processor_ = std::make_unique<audio::ScriptNode>(program_);
-                        }
-                    }
-                }
-                else processor_ = prototype(type_);
+                processor_ = prototype(type_);
                 if (processor_ && type_ == "Signal Generator")
                     if (const auto custom = selected->parameters.find("audio.scaleIntervals");
                         custom != selected->parameters.end())
@@ -1035,9 +895,7 @@ public:
                                                juce::dontSendNotification);
                         addRows(*selected);
                         populateControlTargets();
-                        status(script_ ? "Saved source verified. Script INPUT/OUTPUT counts must match the runtime bus; "
-                                         "mono examples require a mono bus."
-                                       : type_ == "Sum" ? "Explicit unity sum: connect multiple sources to Sum In. Corresponding channels add without normalization or limiting; check levels before Start."
+                        status(type_ == "Sum" ? "Explicit unity sum: connect multiple sources to Sum In. Corresponding channels add without normalization or limiting; check levels before Start."
                                        : routing ? "Routing utility: connects the configured device bus, not a reusable effect. No bypass or processing parameters."
                                        : type_ == "Analyzer" ? "Analysis module instance; audio passes through unchanged while shared visualizations observe it."
                                                    : type_ == "DC Generator" ? "Zero-input DC source, exact -1.0 to +1.0. Check connected equipment before Start; values are not an acoustic safety limit."
@@ -1046,21 +904,11 @@ public:
                                                    : "Module instance: saved base values are shown; live automation/override state is owned by the runtime.");
                     }
                 }
-                else if (!script_) status("Unsupported explicit audio.type: " + juce::String(type_));
-                if (script_)
-                    if (const auto draft = drafts_.find({patch_, selected_}); draft != drafts_.end())
-                        status(draft->second.base == savedSource_
-                            ? "Unsaved source draft preserved. Compile / Apply to save; parameter controls describe saved source."
-                            : "Saved source changed while this draft was open. Unsaved draft preserved; Compile / Apply "
-                              "explicitly replaces the saved source. Parameter controls describe saved source.");
+                else if (type_ == "Script")
+                    status("Retired VAL Script module. Its source, parameters and connections remain saved but are unsupported and cannot execute. Develop DSP externally.");
+                else status("Unsupported explicit audio.type: " + juce::String(type_));
             }
         }
-        source_.setVisible(script_);
-        sourceLabel_.setVisible(script_);
-        examples_.setVisible(script_);
-        compile_.setVisible(script_);
-        load_.setVisible(script_);
-        revert_.setVisible(script_);
         const bool taskGenerator = valid_ && (type_ == "Signal Generator" || type_ == "Noise Generator");
         bypass_.setVisible(valid_ && !taskGenerator);
         explanation_.setVisible(valid_ && !taskGenerator);
@@ -1126,15 +974,6 @@ public:
             {
                 explanation_.setBounds(4, y, width - 8, 84); y += 88;
             }
-        }
-        if (script_)
-        {
-            examples_.setBounds(4, y, width - 8, 28); y += 32;
-            sourceLabel_.setBounds(4, y, width - 8, 26); y += 30;
-            source_.setBounds(4, y, width - 8, 230); y += 234;
-            compile_.setBounds(4, y, (width - 12) / 2, 28);
-            load_.setBounds(8 + (width - 12) / 2, y, (width - 12) / 2, 28); y += 36;
-            revert_.setBounds(4, y, width - 8, 28); y += 36;
         }
         if (generatorGoal_.isVisible())
         {
@@ -1261,17 +1100,6 @@ public:
                 controlHold_.setBounds(line.removeFromLeft(cell - 2));
                 line.removeFromLeft(3);
                 controlRelease_.setBounds(line); y += 30;
-            }
-            if (controlMinimum_.isVisible())
-            {
-                line = {4, y, width - 8, 26};
-                controlMinimum_.setBounds(line.removeFromLeft(line.getWidth() / 2 - 2));
-                line.removeFromLeft(4);
-                controlMaximum_.setBounds(line); y += 30;
-            }
-            if (controlScript_.isVisible())
-            {
-                controlScript_.setBounds(4, y, width - 8, 120); y += 124;
             }
             if (controlSource_.getSelectedId() != 1)
             {
@@ -1537,7 +1365,7 @@ private:
             return value ? *value : fallback;
         };
         const auto source = getText("source", "none");
-        const auto sourceId = source == "lfo" ? 2 : source == "envelope" ? 3 : source == "script" ? 4 : 1;
+        const auto sourceId = source == "lfo" ? 2 : source == "envelope" ? 3 : 1;
         controlSource_.setSelectedId(sourceId, juce::dontSendNotification);
         controlOffset_.setText(juce::String(getNumber("offset", 0), 6), false);
         controlDepth_.setText(juce::String(getNumber("depth", 0), 6), false);
@@ -1545,10 +1373,6 @@ private:
         controlAttack_.setText(juce::String(getNumber("attackSeconds", 0.01), 6), false);
         controlHold_.setText(juce::String(getNumber("holdSeconds", 0), 6), false);
         controlRelease_.setText(juce::String(getNumber("releaseSeconds", 0.5), 6), false);
-        controlMinimum_.setText(juce::String(getNumber("minimum", 0), 6), false);
-        controlMaximum_.setText(juce::String(getNumber("maximum", 1), 6), false);
-        controlScript_.setText(getText("script",
-            "NODE ScalarControl AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\nBEGIN\n  Value := Time * 0.1;\nEND."), false);
         updateControlVisibility();
     }
 
@@ -1562,9 +1386,6 @@ private:
         controlAttack_.setVisible(active && source == 3);
         controlHold_.setVisible(active && source == 3);
         controlRelease_.setVisible(active && source == 3);
-        controlMinimum_.setVisible(active && source == 4);
-        controlMaximum_.setVisible(active && source == 4);
-        controlScript_.setVisible(active && source == 4);
         controlSave_.setVisible(active);
         resized();
     }
@@ -1579,8 +1400,7 @@ private:
             return;
         }
         const auto sourceId = controlSource_.getSelectedId();
-        const std::string source = sourceId == 2 ? "lfo" : sourceId == 3 ? "envelope"
-            : sourceId == 4 ? "script" : "none";
+        const std::string source = sourceId == 2 ? "lfo" : sourceId == 3 ? "envelope" : "none";
         const auto& parameter = processor_->parameters()[static_cast<std::size_t>(selectedIndex)];
         const std::string prefix = "audio.control." + std::string(parameter.name) + ".";
         std::map<std::string, domain::Parameter> values;
@@ -1611,15 +1431,6 @@ private:
                 status("Envelope attack, hold and release must be finite seconds.");
                 return;
             }
-            if (source == "script")
-            {
-                if (!addNumber("minimum", controlMinimum_) || !addNumber("maximum", controlMaximum_))
-                {
-                    status("Script output minimum and maximum must be finite numbers.");
-                    return;
-                }
-                values.emplace(prefix + "script", controlScript_.getText().toStdString());
-            }
         }
         auto replacement = *current();
         for (const auto& [key, value] : values)
@@ -1640,21 +1451,6 @@ private:
         if (callback) callback();
     }
 
-    /** A node-local draft retains the saved baseline so external source changes are visible. */
-    void rememberDraft()
-    {
-        if (!script_ || selected_ == 0) return;
-        const auto text = source_.getText().toStdString();
-        const auto key = std::pair{patch_, selected_};
-        if (text == savedSource_.value_or(passThrough))
-        {
-            drafts_.erase(key);
-            return;
-        }
-        const auto found = drafts_.find(key);
-        if (found == drafts_.end()) drafts_.emplace(key, Draft{savedSource_, text});
-        else found->second.text = text;
-    }
     void deferSaveBase(std::uint16_t parameter, std::string key, double value)
     {
         const juce::Component::SafePointer<ModuleEditor> safe(&owner_);
@@ -1692,17 +1488,6 @@ private:
             const auto& spec = parameters[i];
             std::string key = std::string("audio.param.") + spec.name;
             if (type_ == "Gain" && node.parameters.contains("audio.gain")) key = "audio.gain";
-            if (script_)
-                for (const auto& [candidate, ignored] : node.parameters)
-                {
-                    (void) ignored;
-                    if (candidate.starts_with("audio.param.")
-                        && juce::String(candidate.substr(12)).equalsIgnoreCase(spec.name))
-                    {
-                        key = candidate;
-                        break;
-                    }
-                }
             const auto found = node.parameters.find(key);
             const double value = found == node.parameters.end() ? spec.initial : std::get<double>(found->second);
             auto row = std::make_unique<ParameterRow>(*this, static_cast<std::uint16_t>(i), spec, key, value);
@@ -1772,86 +1557,20 @@ private:
         status("Scheduled automation requested from host; saved base is unchanged.");
         callback(selected_, parameter, value, seconds);
     }
-    void applyScript()
-    {
-        if (!editable() || !script_) return;
-        const auto source = source_.getText().toStdString();
-        const auto result = script::Compiler::compile(source);
-        if (!result.value) { status(diagnostics(result)); return; }
-        auto replacement = *current();
-        replacement.parameters.insert_or_assign("audio.script", source);
-        domain::Graph isolated;
-        isolated.nodes.emplace(selected_, std::move(replacement));
-        const auto validation = audio::AudioGraph::fromStructural(isolated, 1);
-        if (!validation.value)
-        {
-            status("Compiled, but not applied: " + juce::String(validation.error.message)
-                + "\nSaved parameter names/ranges must remain compatible. No saved state was changed.");
-            return;
-        }
-        auto callback = owner_.onChanged;
-        const auto saved = workspace_.setParameter(selected_, "audio.script", source);
-        if (!saved.succeeded) { status(juce::String(saved.error)); return; }
-        drafts_.erase({patch_, selected_});
-        savedSource_ = source;
-        refresh();
-        status("Compiled and applied. Saved source and its verified parameters are shown. "
-               "INPUT/OUTPUT counts must match the runtime bus.");
-        if (callback) callback();
-    }
-    void loadSource()
-    {
-        if (!editable() || !script_) return;
-        chooser_ = std::make_unique<juce::FileChooser>("Load VAL Script source into draft",
-                                                      juce::File{}, "*.vals;*.val;*.txt");
-        const juce::Component::SafePointer<ModuleEditor> safe(&owner_);
-        const auto generation = generation_;
-        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-            [safe, generation](const juce::FileChooser& chooser)
-            {
-                if (!safe || safe->impl_->generation_ != generation) return;
-                auto& editor = *safe->impl_;
-                if (!editor.editable()) return;
-                const auto file = chooser.getResult();
-                if (file == juce::File{}) return;
-                auto stream = file.createInputStream();
-                if (!stream || stream->failedToOpen())
-                {
-                    editor.status("Cannot open source file for reading.");
-                    return;
-                }
-                if (stream->getTotalLength() > 65536)
-                {
-                    editor.status("Source exceeds the compiler's 64 KiB limit.");
-                    return;
-                }
-                const auto source = stream->readEntireStreamAsString();
-                if (stream->getStatus().failed())
-                {
-                    editor.status("Source read failed: " + stream->getStatus().getErrorMessage());
-                    return;
-                }
-                editor.source_.setText(source);
-                editor.status("Source loaded into draft only; Compile / Apply validates before saving.");
-            });
-    }
-
     ModuleEditor& owner_;
     application::WorkspaceService& workspace_;
     std::uint64_t selected_{}, patch_{}, generation_{};
     std::uint64_t scaleEditorBoundNode_{}, scaleEditorBoundPatch_{};
     std::string type_;
-    std::optional<std::string> savedSource_;
-    std::map<std::pair<std::uint64_t, std::uint64_t>, Draft> drafts_;
     std::map<std::pair<std::uint64_t, std::uint64_t>, Draft> scaleDrafts_;
-    bool valid_{}, script_{}, loadingSource_{}, loadingScale_{}, taskDragging_{};
+    bool valid_{}, loadingScale_{}, taskDragging_{};
     bool advancedExpanded_{}, automationExpanded_{}, developerExpanded_{};
     juce::Component content_;
     juce::Viewport viewport_;
-    juce::TextEditor status_, source_, seconds_;
+    juce::TextEditor status_, seconds_;
     juce::TextEditor frequencyEntry_, scaleIntervals_, controlOffset_, controlDepth_, controlRate_;
-    juce::TextEditor controlAttack_, controlHold_, controlRelease_, controlMinimum_, controlMaximum_, controlScript_;
-    juce::Label title_, explanation_, scheduleLabel_, sourceLabel_, frequencyEntryLabel_, scaleIntervalsLabel_, controlLabel_;
+    juce::TextEditor controlAttack_, controlHold_, controlRelease_;
+    juce::Label title_, explanation_, scheduleLabel_, frequencyEntryLabel_, scaleIntervalsLabel_, controlLabel_;
     juce::Label generatorGoalLabel_, generatorWaveformLabel_, generatorFrequencyLabel_, generatorStartLabel_,
         generatorEndLabel_, generatorDurationLabel_, generatorLevelLabel_, generatorNoiseLabel_,
         generatorScaleLabel_, generatorRootLabel_, generatorStepLabel_, generatorCurveLabel_,
@@ -1860,19 +1579,16 @@ private:
     juce::TextEditor developerDetails_;
     juce::ToggleButton bypass_{"Saved bypass (dry for effects; silence for sources)"};
     juce::ToggleButton generatorMute_{"Mute output"};
-    juce::ComboBox examples_, controlTarget_, controlSource_, generatorGoal_, generatorWaveform_,
+    juce::ComboBox controlTarget_, controlSource_, generatorGoal_, generatorWaveform_,
         generatorNoise_, generatorScale_, generatorCurve_, generatorCalibration_;
-    juce::TextButton compile_{"Compile / Apply"}, load_{"Load Source..."}, revert_{"Revert to saved source"},
-        frequencyApply_{"Set Frequency"}, scaleApply_{"Apply scale"}, controlSave_{"Save typed control mapping"},
+    juce::TextButton frequencyApply_{"Set Frequency"}, scaleApply_{"Apply scale"}, controlSave_{"Save typed control mapping"},
         advancedToggle_, automationToggle_, developerToggle_;
     juce::Slider generatorFrequency_, generatorStart_, generatorEnd_, generatorDuration_, generatorLevel_,
         generatorRoot_, generatorStep_;
     GeneratorPreview generatorPreview_;
     GeneratorMeter generatorMeter_;
-    std::shared_ptr<const script::Program> program_;
     std::unique_ptr<audio::AudioNode> processor_;
     std::vector<std::unique_ptr<ParameterRow>> rows_;
-    std::unique_ptr<juce::FileChooser> chooser_;
 };
 
 ModuleEditor::ModuleEditor(application::WorkspaceService& workspace)
@@ -1887,5 +1603,4 @@ void ModuleEditor::setNode(std::uint64_t id) { impl_->setNode(id); }
 std::uint64_t ModuleEditor::node() const noexcept { return impl_->node(); }
 void ModuleEditor::refresh() { impl_->refresh(); }
 void ModuleEditor::setStatusMessage(const juce::String& message) { impl_->status(message); }
-std::string ModuleEditor::defaultScriptSource() { return passThrough; }
 }

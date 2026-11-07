@@ -12,7 +12,7 @@ The existing device-independent C++20 Audio library supplies seven effects (Gain
 | `AnalyzerNode` | Pass-through observation endpoint; explicit bounded capture feeds the shared off-audio-thread [visualization worker](SignalVisualization.md), not callback peak/RMS accumulation. |
 | `ParameterSmoother` | Resettable linear physical-domain ramps measured in samples rather than callbacks. Inputs must be validated by parameter metadata before use. |
 
-The [desktop workflow](DesktopWorkflow.md) exposes processors and generators through module insertion, saved base parameters, bypass, transient automation and typed scalar parameter mappings. Generic canvas names still have no DSP meaning; opening/loading a project never starts audio, while valid edits can update an explicitly started graph. [VAL Script](ValScript.md) uses the same base/graph lifecycle. Plugin hosting/export, MIDI, editable/recorded automation lanes, seek/loop, draggable control wires/independent control nodes, feedback graphs, mixing and parallel scheduling remain outside the implemented scope. Scalar LFO, one-shot Envelope and stateless VAL Script sources may instead be bound directly to a continuous target parameter; see below.
+The [desktop workflow](DesktopWorkflow.md) exposes processors and generators through module insertion, saved base parameters, bypass, transient automation and typed scalar parameter mappings. Generic canvas names still have no DSP meaning; opening/loading a project never starts audio, while valid edits can update an explicitly started graph. Plugin hosting/export, MIDI, editable/recorded automation lanes, seek/loop, draggable control wires/independent control nodes, feedback graphs, mixing and parallel scheduling remain outside the implemented scope. Scalar LFO and one-shot Envelope sources may be bound directly to a continuous target parameter; see below. Custom DSP development is external to this application.
 
 ## Lifecycle and realtime ownership
 
@@ -69,18 +69,12 @@ mode, scale, mute, seed and transport parameters reject them.
 * **Envelope:** one-shot linear 0..1 attack, hold, and linear release from
   explicit Start. Timing uses prepared sample frames; there is no UI timer,
   external gate port or retrigger input.
-* **VAL Script:** compiled before graph activation, one `INPUT Time: REAL`,
-  one REAL output and no parameters. `Time` is elapsed seconds from explicit
-  Start. Its declared output range is validated per sample. Compiler/runtime
-  faults or range violations latch a numerical fault and silence the affected
-  processor until graph reset/replacement; there is no fallback to base audio.
-
-Each source is instance-local and prepared off callback. Script scratch is
-allocated before plan publication. Callbacks run bounded scalar evaluation
-with no allocation, deallocation, lock, compile, log or UI call. Modulation
-values do not use UI refresh or host block length as a clock. Runtime base and
-automation target admission validates the full declared modulation range;
-mapped discrete parameters and unsupported sources return explicit errors.
+Each source is instance-local and prepared off callback. Callbacks run bounded
+scalar evaluation with no allocation, deallocation, lock, compile, log or UI
+call. Modulation values do not use UI refresh or host block length as a clock.
+Runtime base and automation target admission validates the full declared
+modulation range; mapped discrete parameters and unsupported sources return
+explicit errors.
 
 ## Automation timing and bounded delivery
 

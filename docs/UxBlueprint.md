@@ -101,7 +101,7 @@ When qualified automation is present, distinguish base, automated target, live o
 
 Represent the current local project, its current patch, its contained component instances, and project diagnostics. Selecting a component locates/focuses it on the canvas or Structure List. Selecting a diagnostic reveals the affected node/port and recommended action.
 
-Do not imply a file-per-node model, multiple patches, or source folders before the project format supports them. Future reusable modules and VAL Script definitions appear only when their capabilities are approved and available; do not show permanently empty advanced folders to beginners.
+Do not imply a file-per-node model, multiple patches, or source folders before the project format supports them. Future reusable modules appear only when their capabilities are approved and available; do not show permanently empty advanced folders to beginners. VAL Script is retired and is not a future product capability.
 
 Clearly distinguish project identity from the machine's device preference. On cross-platform open, preserve patch meaning and present output reassignment as an audio setting, not a corrupt project.
 
@@ -236,7 +236,7 @@ Keep all of this out of the first-sound path. Hosting/export must not introduce 
 
 The proposed 0.1/0.5 loop prioritizes the basic workbench, canvas/Structure List, toolbox, properties, local project navigation, explicit audio settings/status, and elementary inspection. Stable 1.0 strengthens clarity, compatibility, and accessibility evidence.
 
-Reusable-module editing follows the PRD's proposed 2.0 discovery. Advanced signal displays, docking, multiple documents/audio sessions, automation lanes, and VAL Script editing require separate scope decisions. If script editing is introduced, show source/diagnostics and compiled-versus-active state without making code a prerequisite for patching.
+Reusable-module editing follows the PRD's proposed 2.0 discovery. Advanced signal displays, docking, multiple documents/audio sessions, and automation lanes require separate scope decisions. Custom DSP development is external to this product; see the [VAL Script retirement report](ValScriptRetirementPlan.md).
 
 Still unresolved: final component labels, exact panel sizing and small-window behavior, keyboard conflict resolution, platform support matrix, automation-control details, output-level safeguards, and supported assistive-technology coverage. Future plugin discovery/isolation messaging, export eligibility/formats/toolchain UX and external-host editor/control behavior require separate scope decisions.
 

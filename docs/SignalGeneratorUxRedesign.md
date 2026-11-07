@@ -474,7 +474,7 @@ arbitrary recorded curves.
 
 The proposed normal automation editor uses user concepts: **Destination**
 (Frequency, Sweep Time, etc., only if eligible), **Source** (LFO, one-shot
-Envelope, Control Script), and source-specific values (rate, attack/hold/
+Envelope), and source-specific values (rate, attack/hold/
 release, declared range). Show **Base value** as the saved value only when
 needed for context; do not expose “saved base,” “live target,”
 “apply/release override,” “automation now,” “disable automation,” or

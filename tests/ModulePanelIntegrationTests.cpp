@@ -1,7 +1,6 @@
 #include "TestSupport.h"
 #include <val/audio/AudioGraph.h>
 #include <val/presentation/ModulePanels.h>
-#include <val/script/Compiler.h>
 #include <val/presentation/ShellTheme.h>
 #include <algorithm>
 #include <array>
@@ -165,19 +164,17 @@ void runModulePanelIntegrationTests()
     auto& diagnostics = textControl(editor, "Module editor diagnostics");
     std::vector<std::function<void()>> steps;
     const auto add = [&](std::function<void()> step) { steps.push_back(std::move(step)); };
-    domain::Graph beforeEffect, afterEffect, beforeScript;
-    std::uint64_t eq{}, legacyGain{}, scriptId{}, generator{};
+    domain::Graph beforeEffect, afterEffect;
+    std::uint64_t eq{}, legacyGain{}, retiredNode{}, generator{};
     int controlChangedBefore{};
     double gestureValue{};
     juce::Point<float> gestureStart;
     int changedBefore{};
-    std::string authoredSource;
-    std::string persistedBefore;
 
     add([&]
     {
-        require(list.getListBoxModel()->getNumRows() == 22 && list.getSelectedRow() >= 0
-                    && category.getNumItems() == 6,
+        require(list.getListBoxModel()->getNumRows() == 21 && list.getSelectedRow() >= 0
+                    && category.getNumItems() == 5,
                 "The actual catalog exposes the delivered modules and their populated categories.");
         category.setSelectedId(2, juce::sendNotificationSync);
         require(list.getListBoxModel()->getNumRows() == 7,
@@ -192,10 +189,6 @@ void runModulePanelIntegrationTests()
         require(list.getListBoxModel()->getNumRows() == 1
                     && list.getListBoxModel()->getTooltipForRow(0).contains("Explicit unity sum"),
                 "Routing utilities keep explicit Sum; hardware endpoints are configured in fixed canvas lanes.");
-        category.setSelectedId(6, juce::sendNotificationSync);
-        require(list.getListBoxModel()->getNumRows() == 1
-                    && list.getListBoxModel()->getTooltipForRow(0).contains("User-authored"),
-                "Custom DSP category identifies Script as the one shipped user-authored module.");
         category.setSelectedId(1, juce::sendNotificationSync);
         search.setText("sPeCtRuM");
     });
@@ -234,11 +227,11 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        const std::array<std::string, 22> names{
+        const std::array<std::string, 21> names{
             "Sum", "Gain", "EQ", "Delay", "Compressor", "Distortion",
             "Chorus", "Reverb", "Signal Generator", "Impulse Generator", "Click Generator", "Burst Generator",
             "Chirp Generator", "Noise Generator", "DC Generator", "Oscilloscope", "Spectrum Analyzer",
-            "Peak Meter", "RMS Meter", "Correlation Meter", "Guitar Tuner", "Script"};
+            "Peak Meter", "RMS Meter", "Correlation Meter", "Guitar Tuner"};
         require(list.getListBoxModel()->getNumRows() == static_cast<int>(names.size()), "Clearing search restores every module.");
         catalog.onInsert = [&, names](std::string type)
         {
@@ -248,11 +241,11 @@ void runModulePanelIntegrationTests()
             inserted.push_back(std::move(type));
         };
     });
-    for (int row = 0; row < 22; ++row)
+    for (int row = 0; row < 21; ++row)
         add([&, row] { list.selectRow(row); button(catalog, "Insert selected module").triggerClick(); });
     add([&]
     {
-        require(inserted.size() == 24 && catalogMatched,
+        require(inserted.size() == 23 && catalogMatched,
                 "Every actual catalog row can be selected and emits its module type through the insertion button.");
         catalog.onInsert = {};
         require(workspace.createNode({10, 20}, "EQ under test",
@@ -405,182 +398,23 @@ void runModulePanelIntegrationTests()
                 "Edited legacy gain still maps through the actual audio graph API.");
         require(workspace.undo().succeeded && savedNumber(workspace, legacyGain, "audio.gain") == 1.5,
                 "Legacy gain edits use existing undo history.");
-        require(workspace.createNode({90, 100}, "Script under test",
-                    {{"audio.type", std::string("Script")}, {"audio.script", ModuleEditor::defaultScriptSource()},
-                     {"custom.note", std::string("script state")}}).succeeded,
-                "Create a safe mono script fixture.");
-        scriptId = workspace.lastCreatedNode();
-        editor.setNode(scriptId);
-        const auto initial = script::Compiler::compile(ModuleEditor::defaultScriptSource());
-        require(initial.value && (*initial.value)->inputs().size() == 1 && (*initial.value)->outputs().size() == 1
-                    && visibleControls<juce::Slider>(editor).empty(),
-                "The default is a verified mono pass-through with no invented parameters.");
-        const auto& draftLabel = control<juce::Label>(editor, [](const auto& label)
-        {
-            return label.getText().contains("not saved until Compile / Apply");
-        });
-        require(draftLabel.isVisible(), "Script drafts have a persistent visible warning independent of diagnostics.");
-        beforeScript = workspace.graph();
-        changedBefore = changed;
-        textControl(editor, "VAL Script source draft").setText(
-            "NODE Broken AT AUDIO;\nOUTPUT OutSample: REAL;\nBEGIN\n OutSample := Missing\nEND.", false);
-        button(editor, "Compile / Apply").triggerClick();
+        const std::string legacySource = "NODE Old AT AUDIO; OUTPUT Value: REAL; BEGIN Value := 1 END.";
+        require(workspace.createNode({90, 100}, "Retired VAL Script",
+                    {{"audio.type", std::string("Script")}, {"audio.script", legacySource},
+                     {"audio.param.Gain", 0.75}, {"custom.note", std::string("script state")}}).succeeded,
+                "Load a retired Script node without compiling or rewriting its saved source.");
+        retiredNode = workspace.lastCreatedNode();
+        editor.setNode(retiredNode);
+        require(diagnostics.getText().contains("Retired VAL Script")
+                    && visibleControls<juce::Slider>(editor).empty()
+                    && std::get<std::string>(workspace.graph().nodes.at(retiredNode).parameters.at("audio.script")) == legacySource
+                    && std::get<std::string>(workspace.graph().nodes.at(retiredNode).parameters.at("custom.note")) == "script state",
+                "The inspector clearly diagnoses legacy Script as unsupported while retaining its source and unrelated data.");
+        require(workspace.undo().succeeded && !workspace.graph().nodes.contains(retiredNode),
+                "The legacy diagnostic fixture is removed before validating runnable graph behavior.");
     });
     add([&]
     {
-        require(workspace.graph() == beforeScript && changed == changedBefore
-                    && diagnostics.getText().contains("Line 4, column"),
-                "Failed compilation displays an authored source location and preserves source/history.");
-        authoredSource =
-            "NODE Authored AT AUDIO;\nINPUT InSample: REAL;\nOUTPUT OutSample: REAL;\n"
-            "PARAM Amount: REAL = 0.75 RANGE 0.0 .. 1.0;\nBEGIN\n"
-            " OutSample := InSample * Amount\nEND.\n";
-        textControl(editor, "VAL Script source draft").setText(juce::String(authoredSource), false);
-        require(workspace.graph() == beforeScript, "Editing a source draft alone does not save it.");
-        editor.setNode(scriptId);
-        editor.refresh();
-        require(textControl(editor, "VAL Script source draft").getText().toStdString() == authoredSource,
-                "Repeated same-ID selection and refresh preserve unsaved authored source.");
-        editor.setNode(eq);
-        editor.setNode(scriptId);
-        require(textControl(editor, "VAL Script source draft").getText().toStdString() == authoredSource
-                    && diagnostics.getText().contains("draft preserved"),
-                "Switching selection preserves a node-local draft and visibly labels it unsaved.");
-        const auto externalSource = ModuleEditor::defaultScriptSource() + "\n// external saved-source edit\n";
-        require(workspace.setParameter(scriptId, "audio.script", externalSource).succeeded,
-                "Prepare an external saved-source edit while an authored draft remains open.");
-        editor.refresh();
-        require(textControl(editor, "VAL Script source draft").getText().toStdString() == authoredSource
-                    && diagnostics.getText().contains("Saved source changed"),
-                "External saved-source changes preserve the draft and visibly identify the conflict.");
-        button(editor, "Revert to saved source").triggerClick();
-    });
-    add([&]
-    {
-        const auto saved = std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script"));
-        require(textControl(editor, "VAL Script source draft").getText().toStdString() == saved
-                    && diagnostics.getText().contains("Draft discarded") && changed == changedBefore,
-                "Visible revert explicitly discards the stale draft and restores current saved source without editing history.");
-        editor.setNode(eq);
-        editor.setNode(scriptId);
-        require(textControl(editor, "VAL Script source draft").getText().toStdString() == saved,
-                "A reverted draft is not resurrected by later selection changes.");
-        textControl(editor, "VAL Script source draft").setText(juce::String(authoredSource), false);
-        require(workspace.undo().succeeded && workspace.graph() == beforeScript,
-                "Undo the external edit without touching the unsaved draft.");
-        editor.refresh();
-        require(textControl(editor, "VAL Script source draft").getText().toStdString() == authoredSource,
-                "Undo-triggered refresh retains the unsaved authored draft.");
-        button(editor, "Compile / Apply").triggerClick();
-    });
-    add([&]
-    {
-        require(changed == changedBefore + 1
-                    && std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script")) == authoredSource,
-                "Compile / Apply persists exactly the successfully compiled authored text.");
-        const auto& parameter = slider(editor, "AMOUNT saved base value");
-        require(parameter.getMinimum() == 0 && parameter.getMaximum() == 1 && parameter.getValue() == 0.75
-                    && visibleControls<juce::Slider>(editor).size() == 1,
-                "Script parameter controls come from the verified authored program.");
-        require(std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("custom.note")) == "script state",
-                "Applying source preserves unrelated node state.");
-        require(workspace.undo().succeeded && workspace.graph() == beforeScript,
-                "One undo restores the previous script source and all document state.");
-        editor.refresh();
-        require(visibleControls<juce::Slider>(editor).empty(), "Undo refresh removes parameters absent from restored source.");
-        require(workspace.redo().succeeded, "Redo the authored source application.");
-        editor.refresh();
-        slider(editor, "AMOUNT saved base value").setValue(0.5, juce::sendNotificationSync);
-    });
-    add([&]
-    {
-        require(savedNumber(workspace, scriptId, "audio.param.AMOUNT") == 0.5,
-                "Verified script parameters persist through the same real slider path.");
-        persistedBefore = std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script"));
-        control<juce::ComboBox>(editor, [](const auto&) { return true; })
-            .setSelectedId(1, juce::sendNotificationSync);
-        button(editor, "Compile / Apply").triggerClick();
-    });
-    add([&]
-    {
-        require(std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script")) == persistedBefore
-                    && savedNumber(workspace, scriptId, "audio.param.AMOUNT") == 0.5
-                    && diagnostics.getText().contains("not applied"),
-                "A new valid source incompatible with saved parameters is visibly rejected without losing state.");
-    });
-    for (int example = 1; example <= 4; ++example)
-    {
-        add([&, example]
-        {
-            require(workspace.createNode({0, 0}, "Example",
-                        {{"audio.type", std::string("Script")},
-                         {"audio.script", ModuleEditor::defaultScriptSource()}}).succeeded,
-                    "Create independent source fixture for an embedded example.");
-            scriptId = workspace.lastCreatedNode();
-            editor.setNode(scriptId);
-            persistedBefore = std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script"));
-            changedBefore = changed;
-            auto& examples = control<juce::ComboBox>(editor, [](const auto&) { return true; });
-            require(examples.getNumItems() == 4, "All embedded runnable examples are selectable.");
-            examples.setSelectedId(example, juce::sendNotificationSync);
-            const auto source = textControl(editor, "VAL Script source draft").getText().toStdString();
-            require(script::Compiler::compile(source).value.has_value(), "The selected embedded source actually compiles.");
-            require(std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script")) == persistedBefore
-                        && changed == changedBefore,
-                    "Selecting an example changes only the draft.");
-            authoredSource = source;
-            button(editor, "Compile / Apply").triggerClick();
-        });
-        add([&, example]
-        {
-            require(changed == changedBefore + 1
-                        && std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script")) == authoredSource,
-                    "Each selected embedded example applies its actual verified text.");
-            const auto compiled = script::Compiler::compile(authoredSource);
-            require(compiled.value.has_value(), "Saved example source remains compiler-verifiable.");
-            const auto program = *compiled.value;
-            const auto expectedChannels = example == 4 ? std::size_t{2} : std::size_t{1};
-            require(program->outputs().size() == expectedChannels
-                        && visibleControls<juce::Slider>(editor).size() == program->parameters().size(),
-                    "Example bus declarations and parameter controls match the saved compiled artifact.");
-            for (const auto& definition : program->parameters())
-            {
-                const auto& value = slider(editor, juce::String(definition.name) + " saved base value");
-                require(value.getMinimum() == definition.minimum && value.getMaximum() == definition.maximum
-                            && value.getValue() == definition.initial,
-                        "Example parameter controls use verified ranges and defaults.");
-            }
-            std::vector<script::Value> scratch(program->slots());
-            for (const auto& input : program->inputs()) scratch[input.slot] = script::Value::fromReal(0.25f);
-            for (const auto& parameter : program->parameters())
-                scratch[parameter.slot] = script::Value::fromReal(parameter.initial);
-            require(program->execute(scratch).code == script::FaultCode::none,
-                    "Selected example executes its verified instructions, without hardware.");
-            for (const auto& output : program->outputs())
-                require(std::isfinite(scratch[output.slot].real), "Every example produces finite output.");
-        });
-    }
-    add([&]
-    {
-        persistedBefore = std::get<std::string>(workspace.graph().nodes.at(scriptId).parameters.at("audio.script"));
-        textControl(editor, "VAL Script source draft").setText(
-            juce::String(ModuleEditor::defaultScriptSource() + "\n// unapplied previous-project draft\n"), false);
-        auto loaded = workspace.project();
-        loaded.patches.at(loaded.activePatch).graph.nodes.at(scriptId).parameters["audio.script"] =
-            ModuleEditor::defaultScriptSource() + "\n// source in loaded project\n";
-        require(workspace.replaceProject(std::move(loaded)).succeeded, "Simulate project Load reusing patch/node identities.");
-        editor.setNode(scriptId);
-        require(textControl(editor, "VAL Script source draft").getText().contains("previous-project draft")
-                    && diagnostics.getText().contains("Saved source changed"),
-                "Project replacement preserves the unapplied draft and visibly labels its saved-source conflict.");
-        button(editor, "Revert to saved source").triggerClick();
-    });
-    add([&]
-    {
-        require(textControl(editor, "VAL Script source draft").getText().contains("source in loaded project")
-                    && !textControl(editor, "VAL Script source draft").getText().contains("previous-project draft")
-                    && !workspace.canUndo(),
-                "Revert restores the loaded saved source without creating history or applying the previous project's draft.");
         require(workspace.createNode({0, 0}, "Signal Generator",
                     {{"audio.type", std::string("Signal Generator")},
                      {"audio.param.levelDb", -12.0}}).succeeded,
@@ -662,8 +496,6 @@ void runModulePanelIntegrationTests()
     });
     add([&]
     {
-        auto& controlSource = control<juce::ComboBox>(editor,
-            [](const auto& item) { return item.getTitle() == "Typed scalar source for the selected parameter"; });
         require(changed == controlChangedBefore + 1,
                 "Saving the mapping triggers one undoable document edit: " + diagnostics.getText().toStdString());
         const auto lfoSaved = workspace.graph().nodes.at(generator).parameters.find("audio.control.frequencyHz.source");
@@ -681,15 +513,6 @@ void runModulePanelIntegrationTests()
         require(lfoGraph.value.has_value(),
                 "LFO-to-frequency mapping is persisted, graph-validated and visible through the real editor: "
                     + lfoGraph.error.message);
-
-        controlSource.setSelectedId(4, juce::sendNotificationSync);
-        textControl(editor, "Control mapping offset in destination parameter units").setText("0", false);
-        textControl(editor, "Control mapping depth in destination parameter units").setText("1", false);
-        textControl(editor, "Declared minimum VAL Script scalar output").setText("0", false);
-        textControl(editor, "Declared maximum VAL Script scalar output").setText("1", false);
-        textControl(editor, "Stateless VAL Script scalar control source").setText(
-            "NODE SweepSpeed AT AUDIO;\nINPUT Time: REAL;\nOUTPUT Value: REAL;\nBEGIN\n  Value := Time * 0.1;\nEND.", false);
-        button(editor, "Save typed control mapping").triggerClick();
     });
     add([&]
     {
@@ -697,12 +520,6 @@ void runModulePanelIntegrationTests()
             [](const auto& item) { return item.getTitle() == "Continuous parameter receiving a scalar control mapping"; });
         auto& controlSource = control<juce::ComboBox>(editor,
             [](const auto& item) { return item.getTitle() == "Typed scalar source for the selected parameter"; });
-        const auto scriptSaved = workspace.graph().nodes.at(generator).parameters.find("audio.control.frequencyHz.source");
-        require(scriptSaved != workspace.graph().nodes.at(generator).parameters.end()
-                    && std::get<std::string>(scriptSaved->second) == "script"
-                    && audio::AudioGraph::fromStructural(workspace.graph(), 1).value,
-                "A stateless VAL Script Time-to-scalar mapping compiles, persists and prepares through the editor: "
-                    + diagnostics.getText().toStdString());
 
         for (int item = 0; item < controlTarget.getNumItems(); ++item)
             if (controlTarget.getItemText(item) == "levelDb")

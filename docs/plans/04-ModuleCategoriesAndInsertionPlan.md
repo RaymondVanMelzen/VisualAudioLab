@@ -22,15 +22,16 @@ availability.
 - A **module** is a reusable audio function; a placed **node** is one
   instance. Input/Output are routing utilities, not effects.
 
-## Investigated current catalog and interaction
+## Historical catalog snapshot
 
-`src\VisualAudioLab.Presentation\src\ModulePanels.cpp` defines a flat
-14-entry catalog: Input, Output, Gain, EQ, Delay, Compressor, Distortion,
-Chorus, Reverb, Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter and
-Script. Input and Output have a routing label. Search, Insert, Enter and
-double-click activate the selected row. `MainComponent::insertModule` places
-the new node at the canvas viewport center and selects it. No drag source is
-implemented in the catalog.
+This plan's catalog inventory is a historical pre-retirement snapshot, not a
+description of the current application. At that time,
+`src\VisualAudioLab.Presentation\src\ModulePanels.cpp` defined a flat
+14-entry catalog including Script. VAL Script has since been retired and
+removed from the current catalog; see the
+[retirement report](../ValScriptRetirementPlan.md). The remaining interaction
+details below are historical proposals and must be checked against current
+code before implementation.
 
 The graph's DSP mapping is in
 `src\VisualAudioLab.Audio\src\AudioGraph.cpp`. The current `Analyzer` mapping
@@ -50,15 +51,12 @@ name lists. A practical initial map is:
 | **Effects** | Gain, EQ, Delay, Compressor, Distortion, Chorus, Reverb | Keep any stereo-width variants marked only when implemented. |
 | **Analysis** | Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter | Guitar Tuner, after plan 05 is implemented and qualified. |
 | **Routing** | Input, Output | Mixer, only after explicit summing/channel semantics are designed. |
-| **Sources** | Script is a general programmable module; it can run a zero-input script, but is not a product oscillator. | Fixed-frequency oscillator with free and note-quantized modes. |
-| **Custom DSP** | Script | Keep its identity discoverable without falsely narrowing it to a conventional effect. |
 
 These groupings are proposals, not a requirement to show empty future
 categories. Do not add placeholders, disabled cards or “coming soon” modules
 without separate product approval. Keep the existing module list discoverable
-even if a category is collapsed. Revisit whether Script belongs under Sources
-or Custom DSP after usability review; it may appear in more than one filtered
-view only if the underlying catalog metadata stays unambiguous.
+even if a category is collapsed. VAL Script is retired; it is not a category,
+catalog entry, or future product capability.
 
 The AAS Multiphonics CV-3 catalog is a reference for grouping modules into
 musician-recognizable domains; it does not prescribe VAL's taxonomy.

@@ -1,7 +1,6 @@
 add_library(VisualAudioLab.Audio STATIC
     src/SignalCaptureBuffer.cpp
     src/AnalyzerEngine.cpp
-    src/ScriptNode.cpp
     src/AudioNode.cpp
     src/DspNodes.cpp
     src/GeneratorNodes.cpp
@@ -9,5 +8,5 @@ add_library(VisualAudioLab.Audio STATIC
     src/AudioEngine.cpp
     src/AudioProcessorNode.cpp)
 target_include_directories(VisualAudioLab.Audio PUBLIC include)
-target_link_libraries(VisualAudioLab.Audio PUBLIC VisualAudioLab.Application VisualAudioLab.Script)
+target_link_libraries(VisualAudioLab.Audio PUBLIC VisualAudioLab.Application)
 val_configure_target(VisualAudioLab.Audio)

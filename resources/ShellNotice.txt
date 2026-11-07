@@ -1,1 +1,3 @@
-Structural projects only. Audio, DSP, scripting and plugins are not implemented.
+Visual Audio Lab provides routing, built-in audio processing, visualization,
+analysis and module hosting. VAL Script is retired; legacy project data is
+preserved but unsupported, and custom DSP development is external.

@@ -44,8 +44,8 @@ signal behaviour—above persistent window administration.
 
 ### What the current prototype shows
 
-The current desktop already has real graph editing, a searchable 14-entry
-module catalog, parameter/script editing, native audio settings, explicit
+The current desktop already has real graph editing, a searchable built-in
+module catalog, parameter editing, native audio settings, explicit
 transport, project persistence and live scope/spectrum/peak/raw-RMS views.
 Its present visual structure still reads as a developer-style shell: a menu
 strip, command toolbar, separate status/banner strips, left browser, bordered
@@ -179,7 +179,7 @@ distinctive wordmark or type treatment.
 | Subsection | 16 / 22 px | Controls and visualization group names. |
 | Body | 15 / 21 px | Instructions and primary controls. |
 | Supporting | 13 / 18 px | Units, secondary controls and status detail; do not shrink dense copy below this. |
-| Source | 14 / 20 px | VAL Script editing; line numbers and diagnostics preserve clear hierarchy. |
+| Source | 14 / 20 px | Technical text and identifiers preserve a clear hierarchy. |
 
 Use a 4 px base spacing rhythm: **4, 8, 12, 16, 24, 32, 48 px**. Keep 8 px
 between a label and its control, 16 px between related controls, 24 px between
@@ -221,7 +221,6 @@ caption. Never depend on color alone.
 | Delay | Cyan rail; echo/tap glyph and time/feedback values. | Optional real tap/feedback visualization only if bounded state is provided; avoid a decorative repeating waveform. |
 | Analysis (Oscilloscope, Spectrum Analyzer, Peak Meter, RMS Meter, Guitar Tuner) | Blue instrument rail; recognizable scope/FFT/bar/tuning glyph; measurement is the body. | Scope shows the real bounded min/max envelope; Spectrum shows current worker result; meters show calibrated values; tuner shows its measured note, cents and confidence. |
 | Logic | Blue/neutral logic glyph; distinct control ports and dashed control wires. | No such module is currently in the catalog; reserved for future, explicitly typed nodes. |
-| Scripts | Lavender `ƒ`/page glyph, not a terminal prompt; explicit input/output count and compile state. | No source code on the canvas; use the inspector/full editor. |
 | Audio Output | Destination glyph and left-side input; port shape distinguishes sink. | Show confirmed route/level/over-range state only if measured. |
 
 ### Zoom and density

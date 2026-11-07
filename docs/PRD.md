@@ -60,7 +60,7 @@ The baseline column identifies the first proposed release where the requirement 
 | FR-10 | Support undo/redo for ordinary patch edits and warn before discarding unsaved changes. Errors must leave the user able to preserve unaffected work. | 0.5 |
 | FR-11 | Permit a project created with the same supported release and component set to move between Windows and macOS without losing its patch structure or parameter values. Report device-specific settings that need reassignment. | 0.5 |
 | FR-12 | Detect unsupported project versions and document migration or compatibility limits. Before changing an existing project format, provide a way to retain the original rather than silently making it unusable. | 1.0 |
-| FR-13 | Provide an understandable way to organize and reuse related patch structures as projects become more complex. The specific interaction is a proposed 2.0 discovery outcome, distinct from future VST3 hosting, plugin export, or VAL Script; none of those is assigned to 2.0 by this requirement. | 2.0, proposed |
+| FR-13 | Provide an understandable way to organize and reuse related patch structures as projects become more complex. The specific interaction is a proposed 2.0 discovery outcome, distinct from future VST3 hosting or plugin export; neither is assigned to 2.0 by this requirement. | 2.0, proposed |
 
 ## Non-functional requirements
 
@@ -83,7 +83,7 @@ Release 0.1 evaluates these quality requirements in a disclosed prototype contex
 
 Included: FR-01 through FR-11, bundled examples and local explanations, and evaluation against the non-functional requirements above. The MVP validates whether the same visual workflow is useful across the four audiences; it does not attempt exhaustive musical production or DSP coverage.
 
-Excluded from the MVP: a full digital audio workstation, multitrack arrangement, notation, comprehensive synthesis/effects libraries, VST3 hosting, plugin export, a custom-code environment, live collaboration, and a marketplace. These exclusions are feature-scope boundaries. Supporting future hosting/export architecturally is required now; delivering their user-facing workflows is not part of the MVP. VAL Script remains a requested design with no named release placement.
+Excluded from the MVP: a full digital audio workstation, multitrack arrangement, notation, comprehensive synthesis/effects libraries, VST3 hosting, plugin export, a custom-code environment, live collaboration, and a marketplace. These exclusions are feature-scope boundaries. Supporting future hosting/export architecturally is required now; delivering their user-facing workflows is not part of the MVP. The separate VAL Script proposal has since been retired; custom DSP development takes place in an external FreePascal-based environment. The [retirement report](ValScriptRetirementPlan.md) records the current decision and legacy-project compatibility.
 
 ## Release definitions
 

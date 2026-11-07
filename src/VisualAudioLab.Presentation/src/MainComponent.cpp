@@ -145,7 +145,7 @@ MainComponent::MainComponent(application::WorkspaceService& workspace, applicati
         return runtime_->running() ? dockWorkspace_.visualizations().generatorMeters(node)
                                    : GeneratorMeterReadout{juce::String::fromUTF8("Stopped · Start transport to measure")};
     };
-    inspectorTabs_.addTab("Properties / Script", ShellTheme::surface(), editor_.get(), false);
+    inspectorTabs_.addTab("Properties", ShellTheme::surface(), editor_.get(), false);
     inspectorTabs_.addTab("Signal", ShellTheme::surface(), &dockWorkspace_.signalPreview(), false);
     dockWorkspace_.setPanelContent(PanelId::propertyInspector, inspectorTabs_);
     dockWorkspace_.canvas().onObservationTarget = [this](auto node)
@@ -474,17 +474,6 @@ void MainComponent::insertModule(std::string type, std::optional<juce::Point<flo
         values["audio.param.levelDb"] = -6.0;
     else if (type == "Noise Generator")
         values["audio.param.levelDbRms"] = -6.0;
-    if (type == "Script")
-    {
-        const auto count = runtime_->channels();
-        std::string source = "NODE ScriptPass AT AUDIO;\n";
-        for (int i = 1; i <= count; ++i) source += "INPUT In" + std::to_string(i) + ": REAL;\n";
-        for (int i = 1; i <= count; ++i) source += "OUTPUT Out" + std::to_string(i) + ": REAL;\n";
-        source += "BEGIN\n";
-        for (int i = 1; i <= count; ++i) source += " Out" + std::to_string(i) + " := In" + std::to_string(i) + (i == count ? "\n" : ";\n");
-        source += "END.";
-        values["audio.script"] = std::move(source);
-    }
     const auto result = workspace_.createNode({position.x, position.y}, name, std::move(values));
     report(result);
     if (result.succeeded)
@@ -709,7 +698,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
             info.addDefaultKeypress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
             break;
         case toggleInspector:
-            info.setInfo("Show Property Inspector", "Show properties, script editor and signal inspection", "View", 0);
+            info.setInfo("Show Property Inspector", "Show module parameters and signal inspection", "View", 0);
             info.setTicked(inspectorVisible());
             break;
         case toggleReducedEffects:
@@ -718,7 +707,7 @@ void MainComponent::getCommandInfo(juce::CommandID command, juce::ApplicationCom
             break;
         case resetLayout: info.setInfo("Reset Panels", "Restore the fixed workspace panels", "View", 0); break;
         case showModules: info.setInfo("Module Browser", "Browse and insert executable modules", "View", 0); break;
-        case showProperties: info.setInfo("Property Inspector", "Show parameters, scripts and signal inspection", "View", 0); break;
+        case showProperties: info.setInfo("Property Inspector", "Show module parameters and signal inspection", "View", 0); break;
         case showAudioSettings: info.setInfo("Audio Setup", "Configure audio devices and capabilities. Playback remains explicit.", "Audio", 0); break;
         case about: info.setInfo("About Visual Audio Lab", "Show application logo and build information", "Help", 0); break;
         case quit:

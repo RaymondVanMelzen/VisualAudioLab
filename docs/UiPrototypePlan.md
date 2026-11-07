@@ -17,7 +17,7 @@ The prototype is a research increment, not PRD Release 0.1, the 0.5 MVP, or an a
 | Menus, panels, dialogs, focus, shortcuts, accessible labels, and resizing. | Device enumeration, driver access, ASIO/CoreAudio initialization, device selection against real hardware, audio callbacks, streams, or permissions. |
 | In-memory editing of illustrative node cards, connection drawings, positions, and parameter fields. | DSP nodes, graph compilation/scheduling, signal generation/processing, sample buffers, sound playback, meters derived from signals, and latency measurement. |
 | A small authored fixture catalog and local explanatory text. | Plugin scanning/loading, VST3 hosting, plugin export, marketplaces, network calls, cloud/AI services, or accounts. |
-| UI-only undo/redo, validation copy, and deterministic example/error scenarios. | VAL Script editing, parsing, compilation, execution, or a scripting engine used to drive scenarios. |
+| UI-only undo/redo, validation copy, and deterministic example/error scenarios. | Custom-code editing, parsing, compilation, execution, or an interpreter used to drive scenarios. |
 | Explicitly simulated Save/Open and audio-status presentations. | Production persistence, project migration, real user-file loading/saving, or an implied application/audio backend. |
 
 Use only the JUCE UI/event capabilities necessary for a future UI implementation; do not instantiate audio-device or processor services just because JUCE provides them. Do not start the production Application, Infrastructure, or Audio runtime to make prototype screens appear functional. A plain in-memory presentation model is sufficient; it is not a fake production adapter reporting success.
@@ -26,7 +26,7 @@ The fixture catalog may use the blueprint's illustrative Source, Level, and Outp
 
 ### Truthful simulation contract
 
-- Keep a visible, screen-reader-accessible banner: **"UI prototype - no audio, DSP, scripting, or disk saving. Changes are temporary."**
+- Keep a visible, screen-reader-accessible banner: **"UI prototype - no audio, DSP, custom-code execution, or disk saving. Changes are temporary."**
 - Mark every simulated state inline, not only in facilitator instructions. A scenario card saying "Simulated: Running" must never change the actual capability indicator, which remains "Audio unavailable in this prototype."
 - Retain the blueprint's Start Audio and Stop Audio positions, labels, and menu entries, but disable their commands with an adjacent explanation. Shortcut invocation explains the unavailable capability rather than changing status or sounding a tone. Never request hardware access or use operating-system beeps.
 - Explore running, inactive-edit, unavailable-output, and interrupted-output copy through named, predefined **Study Scenarios** under Help. The facilitator or participant may select a card explicitly; no timer, graph edit, or Apply action pretends to activate processing. Cards are separate from the current interactive patch and cannot overwrite its edits.
@@ -47,7 +47,7 @@ These are intentional prototype deviations from the functional blueprint. They v
 | Is the UI-only limitation unmistakable? | Participants correctly explain that no sound, hardware inspection, processing, or disk saving occurred, including after viewing a simulated Running card. |
 | Can essential prototype tasks be completed without dragging or relying on color? | Keyboard-only task completion, meaningful screen-reader output, focus continuity, readable scaled layouts, and equivalent named actions. |
 
-The study cannot establish sound quality, latency, realtime safety, DSP correctness, script usability, physical device compatibility, host compatibility, or complete product accessibility conformance.
+The study cannot establish sound quality, latency, realtime safety, DSP correctness, custom-code usability, physical device compatibility, host compatibility, or complete product accessibility conformance.
 
 ## Screens and controls
 
@@ -59,7 +59,7 @@ Panels below are surfaces within one workbench, not independent documents or rou
 | Patch Canvas and Structure List | Named node cards and ports, explicit direction/type/channel text, selection/focus outlines, provisional and committed connection drawings; zoom, Fit Patch, Move Node, Connect/Disconnect and Remove actions. | Add/select/move/remove and draw connections in memory. Canvas/List switch retains the selected stable fixture ID. Expose both endpoints in text. Ordinary arrows navigate; movement requires explicit Move Node mode with announced step and exit. Zoom does not shrink application text. |
 | Toolbox | Local search, role categories, named results, short purpose, port summary, Add and Local Help. | Enter/Add inserts at a visible location and focuses the new item. Search and empty-state guidance use fixtures only. Dragging may be evaluated as an optional convenience, never required. |
 | Properties | Selection heading, identity/layout fields, parameter value/unit/range/default, numeric alternative to a slider, Reset, port details and inline diagnostics. | Invalid drafts remain visible; correction/commit changes only the presentation fixture. Escape cancels the draft without changing its last accepted value. A continuous gesture is one UI undo step. No audible/effective DSP value or automation engine is implied. |
-| Project Explorer | Temporary project, current patch, fixture node instances, diagnostics with counts and Locate actions. | Selecting a node synchronizes Canvas/List/Properties/Inspector. No empty script/module folders, filesystem tree, or file-per-node claim. A diagnostic navigates to its relevant field or endpoint. |
+| Project Explorer | Temporary project, current patch, fixture node instances, diagnostics with counts and Locate actions. | Selecting a node synchronizes Canvas/List/Properties/Inspector. No empty module folders, filesystem tree, or file-per-node claim. A diagnostic navigates to its relevant field or endpoint. |
 | Audio Settings mock dialog | Persistent "Mock settings - no hardware access" label; Windows/ASIO or macOS/CoreAudio fixture, fictional output entries, requested rate/buffer/channel mapping fields, effective-status explanation, Apply to Demo and Cancel. | Choices are study data, not enumeration. Apply updates only the in-memory preference draft and reports "Demo preference updated; no device opened." Effective configuration and latency stay unavailable. No WASAPI primary/fallback promise or real driver panel. |
 | Signal Inspector | Selected node/port/connection metadata, direction/type/channels, status explanation, Local Help and Locate Node. | Follows selection without changing routing. All signal observations are explicitly unavailable. No waveform/spectrum, synthetic animation, or background signal generator. |
 | Connect chooser | Named source, searchable destinations, eligibility/reason text, Connect and Cancel. | Keyboard and pointer paths produce the same fixture connection. Explain ineligible ports with authored UI rules. Confirm commits once; cancel removes only the provisional drawing. It is not graph preparation. |
@@ -71,7 +71,7 @@ Illustrative screen composition:
 
 ```text
 +-----------------------------------------------------------------------+
-| UI PROTOTYPE - no audio/DSP/scripting/disk saving; temporary changes     |
+| UI PROTOTYPE - no audio/DSP/custom-code execution/disk saving; temporary |
 | File Edit View Patch Audio Help                                        |
 | [Open Example] [Save Demo Snapshot] [Undo] [Add] [Start x] [Stop x]      |
 +------------------+---------------------------------+------------------+
@@ -104,7 +104,7 @@ These names describe responsibilities, not classes to generate or libraries to s
 | AudioSettingsPreviewViewModel | Platform-specific authored choices, unapplied requested-value draft and last accepted demo preference. | Apply to Demo/Cancel. Effective configuration stays unavailable; no backend handle, start operation or asynchronous device result. |
 | SignalInspectorViewModel | Selected metadata and explicit unavailable-observation explanation. | Locate, local explanation; no sample storage, polling or processing dependency. |
 | LayoutViewModel | Region visibility, split proportions and selected narrow-window secondary panel for this session. | Show/hide, resize through pointer or keyboard alternative, Reset Layout, Focus Region; layout changes do not enter patch undo history. |
-| StudyScenarioViewModel | Selected predefined card and its simulation label; independent of the interactive fixture. | Show/close state illustration, restore workbench focus. No script interpreter, state machine pretending to run audio, or timed engine activity. |
+| StudyScenarioViewModel | Selected predefined card and its simulation label; independent of the interactive fixture. | Show/close state illustration, restore workbench focus. No interpreter, state machine pretending to run audio, or timed engine activity. |
 
 Dialog-specific state belongs to its invocation and is released on close. A shared selection ID, not cloned node data, drives Explorer, Canvas/List, Properties and Inspector. Focus and selection are separate: moving focus to a toolbar must not select another node.
 
@@ -189,11 +189,11 @@ Collect notes through an explicit, consented study process, not hidden telemetry
 
 ### Review and iteration criteria
 
-Before calling an iteration ready for study, verify the UI-only boundary, consistent fixture selection, reversible UI edits, clearly labeled demo snapshots/scenarios, keyboard escape paths, and recovery of hidden panels. Any device access, generated sound, DSP/script execution or real file-save success claim is a scope violation, not a useful extra.
+Before calling an iteration ready for study, verify the UI-only boundary, consistent fixture selection, reversible UI edits, clearly labeled demo snapshots/scenarios, keyboard escape paths, and recovery of hidden panels. Any device access, generated sound, DSP/custom-code execution or real file-save success claim is a scope violation, not a useful extra.
 
 After study, prioritize blockers that prevent essential tasks, cause accidental loss of temporary work, trap keyboard users or mislead people about simulated capabilities. Revise labels, navigation or layout and repeat the affected scenarios. Report unresolved barriers and audience/platform differences rather than claiming the whole product is usable.
 
-The expected research output is an evidence-backed decision about the workbench organization, connection chooser/Structure List, Properties editing, constrained panel layout and status wording. It is not approval to add audio, DSP, scripting, plugins or production persistence. Those require a separate implementation assignment and retain the PRD's release and quality decisions.
+The expected research output is an evidence-backed decision about the workbench organization, connection chooser/Structure List, Properties editing, constrained panel layout and status wording. It is not approval to add audio, DSP, custom-code authoring, plugins or production persistence. Those require a separate implementation assignment and retain the PRD's release and quality decisions.
 
 ## Assumptions and deferred decisions
 
@@ -201,6 +201,6 @@ The expected research output is an evidence-backed decision about the workbench 
 - Exact example labels/ranges, dialog wording, splitter limits, narrow-layout thresholds and shortcut conflicts should be resolved through usability evidence.
 - Static status cards are for comprehension testing only; they do not prove users can operate live audio controls or understand audible effects.
 - How much JUCE component customization is needed for accessible canvas/list semantics must be checked during a later UI implementation; no framework-level accessibility guarantee is assumed.
-- Broader docking, persistent layouts, multiple windows, project-file dialogs, audio integration, signal visualization, VAL Script, VST3 hosting and plugin export are deferred. Their existence in other architecture documents does not expand this first prototype.
+- Broader docking, persistent layouts, multiple windows, project-file dialogs, audio integration, signal visualization, custom DSP authoring, VST3 hosting and plugin export are deferred. Their existence in other architecture documents does not expand this first prototype.
 
-This plan is documentation only. No UI, backend, audio path, DSP engine or scripting capability is implemented by it.
+This plan is documentation only. No UI, backend, audio path, DSP engine or custom-code capability is implemented by it.

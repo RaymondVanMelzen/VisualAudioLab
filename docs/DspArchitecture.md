@@ -8,7 +8,7 @@ This is a proposed DSP design, not an implementation or a statement of measured 
 
 Use the C++20/JUCE/CMake boundaries in [TechnicalArchitecture.md](TechnicalArchitecture.md). Keep backend I/O separate from DSP as defined in [AudioPlatformStrategy.md](AudioPlatformStrategy.md): JUCE adapts the primary standalone paths Windows/ASIO and macOS/CoreAudio, but its device or processor abstractions do not by themselves define the graph scheduler or node semantics. The subsequently requested platform abstraction also implements WASAPI Shared and Exclusive without changing the primary preferences or allowing silent fallback.
 
-The design supports inspectable visual patching, local projects, Windows and macOS, and no subscription, cloud, or AI dependency. It preserves required future VST3 hosting and plugin export boundaries without delivering those features or assigning a release. Recording, MIDI, a DAW timeline and generated DSP code are not added; the separately requested VAL Script design lowers bounded node computations into prepared plans rather than changing the visual-first core.
+The design supports inspectable visual patching, local projects, Windows and macOS, and no subscription, cloud, or AI dependency. It preserves required future VST3 hosting and plugin export boundaries without delivering those features or assigning a release. Recording, MIDI, a DAW timeline and generated DSP code are not added. VAL Script was retired; custom DSP authoring is external to this product.
 
 ## Proposed decisions and assumptions
 
@@ -124,7 +124,7 @@ Expensive coefficient/resource preparation stays outside the callback or uses a 
 
 ### Scope and clock
 
-Define automation as a sequence of typed parameter targets at positions on an audio-session timeline. This establishes runtime semantics, not a commitment to a lane editor, MIDI, scripting, musical beats/tempo, or recorded automation in any release.
+Define automation as a sequence of typed parameter targets at positions on an audio-session timeline. This establishes runtime semantics, not a commitment to a lane editor, MIDI, custom-code execution, musical beats/tempo, or recorded automation in any release.
 
 Use a sufficiently wide integer sample-frame clock for the active session. It advances by frames actually rendered, not wall-clock elapsed time or UI ticks. At the standalone baseline, a new start creates a new session epoch at frame zero; stopping ends it. The epoch distinguishes delayed events from an earlier run.
 
@@ -232,7 +232,7 @@ The revised architecture must accommodate these capabilities; none is implemente
 - **VST3 hosting:** A future hosted-processor node adapts JUCE plugin instances to the existing node contract. Declare buses, parameters, preparation dependencies, latency, tails and bypass/reset semantics. Scan/load, state serialization and editors stay off rendering. Do not assume third-party processors are stateless, bounded, safe to split at every control tick, or allocation-free. Qualify supported block/subspan behavior and any buffering/latency explicitly; reject incompatible nodes rather than silently changing the scheduler.
 - **Plugin export:** A future JUCE processor wrapper supplies host buffers/context to the same engine, without standalone device or editor dependencies. Preserve independent state per instance and stable exposed parameter identities; map host changes/gestures to parameter precedence without double smoothing or feedback loops. Host API timing resolution must be disclosed rather than assumed sample-accurate.
 - **Export eligibility:** Explicit graph input/output roots, validated content, versioned state and finite resource requirements define a future validation boundary, not a promise that every patch can be exported. Whether export embeds a verified plan or compiles native DSP, which formats are delivered, and how resources are packaged remain open. No source generation is authorized here. Hosting a plugin does not establish a right or capability to bundle it in an export.
-- **Safety and determinism:** Native plugin code is not constrained by VAL Script. Scan/runtime isolation, overload/crash recovery, dynamic latency changes and non-deterministic external behavior require separate policy. Built-in determinism claims do not extend automatically to arbitrary third-party nodes.
+- **Safety and determinism:** Native plugin code is not constrained by built-in DSP guarantees. Scan/runtime isolation, overload/crash recovery, dynamic latency changes and non-deterministic external behavior require separate policy. Built-in determinism claims do not extend automatically to arbitrary third-party nodes.
 - **Host lifecycle:** Define rate/layout changes, variable or oversized blocks, repeated prepare/release, no-editor operation, state restore, offline rendering and transport discontinuities. Integrity faults initialize returned output safely and surface bounded status; the plugin cannot stop the external host's hardware device.
 
 ## Optimization opportunities

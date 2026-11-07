@@ -32,16 +32,14 @@ and there is no implicit summing. The empty graph is allowed and renders
 silence; an Output without a source also renders silence.
 
 `src\VisualAudioLab.Presentation\src\RuntimePanel.cpp` offers
-**None (output only)**. `docs\DesktopWorkflow.md` documents a zero-input
-constant VAL Script source example wired to Gain/analyzer/Output, proving that
-a script source can already emit an internal signal in offline preview. It is
-not the requested oscillator UI or product module.
+**None (output only)**. The desktop workflow uses the shipped Signal Generator
+as a zero-input source wired to Gain/analyzer/Output. Its configured DC or
+test-wave output does not imply a separate fixed-frequency Oscillator module.
 
-`GeneratorNode` exists as a source extension point, and
-`tests\DspTests.cpp` has a `ConstantGenerator` test fixture. It is not a
-product oscillator (`docs\DspModules.md`). `tests\AudioEngineTests.cpp`
-verifies output-only stream preparation and that Input receives silence when
-input is absent. `tests\GraphTests.cpp`, `tests\ScriptTests.cpp` and
+`GeneratorNode` is the base for the shipped signal-generator modules
+(`docs\DspModules.md`). `tests\AudioEngineTests.cpp` verifies output-only
+stream preparation and that Input receives silence when input is absent.
+`tests\GraphTests.cpp`, `tests\DspTests.cpp` and
 `tests\RuntimeIntegrationTests.cpp` are relevant graph/desktop coverage.
 
 ## Ordered implementation steps
@@ -63,7 +61,7 @@ input is absent. `tests\GraphTests.cpp`, `tests\ScriptTests.cpp` and
    support continuous/free frequency and note-step quantization. It must
    honor the selected graph bus width, have bounded realtime work, and be
    independent per node instance. Do not use a fixed DC constant as an
-   oscillator or mark a scripted example as equivalent.
+   oscillator or mark a DC/test-wave example as an equivalent dedicated module.
 5. Define silence truthfully: output selected + empty graph or unconnected
    Output means valid silence, not an implicit generator or setup failure.
    Show distinct UI guidance that output is configured but the patch currently
@@ -89,14 +87,14 @@ Do not claim output-only physical hardware qualification from injected tests.
 |---|---|---|
 | None / zero channels | Empty graph | Explicit Start may run output-only; emitted output is silence and UI explains no signal path. |
 | None / zero channels | Output only | Valid silence; no hidden capture endpoint. |
-| None / zero channels | Existing verified zero-input Script source → Output | Output signal follows the script; no oscillator claim. |
+| None / zero channels | Shipped Signal Generator configured as DC → Output | Output follows the selected built-in waveform; no dedicated-oscillator claim. |
 | None / zero channels | Future oscillator source → Output | Once oscillator feature is separately implemented, generated signal works with no capture endpoint. |
 | Selected input | Width mismatches output | Clear validation failure; no coercion, truncation or fallback. |
 | Any | Disconnected/dead branch, multiple upstream sources | Existing explicit graph validation remains; no implicit summing. |
 
 Add integration cases asserting input endpoint absence, zero input channel
 request, output-only capability state, explicit Start, exact output mask,
-generated samples for the verified script path, silence semantics, failure
+generated samples for the built-in generator path, silence semantics, failure
 messages for invalid widths, and no playback on launch/load/insertion.
 Use injected backend fixtures and deterministic buffers; do not probe physical
 hardware unattended.

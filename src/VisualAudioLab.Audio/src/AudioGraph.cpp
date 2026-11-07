@@ -1,7 +1,5 @@
 #include <val/audio/AudioGraph.h>
 #include <val/audio/GeneratorNodes.h>
-#include <val/audio/ScriptNode.h>
-#include <val/script/Compiler.h>
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -18,7 +16,7 @@ using namespace application;
 namespace
 {
 AudioError invalid(std::string message) { return {AudioErrorCode::invalidArgument, std::move(message)}; }
-std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1, std::shared_ptr<const script::Program> script = {})
+std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1)
 {
     switch (type)
     {
@@ -32,7 +30,6 @@ std::unique_ptr<AudioNode> createProcessor(AudioNodeType type, float gain = 1, s
         case AudioNodeType::chorus: return std::make_unique<ChorusNode>();
         case AudioNodeType::reverb: return std::make_unique<ReverbNode>();
         case AudioNodeType::analyzer: return std::make_unique<AnalyzerNode>();
-        case AudioNodeType::script: return script ? std::make_unique<ScriptNode>(std::move(script)) : nullptr;
         case AudioNodeType::signalGenerator: return std::make_unique<SignalGeneratorNode>();
         case AudioNodeType::impulseGenerator: return std::make_unique<ImpulseGeneratorNode>();
         case AudioNodeType::clickGenerator: return std::make_unique<ClickGeneratorNode>();
@@ -92,6 +89,8 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
         const auto field = node.parameters.find("audio.type");
         const auto* type = field != node.parameters.end() ? std::get_if<std::string>(&field->second) : nullptr;
         if (!type) return {{}, invalid("Node " + std::to_string(id) + " needs an explicit documented audio.type.")};
+        if (*type == "Script")
+            return {{}, invalid("VAL Script was retired. This legacy node is preserved in the project but cannot be executed; replace it with a supported module or develop DSP externally.")};
         AudioNodeDefinition definition{id};
         if (*type == "Input") definition.type = AudioNodeType::input;
         else if (*type == "Output") definition.type = AudioNodeType::output;
@@ -103,21 +102,6 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
         else if (*type == "Chorus") definition.type = AudioNodeType::chorus;
         else if (*type == "Reverb") definition.type = AudioNodeType::reverb;
         else if (*type == "Analyzer") definition.type = AudioNodeType::analyzer;
-        else if (*type == "Script")
-        {
-            definition.type = AudioNodeType::script;
-            const auto fieldSource = node.parameters.find("audio.script");
-            const auto* source = fieldSource != node.parameters.end() ? std::get_if<std::string>(&fieldSource->second) : nullptr;
-            if (!source) return {{}, invalid("Script node " + std::to_string(id) + " requires audio.script source text.")};
-            const auto compiled = script::Compiler::compile(*source);
-            if (!compiled.value)
-            {
-                const auto& diagnostic = compiled.diagnostics.front();
-                return {{}, invalid("Script node " + std::to_string(id) + " at " + std::to_string(diagnostic.source.line)
-                    + ":" + std::to_string(diagnostic.source.column) + ": " + diagnostic.message)};
-            }
-            definition.script = *compiled.value;
-        }
         else if (*type == "Signal Generator") definition.type = AudioNodeType::signalGenerator;
         else if (*type == "Impulse Generator") definition.type = AudioNodeType::impulseGenerator;
         else if (*type == "Click Generator") definition.type = AudioNodeType::clickGenerator;
@@ -166,12 +150,10 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
             if (key.starts_with("audio.param."))
             {
                 auto name = key.substr(12);
-                if (definition.type == AudioNodeType::script)
-                    for (auto& c : name) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
                 const auto* value = std::get_if<double>(&scalar);
                 if (!value || !std::isfinite(*value)) return {{}, invalid("audio.param values must be finite numbers.")};
                 // Parameter identities are names in projects and immutable indices in prepared plans.
-                const auto prototype = createProcessor(definition.type, 1, definition.script);
+                const auto prototype = createProcessor(definition.type);
                 if (!definition.userScale.empty())
                 {
                     auto* signal = dynamic_cast<SignalGeneratorNode*>(prototype.get());
@@ -225,7 +207,7 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
             }
         if (!controlFields.empty())
         {
-            auto prototype = createProcessor(definition.type, 1, definition.script);
+            auto prototype = createProcessor(definition.type);
             if (!prototype) return {{}, invalid("Cannot map a parameter on this processor.")};
             if (!definition.userScale.empty())
             {
@@ -264,6 +246,8 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
                 ParameterControlBinding binding;
                 binding.parameter = index;
                 if (source && *source == "none") continue;
+                if (source && *source == "script")
+                    return {{}, invalid("VAL Script scalar control mappings were retired. Their saved source and parameters are preserved but cannot be executed.")};
                 if (!source || !getNumber("offset", binding.offset) || !getNumber("depth", binding.depth))
                     return {{}, invalid("Each control mapping requires a source, finite offset and finite depth.")};
                 if (*source == "lfo")
@@ -282,27 +266,7 @@ AudioQuery<AudioGraph> AudioGraph::fromStructural(const domain::Graph& graph, in
                         || !getNumber("releaseSeconds", binding.releaseSeconds))
                         return {{}, invalid("Envelope control requires attackSeconds, holdSeconds and releaseSeconds.")};
                 }
-                else if (*source == "script")
-                {
-                    binding.source = ParameterControlSource::script;
-                    const auto* sourceText = getString("script");
-                    if (!sourceText || !getNumber("minimum", binding.sourceMinimum)
-                        || !getNumber("maximum", binding.sourceMaximum))
-                        return {{}, invalid("Script control requires source text and declared finite minimum/maximum.")};
-                    const auto compiled = script::Compiler::compile(*sourceText);
-                    if (!compiled.value)
-                    {
-                        const auto& diagnostic = compiled.diagnostics.front();
-                        return {{}, invalid("Control Script at " + std::to_string(diagnostic.source.line)
-                            + ":" + std::to_string(diagnostic.source.column) + ": " + diagnostic.message)};
-                    }
-                    binding.program = *compiled.value;
-                    if (!binding.program->inputs().size() || binding.program->outputs().size() != 1
-                        || !binding.program->parameters().empty()
-                        || binding.program->inputs().size() != 1)
-                        return {{}, invalid("Control Script must declare exactly INPUT Time: REAL, one REAL OUTPUT, and no parameters.")};
-                }
-                else return {{}, invalid("Control source must be lfo, envelope or script.")};
+                else return {{}, invalid("Control source must be lfo or envelope.")};
                 if (!prototype->initialControl(binding))
                     return {{}, invalid("Control mapping is invalid, out of range, or targets a discrete parameter.")};
                 definition.controls.push_back(std::move(binding));
@@ -356,7 +320,6 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
     std::set<int> usedOutputSlots;
     int capturedChannels{};
     int capturedSources{};
-    std::size_t scriptInstructions{};
     for (const auto& node : graph.nodes)
     {
         if (node.id == 0 || !nodes.emplace(node.id, &node).second || !std::isfinite(node.gain)
@@ -404,20 +367,6 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             && node.type == AudioNodeType::input && format.inputChannels != 0
             && (node.channels > 0 ? node.channels : graph.channels) != format.inputChannels)
             return {{}, invalid("Legacy identity-mapped Input must match the host input width; use a resolved endpoint map or explicit adapter.")};
-        if (node.type == AudioNodeType::script)
-        {
-            if (!node.script) return {{}, invalid("Script node requires a verified compiler artifact, not deferred source compilation.")};
-            scriptInstructions += node.script->instructions().size();
-            if (scriptInstructions > 4096) return {{}, invalid("Graph script budget exceeds 4096 expanded instructions per frame.")};
-        }
-        else if (node.script) return {{}, invalid("A script artifact may only be attached to a Script processor.")};
-        for (const auto& control : node.controls)
-            if (control.program)
-            {
-                scriptInstructions += control.program->instructions().size();
-                if (scriptInstructions > 4096)
-                    return {{}, invalid("Graph Script/control budget exceeds 4096 expanded instructions per frame.")};
-            }
         if (node.capture)
         {
             capturedChannels += node.capture->channels();
@@ -441,8 +390,6 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             || (edge.adapter != domain::AudioAdapter::none && edge.adapter != domain::AudioAdapter::monoToStereo))
             return {{}, invalid("Invalid/missing endpoint, direction, self-link, adapter or multiple input sources.")};
         const auto& destination = *nodes.at(edge.destination);
-        if (destination.type == AudioNodeType::script && destination.script->inputs().empty())
-            return {{}, invalid("A zero-input Script generator cannot accept an upstream connection.")};
         incoming[edge.destination].push_back(edge.source);
         outgoing[edge.source].push_back(edge.destination);
     }
@@ -477,14 +424,6 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
             widths[id] = node.channels > 0 ? node.channels : graph.channels;
         else if (isGenerator(node.type))
             widths[id] = node.channels > 0 ? node.channels : graph.channels;
-        else if (node.type == AudioNodeType::script)
-        {
-            const auto outputs = static_cast<int>(node.script->outputs().size());
-            const auto inputs = static_cast<int>(node.script->inputs().size());
-            if (outputs < 1 || outputs > 32 || (inputs != 0 && inputs != outputs))
-                return {{}, invalid("Script bus layouts require 1-32 outputs and either no inputs or a matching input count.")};
-            widths[id] = outputs;
-        }
         else if (node.type == AudioNodeType::sum)
         {
             if (upstream.empty())
@@ -516,15 +455,6 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         }
         if (widths[id] < 1 || widths[id] > 32)
             return {{}, invalid("Every prepared processor bus must have 1-32 channels.")};
-        if (node.type == AudioNodeType::script && !node.script->inputs().empty()
-            && !upstream.empty())
-        {
-            const auto edge = std::find_if(graph.connections.begin(), graph.connections.end(),
-                [id](const auto& item) { return item.destination == id; });
-            const auto inputWidth = convertedWidth(*edge);
-            if (inputWidth != static_cast<int>(node.script->inputs().size()))
-                return {{}, invalid("Script input declaration does not match the connected bus layout.")};
-        }
     }
 
     for (const auto& edge : graph.connections)
@@ -576,7 +506,7 @@ AudioQuery<std::unique_ptr<PreparedAudioGraph>> PreparedAudioGraph::prepare(
         const auto& node = *nodes.at(id);
         const auto destination = offsets.at(id);
         const auto channelCount = widths.at(id);
-        auto processor = createProcessor(node.type, node.gain, node.script);
+        auto processor = createProcessor(node.type, node.gain);
         if (!node.userScale.empty())
         {
             auto* signal = dynamic_cast<SignalGeneratorNode*>(processor.get());
@@ -710,13 +640,6 @@ std::optional<AnalyzerSnapshot> PreparedAudioGraph::analyzerSnapshot(std::uint64
     for (const auto& step : steps_)
         if (step.id == node && step.type == AudioNodeType::analyzer)
             return static_cast<const AnalyzerNode*>(step.processor.get())->snapshot();
-    return std::nullopt;
-}
-std::optional<script::RuntimeFault> PreparedAudioGraph::scriptFault(std::uint64_t node) const noexcept
-{
-    for (const auto& step : steps_)
-        if (step.id == node && step.type == AudioNodeType::script)
-            return static_cast<const ScriptNode*>(step.processor.get())->fault();
     return std::nullopt;
 }
 std::uint64_t PreparedAudioGraph::numericalFaults() const noexcept

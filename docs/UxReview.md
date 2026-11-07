@@ -19,7 +19,7 @@ The evidence is the implemented Presentation classes, their Desktop composition 
 
 Read this alongside [ProductVision.md](ProductVision.md), [PRD.md](PRD.md), [UxBlueprint.md](UxBlueprint.md), [UiPrototypePlan.md](UiPrototypePlan.md), [TechnicalArchitecture.md](TechnicalArchitecture.md) and [AudioPlatformStrategy.md](AudioPlatformStrategy.md).
 
-The earlier prototype plan deliberately excludes floating windows, arbitrary docking and persistent layouts. This review explores those capabilities **because the present UX request explicitly asks for them**; it does not retroactively change that study's scope or claim they belong in the MVP. Likewise, advanced signal analysis, scripting, MIDI, VST3 hosting and export remain future designs without a release commitment. No other document is amended. Preserve the existing principles of offline use, explicit device selection, accessible graph alternatives, reversible edits, honest unavailable states and host-neutral processing boundaries.
+The earlier prototype plan deliberately excludes floating windows, arbitrary docking and persistent layouts. This review explores those capabilities **because the present UX request explicitly asks for them**; it does not retroactively change that study's scope or claim they belong in the MVP. Advanced signal analysis, MIDI, VST3 hosting and export remain future designs without a release commitment; VAL Script is retired and is not a future product direction. Preserve the existing principles of offline use, explicit device selection, accessible graph alternatives, reversible edits, honest unavailable states and host-neutral processing boundaries.
 
 ## Executive recommendation
 
@@ -48,7 +48,7 @@ There are no measured claims here that docking, search or any competitor-inspire
 
 ## Proposed information architecture and shell
 
-Separate three concepts: **documents** (patches, future scripts and settings), **tools** (browser, explorer, properties, signal inspection), and **application state** (audio lifecycle, diagnostics and workspace layout). Document tabs do not impersonate tools; tool visibility does not change processing.
+Separate three concepts: **documents** (patches and settings), **tools** (browser, explorer, properties, signal inspection), and **application state** (audio lifecycle, diagnostics and workspace layout). Document tabs do not impersonate tools; tool visibility does not change processing.
 
 ### Main workbench wireframe: Patch Design
 
@@ -67,7 +67,7 @@ Separate three concepts: **documents** (patches, future scripts and settings), *
 | Filters             |                                        | units and errors   |
 | ...                 |                           [Minimap]    |                    |
 |---------------------+----------------------------------------+--------------------|
-| Auto-hide: Signal Inspector | Problems | Script Console (only when delivered)       |
+| Auto-hide: Signal Inspector | Problems                                                   |
 |-----------------------------------------------------------------------------------|
 | Stopped | ASIO: No device [Configure] | Rate -- | Buffer -- | Latency -- | DSP -- ...|
 +-----------------------------------------------------------------------------------+
@@ -115,7 +115,7 @@ On monitor removal, DPI change or remote-session reconnect, clamp floating windo
 
 ## 2. Scalable Module Browser
 
-Use a searchable tree with precisely these top-level categories: **Audio I/O, Basic, Filters, Dynamics, Delay, Modulation, Analysis, Logic, Scripts, VST Plugins**. These are proposed catalog roles, not a claim that such modules ship today. Categories may show an honest empty state; Scripts and VST Plugins explain their unavailable capability until delivered, rather than fabricating entries.
+Use a searchable tree with precisely these top-level categories: **Audio I/O, Basic, Filters, Dynamics, Delay, Modulation, Analysis, Logic, VST Plugins**. These are proposed catalog roles, not a claim that such modules ship today. Categories may show an honest empty state; VST Plugins explains its unavailable capability until delivered, rather than fabricating entries. VAL Script is retired and is not a catalog category.
 
 ```text
 +--------------------------------------+
@@ -309,13 +309,12 @@ Definitions: **open** reserves dock/document space; **tabbed** shares a stack; *
 
 | Workspace | Centre documents | Left | Right | Bottom | Closed/on-demand and purpose |
 |---|---|---|---|---|---|
-| **Beginner** | Patch Canvas; visible Add guidance and short local getting-started card | Module Browser open; Project Explorer tabbed | Property Inspector open, Properties first | Signal Inspector auto-hide with clear label | Audio Settings on demand; minimap hidden until useful; scripts/plugins/MIDI closed. Learn browsing and selection without a wall of diagnostics. |
-| **Patch Design** | Patch Canvas maximized within docks; minimap when graph is large | Module Browser/Project Explorer tabbed | Property Inspector open; Parameters remembered per task | Signal Inspector and Problems auto-hide | Audio Settings, scripts and MIDI closed; optimize repeated Quick Add, wiring and arrangement. |
-| **DSP Debugging** | Patch Canvas/Structure List switch; active-revision feedback | Project Explorer open; Module Browser tabbed | Property Inspector open, Signal Info readily available | Signal Inspector open; Problems tabbed, counters in diagnostics drawer | Audio Settings and scripting on demand; optimize tracing a node/port/connection without duplicate live meters. |
+| **Beginner** | Patch Canvas; visible Add guidance and short local getting-started card | Module Browser open; Project Explorer tabbed | Property Inspector open, Properties first | Signal Inspector auto-hide with clear label | Audio Settings on demand; minimap hidden until useful; plugins/MIDI closed. Learn browsing and selection without a wall of diagnostics. |
+| **Patch Design** | Patch Canvas maximized within docks; minimap when graph is large | Module Browser/Project Explorer tabbed | Property Inspector open; Parameters remembered per task | Signal Inspector and Problems auto-hide | Audio Settings and MIDI closed; optimize repeated Quick Add, wiring and arrangement. |
+| **DSP Debugging** | Patch Canvas/Structure List switch; active-revision feedback | Project Explorer open; Module Browser tabbed | Property Inspector open, Signal Info readily available | Signal Inspector open; Problems tabbed, counters in diagnostics drawer | Audio Settings on demand; optimize tracing a node/port/connection without duplicate live meters. |
 | **Audio Analysis** | Patch Canvas with selected path emphasized | Project Explorer auto-hide; Module Browser closed | Property Inspector auto-hide | Signal Inspector open and enlarged; spectrum/statistics views within it | Audio Settings on demand; show DSP/process diagnostics expanded; preserve graph access rather than replacing it with a modal analyzer. |
-| **Scripting** | Future VAL Script Editor and Patch Canvas as adjacent tabs or readable split | Project Explorer open; Module Browser auto-hide | Property Inspector/Documentation open | Problems/Script Console tabbed open; Signal Inspector auto-hide | Audio Settings and MIDI on demand; script editor/console show unavailable explanations until delivered, never simulated compilation. |
 
-Preset changes alter only presentation. Keep open documents, dirty drafts, selection, pins, zoom bookmarks and current audio state; do not start/stop sound or discard script edits. Prompt inline to Save Layout/Discard Layout Changes/Cancel only when overwriting a named custom arrangement, not on every switch. If a capability is unavailable, the preset explains the missing panel and retains usable patch access.
+Preset changes alter only presentation. Keep open documents, unsaved edits, selection, pins, zoom bookmarks and current audio state; do not start/stop sound or discard work. Prompt inline to Save Layout/Discard Layout Changes/Cancel only when overwriting a named custom arrangement, not on every switch. If a capability is unavailable, the preset explains the missing panel and retains usable patch access.
 
 ### Narrow-window and enlarged-text wireframe
 
@@ -346,7 +345,6 @@ Use stable conceptual document/tool identities, shared commands and context-sens
 |---|---|---|
 | **VST3 hosting** | VST Plugins browser category; dedicated Plugin Manager document for scan, validation, missing/quarantined states and user-approved discovery. Node inspector exposes mapped parameters; native plugin editor is a separate owned window. | Search/hover never scans or loads a binary. Show provenance, missing versions and compatibility; do not silently substitute processors or imply isolation guarantees. Native editors have their own focus/accessibility limitations. |
 | **VST3 exporting** | `File > Export Plugin` opens an Export document with eligibility, buses, exposed parameters, resources, target/platform and validation report; inline stages and actionable failures. | Not Save Project, not audio-file export, not arbitrary-patch support. Do not promise redistribution of third-party plugins, nested hosting, toolchain-free packaging or release timing. |
-| **VAL Script Editor** | Syntax-aware document, Outline/Problems tools, local docs and node linkage. Explicit Validate/Apply with edited/active revision markers. | Editing must not silently compile/activate or replace an audible valid revision. Script use remains optional for the core visual workflow. |
 | **MIDI editing** | Event/piano-roll document and routing metadata in existing inspector; musical units and transport context explicitly labeled. | Discovery scope, not a DAW commitment. Do not imply recording, synchronization or sample-offset fidelity exists. |
 | **Plugin management** | On-demand manager with rescan/cancel, provenance, failures, version visibility and project missing-dependency resolution. | Separate catalog discovery from instance insertion; preserve missing references rather than deleting graph content. No mandatory account/cloud service. |
 | **External-host plugin UI** | Reuse patch/document concepts where appropriate, show `Host-managed audio/transport` and host-provided effective context. | No standalone ASIO/CoreAudio picker or claim that standalone Start/Stop controls host hardware. Device settings remain a standalone concern. |
@@ -394,7 +392,7 @@ Reaper and DaVinci Resolve are references for professional density, visible stat
 | First | One Quick Add/browser catalog and one selection contract. | Search ranking may hide unfamiliar concepts; retain categories, descriptions and empty-canvas prompts. |
 | First | Properties versus Signal Inspector responsibility split; honest status provenance. | Users may look for meters under Signal Info; use an explicit live-inspection link and visible target names. |
 | Next | Keyboard-accessible docking, presets, local persistence and monitor recovery. | Layout loss or focus regressions can outweigh space gains; exercise restoration and invalid preference scenarios before floating rollout. |
-| Later, capability-dependent | Advanced node organization, spectrum/statistics, script/plugin/MIDI views. | Density, realtime boundaries and release scope must be validated independently; do not fabricate runtime behavior to demonstrate polish. |
+| Later, capability-dependent | Advanced node organization, spectrum/statistics, plugin/MIDI views. | Density, realtime boundaries and release scope must be validated independently; do not fabricate runtime behavior to demonstrate polish. |
 
 ### Proposed evaluation, not completed research
 

@@ -103,7 +103,7 @@ void runVisualizationPresentationTests()
     juce::TabbedComponent* inspectorTabs{};
     for (auto* child : shell.dockWorkspace().panel(PanelId::propertyInspector).getChildren())
         if (auto* tabs = dynamic_cast<juce::TabbedComponent*>(child)) inspectorTabs = tabs;
-    require(inspectorTabs, "Property Inspector hosts distinct parameter/script and Signal tabs.");
+    require(inspectorTabs, "Property Inspector hosts distinct parameter and Signal tabs.");
     inspectorTabs->setCurrentTabIndex(1);
     session.refresh();
     require(inspector.demanding(), "Visible selected inspector requests one shared observation.");

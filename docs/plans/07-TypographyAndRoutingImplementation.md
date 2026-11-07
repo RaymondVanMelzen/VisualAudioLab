@@ -89,7 +89,7 @@ scale preference or OS text size/high-contrast integration.
 - Typography tests load every embedded face, check actual tabular/monospace
   advances, feature settings, formatting thresholds, stable unit placement and
   semantic zoom limits. Windows software-rendered shell snapshots at 100%, 125%,
-  150% and 200%, default 1000x700, constrained 800x600, a dialog, script editor
+  150% and 200%, default 1000x700, constrained 800x600 and a dialog
   and canvas zoom tiers were captured.
   Representative shell/dialog/editor/zoom captures were inspected.
 - Audio tests exercise multi-root Sum/fan-out, direct routes, inert branches,

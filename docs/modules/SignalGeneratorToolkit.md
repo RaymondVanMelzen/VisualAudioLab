@@ -6,9 +6,9 @@ mappings, output-only rendering, worker-backed node previews,
 generator-aware inspector context, floating Signal Inspector and eight stopped
 `.valab` examples are implemented. The Windows Release build and all 18
 non-device CTest tests pass on the current tree; native discovery is
-deliberately excluded to honor the no-device-probe requirement. Remaining delivery work is
-representative UI evidence, final release-bundle verification and review
-delivery. Nothing here establishes hardware calibration, acoustic
+deliberately excluded to honor the no-device-probe requirement. Representative
+UI evidence remains a separate qualification task. Nothing here establishes
+hardware calibration, acoustic
 qualification or plugin hosting.
 
 This design extends the current [DSP module framework](../DspModules.md),
@@ -382,10 +382,11 @@ peak-reference target.
 The Windows x64 Release build passes all 18 non-device CTest tests, including
 DSP allocation instrumentation, generator-level math, visualization and panel
 integration. Native device discovery is excluded to avoid probing hardware.
-Software-rendered default and constrained-width task-editor
-screenshots were captured without starting transport. The review-bundle
-update and PR delivery are tracked separately; this evidence does not qualify
-physical audio output, acoustic calibration, macOS or multi-monitor DPI.
+Software-rendered default and constrained-width task-editor screenshots were
+captured without starting transport in an earlier review. The current
+retirement PR updates the Windows review bundle but does not refresh those
+screenshots. This evidence does not qualify physical audio output, acoustic
+calibration, macOS or multi-monitor DPI.
 
 No phase claims hard realtime deadlines based only on average CPU or a
 lock-free queue. User hardware, ASIO/vendor drivers, acoustic transducers,
